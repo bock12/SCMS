@@ -1,0 +1,9 @@
+{
+  "name": "FaithConnect Church Management System",
+  "description": "A comprehensive multi-tenant church management platform featuring member portals, district/branch administration, financial tracking, and real-time streaming with RTMP management.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
