@@ -816,6 +816,7 @@ const UsersTab = () => {
   const handleRoleChange = async (userId: string, newRole: string, userName?: string) => {
     await supabase.from('profiles').update({ primary_role: newRole }).eq('id', userId);
     setUsers(prev => prev.map(p => p.id === userId ? { ...p, primary_role: newRole as any } : p));
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: userId, primary_role: newRole } }));
     const targetName = userName || users.find(u => u.id === userId)?.first_name || 'Member';
     setRoleSuccessToast(`Successfully updated ${targetName}'s primary role in Supabase to "${newRole.replace('_', ' ').toUpperCase()}"`);
     setTimeout(() => setRoleSuccessToast(null), 4000);

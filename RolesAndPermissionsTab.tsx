@@ -5,7 +5,7 @@ import {
   getCustomRoles, saveCustomRoles, getRoleAssignments, saveRoleAssignments, ALL_PERMISSIONS 
 } from './roleService';
 import { 
-  Shield, ShieldCheck, UserCheck, Plus, Trash2, Edit, Check, X, Search, 
+  Shield, ShieldCheck, UserCheck, Plus, Trash2, Edit, Eye, Check, X, Search, 
   Users, Layers, Award, Sparkles, CheckCircle2, FileText, Calendar, Building2, Filter
 } from 'lucide-react';
 
@@ -49,6 +49,39 @@ export const RolesAndPermissionsTab: React.FC = () => {
   const [assignMinistryName, setAssignMinistryName] = useState(DEFAULT_MINISTRY_SCOPES[1]);
   const [assignmentSuccess, setAssignmentSuccess] = useState<string | null>(null);
   const [memberFilter, setMemberFilter] = useState('');
+
+  // View & Edit Appointed Role State
+  const [viewingAssignment, setViewingAssignment] = useState<MemberRoleAssignment | null>(null);
+  const [editingAssignment, setEditingAssignment] = useState<MemberRoleAssignment | null>(null);
+  const [editAssignRoleId, setEditAssignRoleId] = useState('');
+  const [editAssignMinistryName, setEditAssignMinistryName] = useState('');
+
+  const openEditAssignmentModal = (a: MemberRoleAssignment) => {
+    setEditingAssignment(a);
+    setEditAssignRoleId(a.role_id);
+    setEditAssignMinistryName(a.ministry_name || DEFAULT_MINISTRY_SCOPES[0]);
+  };
+
+  const handleSaveAssignmentEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAssignment || !editAssignRoleId) return;
+
+    const roleObj = roles.find(r => r.id === editAssignRoleId);
+    if (!roleObj) return;
+
+    const updated = assignments.map(a => a.id === editingAssignment.id ? {
+      ...a,
+      role_id: roleObj.id,
+      role_name: roleObj.name,
+      ministry_name: editAssignMinistryName || roleObj.ministry_name || 'All Ministries'
+    } : a);
+
+    setAssignments(updated);
+    saveRoleAssignments(updated);
+    setEditingAssignment(null);
+    setAssignmentSuccess(`Updated appointed role for ${editingAssignment.member_name} to "${roleObj.name}" in ${editAssignMinistryName || roleObj.ministry_name || 'All Ministries'}`);
+    setTimeout(() => setAssignmentSuccess(null), 5000);
+  };
 
   const fetchMembersAndMinistries = async () => {
     setLoading(true);
@@ -449,13 +482,29 @@ export const RolesAndPermissionsTab: React.FC = () => {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleRemoveAssignment(a.id)}
-                    className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 cursor-pointer transition-colors"
-                    title="Revoke Role Appointment"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setViewingAssignment(a)}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 cursor-pointer transition-colors"
+                      title="View Appointed Role & Permission Details"
+                    >
+                      <Eye size={15} />
+                    </button>
+                    <button
+                      onClick={() => openEditAssignmentModal(a)}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 cursor-pointer transition-colors"
+                      title="Edit Appointed Role & Scope"
+                    >
+                      <Edit size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveAssignment(a.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
+                      title="Revoke Role Appointment"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px] text-slate-500">
@@ -511,13 +560,29 @@ export const RolesAndPermissionsTab: React.FC = () => {
                     <td className="p-3.5 text-slate-500">{new Date(a.assigned_at).toLocaleDateString()}</td>
                     <td className="p-3.5 text-slate-500 font-semibold">{a.assigned_by}</td>
                     <td className="p-3.5 text-right">
-                      <button
-                        onClick={() => handleRemoveAssignment(a.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer transition-colors"
-                        title="Revoke Role Appointment"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => setViewingAssignment(a)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 cursor-pointer transition-colors"
+                          title="View Appointed Role Details"
+                        >
+                          <Eye size={15} />
+                        </button>
+                        <button
+                          onClick={() => openEditAssignmentModal(a)}
+                          className="p-1.5 text-slate-400 hover:text-amber-600 rounded-lg hover:bg-amber-50 cursor-pointer transition-colors"
+                          title="Edit Appointed Role Title & Department Scope"
+                        >
+                          <Edit size={15} />
+                        </button>
+                        <button
+                          onClick={() => handleRemoveAssignment(a.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
+                          title="Revoke / Delete Role Appointment"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -763,6 +828,166 @@ export const RolesAndPermissionsTab: React.FC = () => {
                   className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-md cursor-pointer text-center"
                 >
                   Confirm Appointment
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* MODAL: VIEW APPOINTED ROLE ASSIGNMENT */}
+      {viewingAssignment && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-5">
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white font-black flex items-center justify-center text-base shadow-md">
+                  {viewingAssignment.member_name.charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">{viewingAssignment.member_name}</h3>
+                  <span className="text-xs font-bold text-indigo-700">{viewingAssignment.role_name}</span>
+                </div>
+              </div>
+              <button onClick={() => setViewingAssignment(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Appointed Role Title</span>
+                <div className="font-extrabold text-slate-900 text-sm">{viewingAssignment.role_name}</div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Assigned Ministry / Scope</span>
+                <div className="font-bold text-indigo-700">{viewingAssignment.ministry_name || 'All Ministries'}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Appointed On</span>
+                  <div className="font-bold text-slate-700">{new Date(viewingAssignment.assigned_at).toLocaleDateString()}</div>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Appointed By</span>
+                  <div className="font-bold text-slate-700">{viewingAssignment.assigned_by || 'Administrator'}</div>
+                </div>
+              </div>
+
+              {/* Granted Permissions Preview */}
+              {(() => {
+                const foundRole = roles.find(r => r.id === viewingAssignment.role_id || r.name === viewingAssignment.role_name);
+                return foundRole && (
+                  <div className="p-3 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-2">
+                    <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wider block">Role Definition & Granted Rights:</span>
+                    <p className="text-[11px] text-slate-600 italic">{foundRole.description}</p>
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {foundRole.permissions.map(pKey => (
+                        <span key={pKey} className="px-2 py-0.5 bg-white border border-indigo-200 text-indigo-900 rounded font-bold text-[9px]">
+                          ✓ {ALL_PERMISSIONS.find(p => p.key === pKey)?.label || pKey}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  const a = viewingAssignment;
+                  setViewingAssignment(null);
+                  openEditAssignmentModal(a);
+                }}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Edit size={14} /> Edit Role Appointment
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewingAssignment(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT APPOINTED ROLE ASSIGNMENT */}
+      {editingAssignment && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-5">
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900">
+                  Edit Appointed Role
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-1">
+                  Modify Role for {editingAssignment.member_name}
+                </h3>
+              </div>
+              <button onClick={() => setEditingAssignment(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAssignmentEdit} className="space-y-4 text-xs">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Select New Role Definition *</label>
+                <select
+                  required
+                  value={editAssignRoleId}
+                  onChange={e => {
+                    setEditAssignRoleId(e.target.value);
+                    const found = roles.find(r => r.id === e.target.value);
+                    if (found && found.ministry_name) {
+                      setEditAssignMinistryName(found.ministry_name);
+                    }
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer text-slate-900 outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  <option value="">-- Choose Role Definition --</option>
+                  {roles.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} ({r.ministry_name || r.category})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Department / Ministry Scope *</label>
+                <select
+                  value={editAssignMinistryName}
+                  onChange={e => setEditAssignMinistryName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer text-slate-900 outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {availableMinistryOptions.map(mOpt => (
+                    <option key={mOpt} value={mOpt}>{mOpt}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingAssignment(null)}
+                  className="px-4 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
+                >
+                  Save Role Changes
                 </button>
               </div>
             </form>

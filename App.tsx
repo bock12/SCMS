@@ -1280,6 +1280,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
     await supabase.from('profiles').insert(newProfile);
     setProfiles(prev => [newProfile, ...prev]);
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: newProfile }));
     setAddModalOpen(false);
 
     if (formCreateCredentials) {
@@ -1319,6 +1320,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
     await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
     setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
     setEditingPerson(null);
 
     if (formCreateCredentials) {
@@ -2804,11 +2806,163 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     { id: 'n-2', dept: 'Voices of Grace Choir', author: 'Hannah Adams', text: 'Robes for Sunday 1st Service will be Royal Blue.', date: new Date(Date.now() - 86400000).toISOString() }
   ]);
   const [newNoticeText, setNewNoticeText] = useState('');
-  const [deptRoster, setDeptRoster] = useState<any[]>([
-    { id: 'r-1', name: 'David Koroma', role: 'Media Team Lead', status: 'Active', duty: 'Sanctuary Main Stream Switcher' },
-    { id: 'r-2', name: 'Hannah Adams', role: 'Worship Director', status: 'Active', duty: 'Sunday 1st Service Lead' },
-    { id: 'r-3', name: 'Grace Campbell', role: 'Soprano Vocalist', status: 'Active', duty: 'Sunday 2nd Service Choir' }
-  ]);
+
+  // Department Roster State & localStorage Persistence
+  const getInitialDeptRoster = (deptName: string) => {
+    const saved = localStorage.getItem(`fc_roster_${deptName}`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.error('Error parsing roster:', e);
+      }
+    }
+
+    if (deptName.includes('Media')) {
+      return [
+        { id: 'r-1', name: 'David Koroma', role: 'Media Team Lead', status: 'Active', duty: 'Sanctuary Main Stream Switcher', email: 'dkoroma@gracecathedral.org', phone: '+232 76 123456', joined_date: '2023-04-12' },
+        { id: 'r-2', name: 'Samuel Cole', role: 'Audio Engineer Lead', status: 'Active', duty: 'FOH Sound Desk & Wireless Mics', email: 'scole@gracecathedral.org', phone: '+232 77 987654', joined_date: '2023-08-15' },
+        { id: 'r-3', name: 'Emmanuel Peters', role: 'Graphics & Slide Operator', status: 'Active', duty: 'Sanctuary Projection & Livestream Overlays', email: 'epeters@gmail.com', phone: '+232 78 456789', joined_date: '2024-01-10' }
+      ];
+    } else if (deptName.includes('Choir') || deptName.includes('Voices')) {
+      return [
+        { id: 'r-1', name: 'Hannah Adams', role: 'Worship Director', status: 'Active', duty: 'Sunday 1st Service Lead', email: 'hadams@gracecathedral.org', phone: '+232 76 555123', joined_date: '2022-11-01' },
+        { id: 'r-2', name: 'Grace Campbell', role: 'Soprano Lead', status: 'Active', duty: 'Sunday 2nd Service Choir', email: 'gcampbell@gmail.com', phone: '+232 77 111222', joined_date: '2023-02-14' },
+        { id: 'r-3', name: 'Michael Turay', role: 'Main Keyboardist', status: 'Active', duty: 'Choir Rehearsal & Service Band', email: 'mturay@gmail.com', phone: '+232 78 999888', joined_date: '2023-06-20' }
+      ];
+    } else {
+      return [
+        { id: 'r-1', name: 'David Koroma', role: `${deptName} Lead`, status: 'Active', duty: 'Ministry Operations & Logistics', email: 'dkoroma@gracecathedral.org', phone: '+232 76 123456', joined_date: '2023-01-15' },
+        { id: 'r-2', name: 'Sarah Bangura', role: 'Assistant Coordinator', status: 'Active', duty: 'Sunday Roster Scheduling', email: 'sbangura@gmail.com', phone: '+232 77 222333', joined_date: '2023-05-10' }
+      ];
+    }
+  };
+
+  const [deptRoster, setDeptRoster] = useState<any[]>(() => getInitialDeptRoster(activeDept));
+
+  useEffect(() => {
+    setDeptRoster(getInitialDeptRoster(activeDept));
+  }, [activeDept]);
+
+  const updateDeptRoster = (newRoster: any[]) => {
+    setDeptRoster(newRoster);
+    localStorage.setItem(`fc_roster_${activeDept}`, JSON.stringify(newRoster));
+  };
+
+  // View Member Modal state
+  const [viewingRosterMember, setViewingRosterMember] = useState<any | null>(null);
+
+  // Edit Member Modal state
+  const [editingRosterMember, setEditingRosterMember] = useState<any | null>(null);
+  const [editRosterName, setEditRosterName] = useState('');
+  const [editRosterRole, setEditRosterRole] = useState('');
+  const [editRosterDuty, setEditRosterDuty] = useState('');
+  const [editRosterStatus, setEditRosterStatus] = useState<'Active' | 'On Leave' | 'In Training'>('Active');
+  const [editRosterEmail, setEditRosterEmail] = useState('');
+  const [editRosterPhone, setEditRosterPhone] = useState('');
+
+  // Add/Appoint Member Modal state
+  const [showAddRosterModal, setShowAddRosterModal] = useState(false);
+  const [addRosterName, setAddRosterName] = useState('');
+  const [addRosterRole, setAddRosterRole] = useState('');
+  const [addRosterDuty, setAddRosterDuty] = useState('');
+  const [addRosterStatus, setAddRosterStatus] = useState<'Active' | 'On Leave' | 'In Training'>('Active');
+  const [addRosterEmail, setAddRosterEmail] = useState('');
+  const [addRosterPhone, setAddRosterPhone] = useState('');
+
+  // Registered Congregation Members Directory
+  const [congregationMembers, setCongregationMembers] = useState<Profile[]>([]);
+  const [selectedCongregationMemberId, setSelectedCongregationMemberId] = useState('');
+
+  useEffect(() => {
+    supabase.from('profiles').select('*').order('first_name').then(({ data }) => {
+      if (data && data.length > 0) {
+        setCongregationMembers(data as Profile[]);
+      } else {
+        setCongregationMembers([
+          { id: 'cm-1', branch_id: 'b1', first_name: 'Jonathan', last_name: 'Davis', email: 'jdavis@gmail.com', phone: '+232 76 901234', primary_role: 'member', created_at: new Date().toISOString() },
+          { id: 'cm-2', branch_id: 'b1', first_name: 'Maria', last_name: 'Santos', email: 'msantos@gmail.com', phone: '+232 77 890123', primary_role: 'member', created_at: new Date().toISOString() },
+          { id: 'cm-3', branch_id: 'b1', first_name: 'Samuel', last_name: 'Cole', email: 'scole@gracecathedral.org', phone: '+232 78 987654', primary_role: 'member', created_at: new Date().toISOString() }
+        ]);
+      }
+    });
+  }, []);
+
+  const openEditRosterMember = (member: any) => {
+    setEditingRosterMember(member);
+    setEditRosterName(member.name || '');
+    setEditRosterRole(member.role || '');
+    setEditRosterDuty(member.duty || '');
+    setEditRosterStatus(member.status || 'Active');
+    setEditRosterEmail(member.email || '');
+    setEditRosterPhone(member.phone || '');
+  };
+
+  const handleSaveRosterEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRosterMember || !editRosterName.trim()) return;
+
+    const updated = deptRoster.map(m => m.id === editingRosterMember.id ? {
+      ...m,
+      name: editRosterName.trim(),
+      role: editRosterRole.trim() || 'Team Member',
+      duty: editRosterDuty.trim() || 'Sunday Duty',
+      status: editRosterStatus,
+      email: editRosterEmail.trim(),
+      phone: editRosterPhone.trim()
+    } : m);
+
+    updateDeptRoster(updated);
+    setEditingRosterMember(null);
+    setProposalSuccessToast(`Updated roster role & details for ${editRosterName.trim()}`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
+  };
+
+  const handleDeleteRosterMember = (memberId: string, memberName: string) => {
+    if (!window.confirm(`Are you sure you want to remove ${memberName} from the ${activeDept} appointed roster?`)) return;
+
+    const updated = deptRoster.filter(m => m.id !== memberId);
+    updateDeptRoster(updated);
+    if (viewingRosterMember?.id === memberId) setViewingRosterMember(null);
+    if (editingRosterMember?.id === memberId) setEditingRosterMember(null);
+
+    setProposalSuccessToast(`Removed ${memberName} from ${activeDept} roster.`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
+  };
+
+  const openAddRosterModal = () => {
+    setSelectedCongregationMemberId('');
+    setAddRosterName('');
+    setAddRosterRole('');
+    setAddRosterDuty('');
+    setAddRosterStatus('Active');
+    setAddRosterEmail('');
+    setAddRosterPhone('');
+    setShowAddRosterModal(true);
+  };
+
+  const handleAddRosterMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addRosterName.trim()) return;
+
+    const newMember = {
+      id: `r_${Date.now()}`,
+      name: addRosterName.trim(),
+      role: addRosterRole.trim() || 'Team Member',
+      duty: addRosterDuty.trim() || 'General Ministry Duty',
+      status: addRosterStatus,
+      email: addRosterEmail.trim(),
+      phone: addRosterPhone.trim(),
+      joined_date: new Date().toISOString().slice(0, 10)
+    };
+
+    const updated = [...deptRoster, newMember];
+    updateDeptRoster(updated);
+    setShowAddRosterModal(false);
+    setProposalSuccessToast(`Appointed ${addRosterName.trim()} as ${newMember.role} in ${activeDept}!`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
+  };
 
   const reloadReqs = () => {
     setRequisitions(getRequisitions());
@@ -2855,10 +3009,20 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     const vol = volunteers.find(v => v.id === vId);
     if (vol) {
       setVolunteers(prev => prev.filter(v => v.id !== vId));
-      setDeptRoster(prev => [
-        ...prev,
-        { id: `r_${Date.now()}`, name: vol.name, role: 'Team Member', status: 'Active', duty: 'General Roster' }
-      ]);
+      const newMember = {
+        id: `r_${Date.now()}`,
+        name: vol.name,
+        role: 'Team Member',
+        status: 'Active',
+        duty: 'General Roster & Sunday Support',
+        email: vol.email || '',
+        phone: vol.phone || '',
+        joined_date: new Date().toISOString().slice(0, 10)
+      };
+      const updatedRoster = [...deptRoster, newMember];
+      updateDeptRoster(updatedRoster);
+      setProposalSuccessToast(`Approved ${vol.name} and added to ${activeDept} roster!`);
+      setTimeout(() => setProposalSuccessToast(null), 4000);
     }
   };
 
@@ -3629,35 +3793,99 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           {/* Department Roster and Duty Assignments */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-base">{activeDept} Roster</h3>
-                  <p className="text-xs text-slate-400">{deptRoster.length} Active Team Members</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                      Team Roster
+                    </span>
+                    <span className="text-xs text-slate-400 font-semibold">• {deptRoster.length} Appointed Members</span>
+                  </div>
+                  <h3 className="font-extrabold text-slate-900 text-lg">{activeDept} Roster & Duties</h3>
                 </div>
-                <span className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 rounded-xl">
-                  Ready for Sunday
-                </span>
+
+                <button
+                  type="button"
+                  onClick={openAddRosterModal}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all self-start sm:self-auto"
+                >
+                  <UserPlus size={15} /> Appoint Team Member
+                </button>
               </div>
 
-              <div className="space-y-2.5">
-                {deptRoster.map(member => (
-                  <div key={member.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-black flex items-center justify-center text-xs">
-                        {member.name[0]}
+              {deptRoster.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                  No appointed team members found for {activeDept}. Click "+ Appoint Team Member" to add leaders or workers!
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {deptRoster.map(member => (
+                    <div key={member.id} className="p-4 bg-slate-50 hover:bg-white hover:shadow-xs transition-all rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-black flex items-center justify-center text-sm shadow-xs shrink-0">
+                          {member.name ? member.name[0].toUpperCase() : 'M'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-extrabold text-slate-900 text-sm">{member.name}</h4>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                              member.status === 'Active' ? 'bg-emerald-100 text-emerald-800' :
+                              member.status === 'On Leave' ? 'bg-amber-100 text-amber-800' :
+                              'bg-indigo-100 text-indigo-800'
+                            }`}>
+                              {member.status}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-indigo-700 font-bold">{member.role}</p>
+                          {(member.email || member.phone) && (
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {member.email && <span>{member.email}</span>}
+                              {member.email && member.phone && <span> • </span>}
+                              {member.phone && <span>{member.phone}</span>}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-slate-900">{member.name}</h4>
-                        <p className="text-[10px] text-indigo-600 font-semibold">{member.role}</p>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Assigned Duty</span>
+                          <span className="font-bold text-slate-800">{member.duty}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                          <button
+                            type="button"
+                            onClick={() => setViewingRosterMember(member)}
+                            className="p-1.5 bg-white border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            title="View Member Profile & Duty Details"
+                          >
+                            <Eye size={14} />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openEditRosterMember(member)}
+                            className="p-1.5 bg-white border border-slate-200 text-slate-600 hover:text-amber-600 hover:border-amber-200 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            title="Edit Role Title & Duty Assignment"
+                          >
+                            <Edit size={14} />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRosterMember(member.id, member.name)}
+                            className="p-1.5 bg-white border border-slate-200 text-slate-600 hover:text-rose-600 hover:border-rose-200 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            title="Remove Member from Roster"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className="font-bold text-slate-700">{member.duty}</span>
-                      <p className="text-[10px] text-emerald-600 font-semibold">{member.status}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Volunteer Inquiries */}
@@ -5013,6 +5241,343 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- VIEW ROSTER MEMBER MODAL --- */}
+      {viewingRosterMember && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-black text-lg flex items-center justify-center shadow-md">
+                  {viewingRosterMember.name ? viewingRosterMember.name[0].toUpperCase() : 'M'}
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900">{viewingRosterMember.name}</h3>
+                  <span className="text-xs text-indigo-700 font-bold">{viewingRosterMember.role}</span>
+                </div>
+              </div>
+              <button onClick={() => setViewingRosterMember(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Department & Role Title</span>
+                <div className="font-extrabold text-slate-900">{activeDept} • {viewingRosterMember.role}</div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Assigned Service / Sunday Duty</span>
+                <div className="font-bold text-indigo-700">{viewingRosterMember.duty}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Current Status</span>
+                  <div>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                      viewingRosterMember.status === 'Active' ? 'bg-emerald-100 text-emerald-800' :
+                      viewingRosterMember.status === 'On Leave' ? 'bg-amber-100 text-amber-800' :
+                      'bg-indigo-100 text-indigo-800'
+                    }`}>
+                      {viewingRosterMember.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Appointed Since</span>
+                  <div className="font-bold text-slate-700">{viewingRosterMember.joined_date || '2023-01-15'}</div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Contact Information</span>
+                <div className="space-y-1 text-slate-700 font-medium">
+                  <div>📧 {viewingRosterMember.email || 'No email registered'}</div>
+                  <div>📞 {viewingRosterMember.phone || 'No phone registered'}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const m = viewingRosterMember;
+                  setViewingRosterMember(null);
+                  openEditRosterMember(m);
+                }}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Edit size={14} /> Edit Role & Duty
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewingRosterMember(null)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl text-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- EDIT ROSTER MEMBER MODAL --- */}
+      {editingRosterMember && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900">
+                  Edit Appointed Roster Role
+                </span>
+                <h3 className="text-xl font-black text-slate-900 mt-1">Modify Role Title & Duty</h3>
+                <p className="text-xs text-slate-500">Update appointed title and service responsibilities for {activeDept}.</p>
+              </div>
+              <button onClick={() => setEditingRosterMember(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRosterEdit} className="space-y-4 text-xs">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Member Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editRosterName}
+                  onChange={e => setEditRosterName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Appointed Role Title *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Media Lead / Tenor Singer"
+                    value={editRosterRole}
+                    onChange={e => setEditRosterRole(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Member Status *</label>
+                  <select
+                    value={editRosterStatus}
+                    onChange={e => setEditRosterStatus(e.target.value as any)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="On Leave">On Leave</option>
+                    <option value="In Training">In Training</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Assigned Sunday / Service Duty *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sanctuary Main Stream Switcher"
+                  value={editRosterDuty}
+                  onChange={e => setEditRosterDuty(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="name@gmail.com"
+                    value={editRosterEmail}
+                    onChange={e => setEditRosterEmail(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="+232 76 000000"
+                    value={editRosterPhone}
+                    onChange={e => setEditRosterPhone(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingRosterMember(null)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
+                >
+                  Save Role Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- APPOINT NEW ROSTER MEMBER MODAL --- */}
+      {showAddRosterModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                  New Team Appointment
+                </span>
+                <h3 className="text-xl font-black text-slate-900 mt-1">Appoint Member to {activeDept}</h3>
+                <p className="text-xs text-slate-500">Add a new church worker or leader to the active department roster.</p>
+              </div>
+              <button onClick={() => setShowAddRosterModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddRosterMember} className="space-y-4 text-xs">
+              <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2">
+                <label className="font-extrabold text-indigo-900 block">Quick Pick from Congregation Directory (Optional)</label>
+                <select
+                  value={selectedCongregationMemberId}
+                  onChange={e => {
+                    const mId = e.target.value;
+                    setSelectedCongregationMemberId(mId);
+                    if (mId) {
+                      const found = congregationMembers.find(m => m.id === mId);
+                      if (found) {
+                        setAddRosterName(`${found.first_name} ${found.last_name}`);
+                        setAddRosterEmail(found.email || '');
+                        setAddRosterPhone(found.phone || '');
+                      }
+                    }
+                  }}
+                  className="w-full p-2 bg-white border border-indigo-200 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer"
+                >
+                  <option value="">-- Choose registered congregation member --</option>
+                  {congregationMembers.map(m => (
+                    <option key={m.id} value={m.id}>
+                      👤 {m.first_name} {m.last_name} ({m.email || 'Member'})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-indigo-700 font-medium">Selecting auto-fills name and contact details. Or type details manually below!</p>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Member Full Name (Manual or Auto-Filled) *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Jonathan Davis"
+                  value={addRosterName}
+                  onChange={e => setAddRosterName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Appointed Role Title *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Sound Engineer / Soprano Lead"
+                    value={addRosterRole}
+                    onChange={e => setAddRosterRole(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Initial Status *</label>
+                  <select
+                    value={addRosterStatus}
+                    onChange={e => setAddRosterStatus(e.target.value as any)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="In Training">In Training</option>
+                    <option value="On Leave">On Leave</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Assigned Sunday / Service Duty *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sunday 1st Service Lead"
+                  value={addRosterDuty}
+                  onChange={e => setAddRosterDuty(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="jdavis@gmail.com"
+                    value={addRosterEmail}
+                    onChange={e => setAddRosterEmail(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="+232 76 123456"
+                    value={addRosterPhone}
+                    onChange={e => setAddRosterPhone(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddRosterModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <UserPlus size={15} /> Confirm Appointment
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -8024,6 +8589,17 @@ const App = () => {
 
     initializeAuth();
 
+    const handleProfileSync = (e: any) => {
+      if (e.detail) {
+        setProfile(prev => {
+          if (!prev) return e.detail;
+          if (e.detail.id && e.detail.id !== prev.id) return prev;
+          return { ...prev, ...e.detail };
+        });
+      }
+    };
+    window.addEventListener('profile-updated', handleProfileSync);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
       setSession(currentSession);
       if (currentSession) {
@@ -8034,7 +8610,10 @@ const App = () => {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('profile-updated', handleProfileSync);
+    };
   }, []);
 
   if (loading) {
