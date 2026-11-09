@@ -4,6 +4,7 @@ import { supabase } from './supabaseClient';
 import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { hasPermission, getUserPermissions, ALL_PERMISSIONS, getCustomRoles, getRoleAssignments } from './roleService';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
@@ -2906,6 +2907,43 @@ const MinistriesAdminTab = () => {
 const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => void }) => {
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
   const [records, setRecords] = useState<FinancialRecord[]>([]);
+  const [requisitions, setRequisitions] = useState(() => getRequisitions());
+
+  useEffect(() => {
+    const handleUpd = () => setRequisitions(getRequisitions());
+    window.addEventListener('requisitions_updated', handleUpd);
+    return () => window.removeEventListener('requisitions_updated', handleUpd);
+  }, []);
+
+  const handleBoardApprove = (reqId: string) => {
+    const note = prompt("Enter Senior Pastor & Board approval note:", "Approved by Senior Pastor Rev. Sarah Johnson in full. Forwarded to Finance Officer for final disbursement.");
+    if (note === null) return;
+    const updated = requisitions.map(r => r.id === reqId ? {
+      ...r,
+      status: 'pastor_approved' as const,
+      pastor_approved_by: 'Rev. Sarah Johnson (Senior Pastor)',
+      pastor_approved_at: new Date().toISOString(),
+      pastor_approval_notes: note,
+      board_approved_by: 'Rev. Sarah Johnson (Senior Pastor)',
+      board_approved_at: new Date().toISOString(),
+      board_notes: note
+    } : r);
+    setRequisitions(updated);
+    saveRequisitions(updated);
+    alert("Requisition approved by Senior Pastor! Forwarded to Finance Officer for final disbursement.");
+  };
+
+  const handleBoardReject = (reqId: string) => {
+    const reason = prompt("Enter Board decline reason:");
+    if (!reason) return;
+    const updated = requisitions.map(r => r.id === reqId ? {
+      ...r,
+      status: 'rejected' as const,
+      board_notes: `Declined by Board: ${reason}`
+    } : r);
+    setRequisitions(updated);
+    saveRequisitions(updated);
+  };
   
   // Modals & Controls
   const [showEntryModal, setShowEntryModal] = useState(false);
@@ -3274,7 +3312,104 @@ const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => vo
         </div>
       </div>
 
-      {/* Verification Filter Bar */}
+      {/* Senior Pastor & Executive Board Requisition Approvals Card */}
+      {(() => {
+        const boardReqs = requisitions.filter(r => r.status === 'pending_pastor_approval' || r.status === 'submitted_to_board' || r.status === 'pending_approval');
+        if (boardReqs.length === 0) return null;
+
+        return (
+          <div className="bg-white p-6 rounded-3xl border border-purple-200 shadow-md space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-900 border border-purple-200">
+                  Senior Pastor & Executive Board Governance
+                </span>
+                <h3 className="text-xl font-black text-slate-900 mt-1 flex items-center gap-2">
+                  <ShieldCheck className="text-purple-600" size={22} />
+                  Department Funding Proposals Awaiting Board Authorization ({boardReqs.length})
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Department heads submit proposals; Finance Officers triage and escalate major expenditures to the Pastoral Board for final authorization.
+                </p>
+              </div>
+
+              <span className="px-3 py-1 bg-purple-50 text-purple-800 font-bold rounded-xl text-xs shrink-0 self-start sm:self-auto">
+                Pastoral Board Queue
+              </span>
+            </div>
+
+            <div className="space-y-4">
+              {boardReqs.map(req => {
+                const standing = getDepartmentFinancialStanding(req.department_name, requisitions);
+                const isEscalated = req.status === 'submitted_to_board';
+
+                return (
+                  <div key={req.id} className="p-5 bg-purple-50/40 rounded-2xl border border-purple-100 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white text-slate-800 border border-slate-200">
+                            {req.requisition_number}
+                          </span>
+                          <span className="font-bold text-slate-900 text-sm">{req.department_name}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${standing.badge_color}`}>
+                            Standing: {standing.standing_status} ({standing.reconciliation_compliance_rate}% Receipts Reconciled)
+                          </span>
+                        </div>
+                        <h4 className="font-black text-slate-900 text-base">{req.title}</h4>
+                        <p className="text-xs text-slate-600 mt-0.5 max-w-xl">{req.description}</p>
+                      </div>
+
+                      <div className="text-left sm:text-right shrink-0">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Authorized Funding</span>
+                        <div className="text-2xl font-black text-purple-900 font-mono">
+                          {req.currency || 'SLE'} {req.requested_amount.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    {req.finance_officer_review_notes && (
+                      <p className="text-xs text-amber-900 bg-amber-50 p-2.5 rounded-xl border border-amber-200 italic">
+                        <strong>Finance Officer Triage Note:</strong> "{req.finance_officer_review_notes}" ({req.reviewed_by || 'Treasury'})
+                      </p>
+                    )}
+
+                    {/* Line items preview */}
+                    <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs divide-y divide-slate-100">
+                      {req.items.map(item => (
+                        <div key={item.id} className="py-1 flex justify-between">
+                          <span>{item.item_name} (x{item.quantity})</span>
+                          <strong className="font-mono">SLE {item.total_price.toLocaleString()}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-purple-100 text-xs">
+                      <span className="text-slate-500 font-medium">Submitted by: <strong>{req.applicant_name}</strong></span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleBoardApprove(req.id)}
+                          className="px-4 py-2 bg-purple-700 hover:bg-purple-800 text-white font-black rounded-xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <CheckCircle2 size={15} /> Authorize & Approve Funding
+                        </button>
+                        <button
+                          onClick={() => handleBoardReject(req.id)}
+                          className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold border border-rose-200 rounded-xl text-xs cursor-pointer"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+
       <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs font-bold">
         {/* Mobile Dropdown Filter (< sm) */}
         <div className="sm:hidden space-y-1.5 w-full">

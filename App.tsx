@@ -7,14 +7,17 @@ import {
   ShieldCheck, MapPin, Share2, ClipboardList, AlertCircle, Search, Filter, Plus, 
   CheckCircle2, Clock, Play, Radio, MessageSquare, Send, BookOpen, Heart, Sparkles, ChevronRight, ChevronLeft, ArrowRight,
   Building2, Layers, Church, Gift, FileText, Download, Check, ShieldAlert, Award, Trophy, Star,
-  Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard
+  Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, isConfigured, resetLocalDatabase } from './supabaseClient';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Member, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { getGivingConfig } from './givingConfig';
-import { getRequisitions, saveRequisitions } from './requisitionService';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
+import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
+import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
+import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 
@@ -183,11 +186,12 @@ const Navbar = ({
 
 interface SidebarProps {
   role: string;
+  profile?: Profile | null;
   mobileOpen?: boolean;
   onClose?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ role, mobileOpen = false, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, onClose }) => {
   const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
 
@@ -200,8 +204,10 @@ const Sidebar: React.FC<SidebarProps> = ({ role, mobileOpen = false, onClose }) 
     return () => window.removeEventListener('church-profile-updated', handleUpdate);
   }, []);
 
-  const isLeaderOrStaff = ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker', 'finance_officer'].includes(role);
-  const isAdminOrPastor = ['admin', 'super_admin', 'pastor', 'district_admin', 'finance_officer'].includes(role);
+  const isLeaderOrStaff = ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) || Boolean(profile?.assigned_department || profile?.department_name);
+  const isAdminOrPastor = ['admin', 'super_admin', 'pastor', 'district_admin'].includes(role);
+  const isFinanceOfficer = role === 'finance_officer';
+  const canAccessFinance = isFinanceOfficer || isAdminOrPastor;
 
   const churchLifeLinks = [
     { to: '/portal', icon: Home, label: 'Church Overview' },
@@ -218,14 +224,17 @@ const Sidebar: React.FC<SidebarProps> = ({ role, mobileOpen = false, onClose }) 
     { to: '/portal/leader', icon: Award, label: 'Ministry Leader Console' }
   ] : [];
 
+  const financeLinks = canAccessFinance ? [
+    { to: '/portal/finance', icon: Landmark, label: 'Financial Officer Console' },
+    { to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger' }
+  ] : [];
+
   const adminLinks = isAdminOrPastor ? [
     { to: '/portal/admin?tab=overview', icon: LayoutDashboard, label: 'Admin Overview' },
     { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar' },
-    { to: '/portal/finance', icon: Landmark, label: 'Financial Officer Console' },
     { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster' },
     { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance' },
     { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams' },
-    { to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger' },
     { to: '/portal/admin?tab=streaming', icon: Video, label: 'Broadcast Studio' },
     { to: '/portal/admin?tab=multitenant', icon: Layers, label: 'Multi-Tenant Roadmap' },
     { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings' }
@@ -276,6 +285,35 @@ const Sidebar: React.FC<SidebarProps> = ({ role, mobileOpen = false, onClose }) 
           })}
         </div>
 
+        {/* Finance & Treasury Category (Finance Officer, Pastor, Admin) */}
+        {canAccessFinance && (
+          <div className="space-y-1 pt-4 border-t border-slate-100">
+            <p className="px-3 text-[10px] font-extrabold text-emerald-600 uppercase tracking-widest mb-2 flex items-center justify-between">
+              <span>Finance & Treasury</span>
+              <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-black">Treasury</span>
+            </p>
+            {financeLinks.map((link) => {
+              const currentFull = location.pathname + location.search;
+              const isActive = currentFull === link.to;
+              return (
+                <Link
+                  key={link.to}
+                  to={link.to}
+                  onClick={onClose}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    isActive
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100'
+                      : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                  }`}
+                >
+                  <link.icon size={16} />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+
         {/* Ministry Leadership Category (Leader, Worker, Pastor, Admin) */}
         {isLeaderOrStaff && (
           <div className="space-y-1 pt-4 border-t border-slate-100">
@@ -304,7 +342,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, mobileOpen = false, onClose }) 
           </div>
         )}
 
-        {/* Pastoral & Administration Category (Admin, Super Admin, Pastor) */}
+        {/* Pastoral & Administration Category (Admin, Super Admin, Pastor ONLY) */}
         {isAdminOrPastor && (
           <div className="space-y-1 pt-4 border-t border-slate-100">
             <p className="px-3 text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest mb-2 flex items-center justify-between">
@@ -1130,6 +1168,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formRole, setFormRole] = useState('member');
+  const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
   const [formStatus, setFormStatus] = useState('active');
   const [formAvatar, setFormAvatar] = useState('');
   const [formIsBaptized, setFormIsBaptized] = useState(false);
@@ -1179,6 +1218,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormEmail('');
     setFormPhone('');
     setFormRole('member');
+    setFormAssignedDepartment('Media & IT Ministry');
     setFormStatus('active');
     setFormAvatar('');
     setFormIsBaptized(true);
@@ -1199,6 +1239,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormEmail(p.email);
     setFormPhone(p.phone || '');
     setFormRole(p.primary_role || 'member');
+    setFormAssignedDepartment((p as any).assigned_department || (p as any).department_name || 'Media & IT Ministry');
     setFormStatus((p as any).status || 'active');
     setFormAvatar(p.avatar_url || '');
     setFormIsBaptized(Boolean((p as any).is_baptized));
@@ -1221,6 +1262,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       email: formEmail.trim(),
       phone: formPhone.trim(),
       primary_role: formRole as any,
+      department_name: formAssignedDepartment,
+      assigned_department: formAssignedDepartment,
       avatar_url: formAvatar || `https://picsum.photos/seed/${Date.now()}/200`,
       created_at: new Date().toISOString(),
       is_baptized: formIsBaptized,
@@ -1259,6 +1302,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       email: formEmail.trim(),
       phone: formPhone.trim(),
       primary_role: formRole as any,
+      department_name: formAssignedDepartment,
+      assigned_department: formAssignedDepartment,
       status: formStatus,
       avatar_url: formAvatar || editingPerson.avatar_url,
       is_baptized: formIsBaptized,
@@ -1717,7 +1762,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
-                    <option value="leader">Leader</option>
+                    <option value="leader">Leader (Dept Lead)</option>
                     <option value="pastor">Pastor</option>
                     <option value="admin">Admin</option>
                   </select>
@@ -1729,6 +1774,25 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                     <option value="suspended">Suspended</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-600 uppercase block mb-1">
+                  Assigned Department Console {formRole === 'leader' && <span className="text-indigo-600 font-extrabold">(Leader Assignment)</span>}
+                </label>
+                <select
+                  value={formAssignedDepartment}
+                  onChange={e => setFormAssignedDepartment(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none font-semibold cursor-pointer"
+                >
+                  <option value="Media & IT Ministry">Media & IT Ministry</option>
+                  <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                  <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                  <option value="Children Ministry">Children Ministry</option>
+                  <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                  <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                  <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+                </select>
               </div>
 
               {/* Date of Birth & Marital Status Section */}
@@ -1908,7 +1972,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
-                    <option value="leader">Leader</option>
+                    <option value="leader">Leader (Dept Lead)</option>
                     <option value="pastor">Pastor</option>
                     <option value="admin">Admin</option>
                   </select>
@@ -1921,6 +1985,25 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                     <option value="archived">Archived</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-600 uppercase block mb-1">
+                  Assigned Department Console {formRole === 'leader' && <span className="text-indigo-600 font-extrabold">(Leader Assignment)</span>}
+                </label>
+                <select
+                  value={formAssignedDepartment}
+                  onChange={e => setFormAssignedDepartment(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none font-semibold cursor-pointer"
+                >
+                  <option value="Media & IT Ministry">Media & IT Ministry</option>
+                  <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                  <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                  <option value="Children Ministry">Children Ministry</option>
+                  <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                  <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                  <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+                </select>
               </div>
 
               {/* Date of Birth & Marital Status Section */}
@@ -2048,7 +2131,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const [interestSubmitted, setInterestSubmitted] = useState(false);
   const navigate = useNavigate();
 
-  const isLeader = profile && ['leader', 'worker', 'super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role);
+  const isLeader = Boolean(
+    profile && (
+      ['leader', 'worker', 'super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role) ||
+      Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
+    )
+  );
   const isAdmin = profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role);
 
   useEffect(() => {
@@ -2263,16 +2351,432 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 // --- Leader & Worker Department Console ---
 
 const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
-  const isLeaderOrStaff = profile && ['super_admin', 'admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(profile.primary_role);
+  const isLeaderOrStaff = Boolean(
+    profile && (
+      ['super_admin', 'admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(profile.primary_role) ||
+      Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
+    )
+  );
   const navigate = useNavigate();
 
-  const [activeDept, setActiveDept] = useState('Media & IT Ministry');
-  const [leaderConsoleSubTab, setLeaderConsoleSubTab] = useState<'roster' | 'funding'>('funding');
+  // Only Admins and Pastors have permission to switch between all department consoles
+  const canSwitchDepts = Boolean(profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role));
   
-  // Requisitions loaded from requisitionService
+  // User's specifically assigned department
+  const userAssignedDept = (profile as any)?.assigned_department || (profile as any)?.department_name || 'Media & IT Ministry';
+
+  const [activeDept, setActiveDept] = useState(canSwitchDepts ? 'Media & IT Ministry' : userAssignedDept);
+  const [leaderConsoleSubTab, setLeaderConsoleSubTab] = useState<'funding' | 'dept_ledger' | 'roster'>('funding');
+
+  // Enforce department console isolation for assigned Department Leaders
+  useEffect(() => {
+    if (!canSwitchDepts && activeDept !== userAssignedDept) {
+      setActiveDept(userAssignedDept);
+    }
+  }, [profile, canSwitchDepts, userAssignedDept, activeDept]);
+
+  // Department Local Income & Expense Ledger State
+  const [deptLedgerRecords, setDeptLedgerRecords] = useState<DepartmentLedgerRecord[]>([]);
+  const [showDeptRecordModal, setShowDeptRecordModal] = useState(false);
+  const [deptRecordType, setDeptRecordType] = useState<'income' | 'expense'>('expense');
+  const [deptRecordCategory, setDeptRecordCategory] = useState('Equipment Maintenance & Supplies');
+  const [deptRecordDesc, setDeptRecordDesc] = useState('');
+  const [deptRecordAmount, setDeptRecordAmount] = useState('');
+  const [deptRecordVendor, setDeptRecordVendor] = useState('');
+  const [deptRecordMethod, setDeptRecordMethod] = useState<'cash' | 'mobile_money' | 'bank_transfer'>('cash');
+  const [deptRecordNotes, setDeptRecordNotes] = useState('');
+
+  // Document Scanner Modal State
+  const [showDocumentScanner, setShowDocumentScanner] = useState(false);
+  const [scannedReceiptUrl, setScannedReceiptUrl] = useState<string | null>(null);
+  const [inspectingReceiptUrl, setInspectingReceiptUrl] = useState<string | null>(null);
+  const [scannerContext, setScannerContext] = useState<'reconciliation' | 'ledger'>('reconciliation');
+
+  // Report Generator Modal State (Income & Expense Module)
+  const [showReportGeneratorModal, setShowReportGeneratorModal] = useState(false);
+  const [reportFilterType, setReportFilterType] = useState<'all' | 'income' | 'expense'>('all');
+  const [reportDateRange, setReportDateRange] = useState<'all' | 'this_month' | 'this_quarter' | 'this_year'>('all');
+
+  useEffect(() => {
+    setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+    const handleDeptUpd = (e: any) => {
+      if (!e.detail || e.detail.department === activeDept) {
+        setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+      }
+    };
+    window.addEventListener('dept_ledger_updated', handleDeptUpd);
+    return () => window.removeEventListener('dept_ledger_updated', handleDeptUpd);
+  }, [activeDept]);
+  
   const [requisitions, setRequisitions] = useState<DepartmentRequisition[]>([]);
   const [showProposalModal, setShowProposalModal] = useState(false);
   const [proposalSuccessToast, setProposalSuccessToast] = useState<string | null>(null);
+
+  // Proposal & Proforma Invoice Preview / Edit Modal State
+  const [showProposalPreviewModal, setShowProposalPreviewModal] = useState(false);
+  const [previewProposal, setPreviewProposal] = useState<DepartmentRequisition | null>(null);
+  const [previewTab, setPreviewTab] = useState<'invoice' | 'edit'>('invoice');
+
+  const handleSaveAndSubmitEditedProposal = (updatedReq: DepartmentRequisition) => {
+    const totalAmount = updatedReq.items.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unit_price || 0)), 0);
+    const finalReq: DepartmentRequisition = {
+      ...updatedReq,
+      requested_amount: totalAmount > 0 ? totalAmount : updatedReq.requested_amount,
+      items: updatedReq.items.map((item, idx) => ({
+        ...item,
+        total_price: Number(item.quantity || 1) * Number(item.unit_price || 0)
+      }))
+    };
+
+    const exists = requisitions.some(r => r.id === finalReq.id);
+    let updatedList: DepartmentRequisition[];
+    if (exists) {
+      updatedList = requisitions.map(r => r.id === finalReq.id ? finalReq : r);
+    } else {
+      updatedList = [finalReq, ...requisitions];
+    }
+
+    saveRequisitions(updatedList);
+    setRequisitions(updatedList);
+    setShowProposalPreviewModal(false);
+    setShowProposalModal(false);
+    setPreviewProposal(null);
+
+    setProposalSuccessToast(`Proposal & Proforma Invoice ${finalReq.requisition_number} saved & submitted for Senior Pastor & Board Approval!`);
+    setTimeout(() => setProposalSuccessToast(null), 6000);
+  };
+
+  const handlePrintProformaInvoicePDF = (req: DepartmentRequisition) => {
+    const printWin = window.open('', '_blank');
+    if (!printWin) return;
+    const cp = getChurchProfile();
+    const totalAmount = req.items.reduce((s, i) => s + (i.total_price || (i.quantity * i.unit_price)), 0);
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${cp.name} - Official Proforma Invoice & Proposal ${req.requisition_number}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #0f172a; }
+            .header { border-bottom: 3px solid #4338ca; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; }
+            .logo { font-size: 24px; font-weight: 900; color: #4338ca; }
+            .sub { font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px; }
+            .badge { display: inline-block; padding: 4px 10px; background: #e0e7ff; color: #3730a3; font-size: 10px; font-weight: 800; border-radius: 6px; text-transform: uppercase; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; background: #f8fafc; padding: 15px; border-radius: 12px; font-size: 12px; border: 1px solid #e2e8f0; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 12px; }
+            th { background: #f1f5f9; text-align: left; padding: 10px; font-size: 10px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 800; }
+            td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+            .total-box { text-align: right; font-size: 18px; font-weight: 900; color: #4338ca; padding: 15px; background: #e0e7ff; border-radius: 12px; margin-bottom: 30px; }
+            .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 50px; border-top: 2px dashed #cbd5e1; padding-top: 20px; font-size: 11px; }
+            .sig-line { border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="logo">${cp.name.toUpperCase()}</div>
+              <div class="sub">${req.department_name} • Internal Procurement Proposal & Proforma Invoice</div>
+              <div style="margin-top: 6px;"><span class="badge">Status: ${req.status.replace(/_/g, ' ').toUpperCase()} | Priority: ${req.priority.toUpperCase()}</span></div>
+            </div>
+            <div style="text-align: right;">
+              <div class="sub">Invoice Ref: ${req.requisition_number}</div>
+              <div class="sub">Date: ${new Date(req.created_at).toLocaleDateString()}</div>
+              <div class="sub">Needed By: ${req.needed_by_date || 'Urgent'}</div>
+            </div>
+          </div>
+
+          <h2 style="font-size: 16px; margin-bottom: 4px; font-weight: 900;">${req.title.toUpperCase()}</h2>
+          <p style="font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 20px;">${req.description}</p>
+
+          <div class="grid">
+            <div>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Applicant Leader:</strong><br/>
+              <span style="font-weight: 800; color: #0f172a;">${req.applicant_name} (${req.applicant_role || 'Ministry Lead'})</span>
+            </div>
+            <div>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Disbursement Channel:</strong><br/>
+              <span style="font-weight: 800; color: #0f172a;">${req.disbursement_method?.replace('_', ' ').toUpperCase()} • ${req.disbursement_account_info || 'Church Treasury Standard'}</span>
+            </div>
+          </div>
+
+          <h3 style="font-size: 13px; margin-bottom: 10px; font-weight: 800;">Itemized Quotation Breakdown</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Item Name & Specifications</th>
+                <th style="text-align: center;">Quantity</th>
+                <th style="text-align: right;">Unit Price (SLE)</th>
+                <th style="text-align: right;">Line Total (SLE)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${req.items.map(i => `
+                <tr>
+                  <td><strong>${i.item_name}</strong></td>
+                  <td style="text-align: center;">${i.quantity}</td>
+                  <td style="text-align: right; font-family: monospace;">${i.unit_price.toLocaleString()}</td>
+                  <td style="text-align: right; font-weight: 900; font-family: monospace; color: #4338ca;">
+                    ${(i.quantity * i.unit_price).toLocaleString()}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="total-box">
+            TOTAL INVOICE AMOUNT: SLE ${totalAmount.toLocaleString()}
+          </div>
+
+          <div class="signatures">
+            <div>
+              <div class="sig-line"></div>
+              <strong>Submitted By</strong><br/>
+              ${req.applicant_name}
+            </div>
+            <div>
+              <div class="sig-line"></div>
+              <strong>Senior Pastor Authorization</strong><br/>
+              Rev. Sarah Johnson
+            </div>
+            <div>
+              <div class="sig-line"></div>
+              <strong>Financial Officer Audit</strong><br/>
+              Sahr Sesay (Financial Controller)
+            </div>
+          </div>
+
+          <script>window.onload = function() { window.print(); }</script>
+        </body>
+      </html>
+    `;
+
+    printWin.document.write(html);
+    printWin.document.close();
+  };
+
+  // Expenditure & Receipt Upload Modal State
+  const [reconcileReq, setReconcileReq] = useState<DepartmentRequisition | null>(null);
+  const [actualSpentInput, setActualSpentInput] = useState<string>('');
+  const [receiptProofInput, setReceiptProofInput] = useState<string>('');
+  const [receiptNotesInput, setReceiptNotesInput] = useState<string>('');
+
+  const openReconcileModal = (req: DepartmentRequisition) => {
+    setReconcileReq(req);
+    setActualSpentInput(String(req.requested_amount));
+    setReceiptProofInput(req.vendor_quote_url || 'Vendor_Tax_Receipt_Signed.pdf');
+    setReceiptNotesInput(`Purchased ${req.title}. All items received and verified.`);
+    setScannedReceiptUrl(null);
+  };
+
+  const handleConfirmReconciliation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reconcileReq) return;
+    const spent = Number(actualSpentInput) || 0;
+    const unspent = Math.max(0, reconcileReq.requested_amount - spent);
+
+    const updated = requisitions.map(r => r.id === reconcileReq.id ? {
+      ...r,
+      status: 'reconciled' as const,
+      actual_amount_spent: spent,
+      unspent_balance_returned: unspent,
+      receipt_proof_url: scannedReceiptUrl || receiptProofInput.trim() || 'Vendor_Tax_Receipt_Signed.pdf',
+      receipt_notes: receiptNotesInput.trim(),
+      reconciled_at: new Date().toISOString(),
+      reconciled_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Lead'
+    } : r);
+
+    setRequisitions(updated);
+    saveRequisitions(updated);
+    setReconcileReq(null);
+    setScannedReceiptUrl(null);
+    setProposalSuccessToast(`Receipt & Expenditure Report submitted for ${reconcileReq.requisition_number}! The Finance Officer has been notified to audit & settle in Good Standing.`);
+    setTimeout(() => setProposalSuccessToast(null), 6000);
+  };
+
+  const handleSaveDeptRecord = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deptRecordAmount || Number(deptRecordAmount) <= 0) return;
+
+    const newRecord: DepartmentLedgerRecord = {
+      id: `drec-${Date.now()}`,
+      department_name: activeDept,
+      type: deptRecordType,
+      category: deptRecordCategory,
+      description: deptRecordDesc.trim() || `${deptRecordType.toUpperCase()} Entry`,
+      amount: Number(deptRecordAmount),
+      currency: 'SLE',
+      date: new Date().toISOString(),
+      recorded_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Lead',
+      vendor_name: deptRecordVendor.trim() || undefined,
+      payment_method: deptRecordMethod,
+      notes: deptRecordNotes.trim() || undefined,
+      receipt_image_url: scannedReceiptUrl || undefined
+    };
+
+    saveDepartmentLedgerRecord(newRecord);
+    setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+    setShowDeptRecordModal(false);
+    setDeptRecordDesc('');
+    setDeptRecordAmount('');
+    setDeptRecordVendor('');
+    setDeptRecordNotes('');
+    setScannedReceiptUrl(null);
+    setProposalSuccessToast(`Department ${deptRecordType} entry of SLE ${Number(deptRecordAmount).toLocaleString()} recorded successfully!`);
+    setTimeout(() => setProposalSuccessToast(null), 5000);
+  };
+
+  const handleGenerateDeptFinancialPDFReport = (
+    deptName: string, 
+    filterType: 'all' | 'income' | 'expense' = 'all', 
+    dateRange: string = 'all'
+  ) => {
+    const printWin = window.open('', '_blank');
+    if (!printWin) return;
+    const cp = getChurchProfile();
+    const summary = getDepartmentLedgerSummary(deptName);
+
+    // Filter records based on selected filterType and dateRange
+    let filteredRecords = summary.records;
+    if (filterType === 'income') {
+      filteredRecords = filteredRecords.filter(r => r.type === 'income');
+    } else if (filterType === 'expense') {
+      filteredRecords = filteredRecords.filter(r => r.type === 'expense');
+    }
+
+    const now = new Date();
+    if (dateRange === 'this_month') {
+      filteredRecords = filteredRecords.filter(r => {
+        const d = new Date(r.date);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      });
+    } else if (dateRange === 'this_quarter') {
+      const q = Math.floor(now.getMonth() / 3);
+      filteredRecords = filteredRecords.filter(r => {
+        const d = new Date(r.date);
+        return Math.floor(d.getMonth() / 3) === q && d.getFullYear() === now.getFullYear();
+      });
+    } else if (dateRange === 'this_year') {
+      filteredRecords = filteredRecords.filter(r => new Date(r.date).getFullYear() === now.getFullYear());
+    }
+
+    const totalInc = filteredRecords.filter(r => r.type === 'income').reduce((s, r) => s + r.amount, 0);
+    const totalExp = filteredRecords.filter(r => r.type === 'expense').reduce((s, r) => s + r.amount, 0);
+    const netBal = totalInc - totalExp;
+
+    const reportTitle = filterType === 'income' 
+      ? 'DEPARTMENT INCOME & REVENUE STATEMENT' 
+      : filterType === 'expense' 
+      ? 'DEPARTMENT EXPENDITURE & EXPENSE REPORT' 
+      : 'DEPARTMENT FINANCIAL OPERATIONS STATEMENT';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${cp.name} - ${deptName} ${reportTitle}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #0f172a; }
+            .header { border-bottom: 3px solid #1e1b4b; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; }
+            .logo { font-size: 22px; font-weight: 900; color: #1e1b4b; letter-spacing: -0.5px; }
+            .sub { font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px; }
+            .badge { display: inline-block; padding: 4px 10px; background: #e0e7ff; color: #3730a3; font-size: 10px; font-weight: 800; border-radius: 6px; text-transform: uppercase; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 25px; background: #f8fafc; padding: 15px; border-radius: 12px; font-size: 12px; border: 1px solid #e2e8f0; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 12px; }
+            th { background: #f1f5f9; text-align: left; padding: 10px; font-size: 10px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 800; }
+            td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+            .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 50px; border-top: 2px dashed #cbd5e1; padding-top: 20px; font-size: 11px; }
+            .sig-line { border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="logo">${cp.name.toUpperCase()}</div>
+              <div class="sub">${deptName} • Income & Expense Module Report</div>
+              <div style="margin-top: 6px;"><span class="badge">Scope: ${filterType.toUpperCase()} | Period: ${dateRange.replace('_', ' ').toUpperCase()}</span></div>
+            </div>
+            <div style="text-align: right;">
+              <div class="sub">Generated: ${new Date().toLocaleString()}</div>
+              <div class="sub">Doc Ref: RPT-${Date.now().toString().slice(-6)}</div>
+              <div class="sub">Currency: SLE</div>
+            </div>
+          </div>
+
+          <h2 style="font-size: 16px; margin-bottom: 4px; font-weight: 900; color: #0f172a;">${reportTitle}</h2>
+          <p style="font-size: 11px; color: #64748b; margin-top: 0; margin-bottom: 20px;">Official financial audit statement generated exclusively from the Department Income & Expense Ledger.</p>
+
+          <div class="grid">
+            <div>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Total Income:</strong><br/>
+              <span style="font-size: 16px; font-weight: 900; color: #059669;">SLE ${totalInc.toLocaleString()}</span>
+            </div>
+            <div>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Total Expenses:</strong><br/>
+              <span style="font-size: 16px; font-weight: 900; color: #e11d48;">SLE ${totalExp.toLocaleString()}</span>
+            </div>
+            <div>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Net Operating Position:</strong><br/>
+              <span style="font-size: 16px; font-weight: 900; color: ${netBal >= 0 ? '#4338ca' : '#e11d48'};">SLE ${netBal.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <h3 style="font-size: 13px; margin-bottom: 10px; font-weight: 800;">Itemized Income & Expense Ledger (${filteredRecords.length} Entries)</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Category & Description</th>
+                <th>Vendor / Payer</th>
+                <th>Payment Method</th>
+                <th style="text-align: right;">Amount (SLE)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredRecords.length === 0 ? `
+                <tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 20px;">No transactions recorded for this selected scope and period.</td></tr>
+              ` : filteredRecords.map(r => `
+                <tr>
+                  <td>${new Date(r.date).toLocaleDateString()}</td>
+                  <td style="font-weight: 800; text-transform: uppercase; color: ${r.type === 'expense' ? '#e11d48' : '#059669'};">${r.type}</td>
+                  <td><strong>${r.category}</strong><br/><span style="color: #64748b; font-size: 11px;">${r.description}</span></td>
+                  <td>${r.vendor_name || 'Department Internal'}</td>
+                  <td style="font-family: monospace; text-transform: uppercase; font-size: 10px; color: #64748b;">${r.payment_method ? r.payment_method.replace('_', ' ') : 'CASH'}</td>
+                  <td style="text-align: right; font-weight: 900; color: ${r.type === 'expense' ? '#e11d48' : '#059669'}">
+                    ${r.type === 'expense' ? '-' : '+'}${r.amount.toLocaleString()}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="signatures">
+            <div>
+              <div class="sig-line"></div>
+              <strong>Department Leader Sign-off</strong><br/>
+              ${profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'}
+            </div>
+            <div>
+              <div class="sig-line"></div>
+              <strong>Finance Officer Verification</strong><br/>
+              Sahr Sesay (Financial Controller)
+            </div>
+            <div>
+              <div class="sig-line"></div>
+              <strong>Senior Pastor Sign-off</strong><br/>
+              Rev. Sarah Johnson
+            </div>
+          </div>
+
+          <script>window.onload = function() { window.print(); }</script>
+        </body>
+      </html>
+    `;
+
+    printWin.document.write(html);
+    printWin.document.close();
+  };
 
   // Proposal Form State
   const [reqDept, setReqDept] = useState('Media & IT Ministry');
@@ -2374,6 +2878,46 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setNewNoticeText('');
   };
 
+  // Editing Existing Proposal State
+  const [editingReqId, setEditingReqId] = useState<string | null>(null);
+  const [editingReqNum, setEditingReqNum] = useState<string | null>(null);
+
+  const openNewProposalModal = () => {
+    setEditingReqId(null);
+    setEditingReqNum(null);
+    setReqDept(activeDept);
+    setReqApplicantName(profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader');
+    setReqApplicantRole('Department Head');
+    setReqTitle('');
+    setReqDesc('');
+    setReqPriority('high');
+    setReqNeededDate('');
+    setReqVendorQuote('');
+    setReqDisbMethod('bank_transfer');
+    setReqDisbInfo('');
+    setReqItems([
+      { item_name: 'Equipment / Service Quotation Item', quantity: 1, unit_price: 1500 }
+    ]);
+    setShowProposalModal(true);
+  };
+
+  const handleEditExistingProposal = (req: DepartmentRequisition) => {
+    setEditingReqId(req.id);
+    setEditingReqNum(req.requisition_number);
+    setReqDept(req.department_name);
+    setReqApplicantName(req.applicant_name);
+    setReqApplicantRole(req.applicant_role || 'Ministry Lead');
+    setReqTitle(req.title);
+    setReqDesc(req.description || '');
+    setReqPriority(req.priority);
+    setReqNeededDate(req.needed_by_date || '');
+    setReqVendorQuote(req.vendor_quote_url || '');
+    setReqDisbMethod(req.disbursement_method || 'bank_transfer');
+    setReqDisbInfo(req.disbursement_account_info || '');
+    setReqItems(req.items.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit_price: i.unit_price })));
+    setShowProposalModal(true);
+  };
+
   // Requisition Proposal Handlers
   const handleAddReqItemRow = () => {
     setReqItems(prev => [...prev, { item_name: '', quantity: 1, unit_price: 0 }]);
@@ -2387,8 +2931,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setReqItems(prev => prev.map((item, idx) => idx === index ? { ...item, [field]: val } : item));
   };
 
-  const handleSubmitFundingProposal = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveFundingProposal = (isDraft: boolean) => {
     if (!reqTitle.trim()) return;
 
     const formattedItems: RequisitionItem[] = reqItems.map((item, idx) => ({
@@ -2401,9 +2944,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
     const totalReqAmount = formattedItems.reduce((sum, item) => sum + item.total_price, 0);
 
-    const newReq: DepartmentRequisition = {
-      id: `req-${Date.now()}`,
-      requisition_number: `REQ-2026-00${requisitions.length + 1}`,
+    const targetReq: DepartmentRequisition = {
+      id: editingReqId || `req-${Date.now()}`,
+      requisition_number: editingReqNum || `REQ-2026-00${requisitions.length + 1}`,
       department_name: reqDept,
       applicant_name: reqApplicantName.trim() || `${profile?.first_name} ${profile?.last_name}`,
       applicant_role: reqApplicantRole.trim() || 'Ministry Leader',
@@ -2412,7 +2955,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       requested_amount: totalReqAmount > 0 ? totalReqAmount : 5000,
       currency: 'SLE',
       priority: reqPriority,
-      status: 'pending_approval',
+      status: isDraft ? 'draft' : 'pending_pastor_approval',
       created_at: new Date().toISOString(),
       needed_by_date: reqNeededDate || new Date(Date.now() + 86400000 * 14).toISOString().slice(0, 10),
       vendor_quote_url: reqVendorQuote.trim() || undefined,
@@ -2421,18 +2964,49 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       items: formattedItems
     };
 
-    const updated = [newReq, ...requisitions];
+    const exists = requisitions.some(r => r.id === targetReq.id);
+    const updated = exists 
+      ? requisitions.map(r => r.id === targetReq.id ? targetReq : r)
+      : [targetReq, ...requisitions];
+
     saveRequisitions(updated);
     setRequisitions(updated);
     setShowProposalModal(false);
+    setEditingReqId(null);
+    setEditingReqNum(null);
 
-    setProposalSuccessToast(`Funding proposal ${newReq.requisition_number} submitted! The Finance Officer has been notified to review and issue disbursement.`);
-    setTimeout(() => setProposalSuccessToast(null), 5000);
+    if (isDraft) {
+      setProposalSuccessToast(`Proposal saved as Draft (${targetReq.requisition_number}). You can edit or submit it whenever you're ready!`);
+    } else {
+      setProposalSuccessToast(`Funding proposal ${targetReq.requisition_number} submitted! Sent to Senior Pastor Rev. Sarah Johnson for initial approval before reaching the Finance Officer.`);
+    }
+    setTimeout(() => setProposalSuccessToast(null), 6000);
 
     setReqTitle('');
     setReqDesc('');
     setReqVendorQuote('');
     setReqDisbInfo('');
+  };
+
+  const handlePromoteDraftToSubmit = (reqId: string) => {
+    const updated = requisitions.map(r => r.id === reqId ? {
+      ...r,
+      status: 'pending_pastor_approval' as const
+    } : r);
+
+    saveRequisitions(updated);
+    setRequisitions(updated);
+    const target = requisitions.find(r => r.id === reqId);
+    setProposalSuccessToast(`Draft proposal ${target?.requisition_number || ''} submitted to Senior Pastor Rev. Sarah Johnson & Finance Board!`);
+    setTimeout(() => setProposalSuccessToast(null), 6000);
+  };
+
+  const handleDeleteProposal = (reqId: string) => {
+    const updated = requisitions.filter(r => r.id !== reqId);
+    saveRequisitions(updated);
+    setRequisitions(updated);
+    setProposalSuccessToast(`Proposal removed.`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
   };
 
   return (
@@ -2453,39 +3027,54 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           </p>
         </div>
 
-        {/* Action Button & Dept Selector */}
-        <div className="flex items-center gap-3">
+        {/* Action Button & Dept Selector / Restrict Badge */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => setShowProposalModal(true)}
+            onClick={openNewProposalModal}
             className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-2 cursor-pointer transition-all shrink-0"
           >
             <Plus size={16} /> Submit Funding Proposal
           </button>
 
-          <select 
-            value={activeDept}
-            onChange={(e) => {
-              setActiveDept(e.target.value);
-              setReqDept(e.target.value);
-            }}
-            className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-          >
-            <option value="Media & IT Ministry">Media & IT Ministry</option>
-            <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-            <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-            <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
-            <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-          </select>
+          {canSwitchDepts ? (
+            <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+              <span className="text-[10px] font-black uppercase text-indigo-700 tracking-wider px-2 flex items-center gap-1 shrink-0">
+                👑 Admin Access:
+              </span>
+              <select 
+                value={activeDept}
+                onChange={(e) => {
+                  setActiveDept(e.target.value);
+                  setReqDept(e.target.value);
+                }}
+                className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
+              >
+                <option value="Media & IT Ministry">Media & IT Ministry</option>
+                <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                <option value="Children Ministry">Children Ministry</option>
+                <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+              </select>
+            </div>
+          ) : (
+            <div className="px-3.5 py-2 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center gap-2 text-xs font-extrabold text-indigo-900 shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+              <span>🔒 {activeDept} Console</span>
+              <span className="text-[10px] font-normal text-indigo-600 font-mono">(Assigned Leader View)</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Console Sub-Tab Switcher */}
-      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 overflow-x-auto">
         <button
           type="button"
           onClick={() => setLeaderConsoleSubTab('funding')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
             leaderConsoleSubTab === 'funding'
               ? 'bg-white text-indigo-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -2500,8 +3089,24 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
         <button
           type="button"
+          onClick={() => setLeaderConsoleSubTab('dept_ledger')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+            leaderConsoleSubTab === 'dept_ledger'
+              ? 'bg-white text-indigo-700 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Landmark size={15} />
+          <span>Department Income & Expense Ledger</span>
+          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+            {deptLedgerRecords.length} Entries
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setLeaderConsoleSubTab('roster')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
             leaderConsoleSubTab === 'roster'
               ? 'bg-white text-indigo-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -2531,6 +3136,46 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       {/* MODULE 1: INTERNAL FUNDING PROPOSALS VIEW */}
       {leaderConsoleSubTab === 'funding' ? (
         <div className="space-y-6">
+          {/* Department Financial Standing & Compliance Header */}
+          {(() => {
+            const activeDeptStanding = getDepartmentFinancialStanding(activeDept, requisitions);
+            return (
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-md border border-indigo-900/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      360° Financial Governance Rating
+                    </span>
+                    <span className="text-xs text-slate-300 font-semibold">• {activeDept}</span>
+                  </div>
+                  <h3 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
+                    <ShieldCheck className="text-emerald-400" size={22} />
+                    Department Standing: <span className="text-emerald-300">{activeDeptStanding.standing_status}</span>
+                  </h3>
+                  <p className="text-xs text-indigo-200/80 max-w-xl">
+                    Timely submission of expenditure reports and vendor receipts directly impacts future budget authorizations by the Finance Officer & Board.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-indigo-800/80 pt-3 md:pt-0 md:pl-6 shrink-0 text-xs">
+                  <div>
+                    <span className="text-indigo-300 font-medium block">Compliance Rate</span>
+                    <span className="text-2xl font-black text-emerald-400 font-mono">{activeDeptStanding.reconciliation_compliance_rate}%</span>
+                  </div>
+                  <div>
+                    <span className="text-indigo-300 font-medium block">Total Disbursed</span>
+                    <span className="text-lg font-black text-white font-mono">SLE {activeDeptStanding.total_disbursed_amount.toLocaleString()}</span>
+                  </div>
+                  {activeDeptStanding.pending_receipts_count > 0 && (
+                    <div className="px-3 py-1.5 bg-amber-400/20 border border-amber-400/40 text-amber-200 rounded-xl font-bold text-[11px] animate-pulse">
+                      ⚠️ {activeDeptStanding.pending_receipts_count} Receipt Pending
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
@@ -2539,13 +3184,13 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </span>
                 <h3 className="text-xl font-black text-slate-900 mt-1">Department Equipment & Budget Proposals</h3>
                 <p className="text-xs text-slate-500 mt-0.5 max-w-xl">
-                  Submit equipment proposals (e.g. video cameras, editing workstations, wireless mics, soundboards) directly to the Finance Officer.
+                  Submit equipment proposals (e.g. video cameras, editing workstations, wireless mics) directly to the Finance Officer & Board.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowProposalModal(true)}
+                onClick={openNewProposalModal}
                 className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-2 cursor-pointer transition-all self-start sm:self-auto"
               >
                 <Plus size={16} /> Draft New Proposal
@@ -2588,12 +3233,27 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             {req.currency || 'SLE'} {req.requested_amount.toLocaleString()}
                           </div>
                           <span className={`inline-block mt-1 px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            req.status === 'draft' ? 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold' :
+                            req.status === 'pending_pastor_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
+                            req.status === 'pastor_approved' ? 'bg-purple-600 text-white font-bold' :
                             req.status === 'pending_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                            req.status === 'approved' ? 'bg-indigo-100 text-indigo-800' :
-                            req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800' :
+                            req.status === 'submitted_to_board' ? 'bg-purple-100 text-purple-800 animate-bounce' :
+                            req.status === 'approved' ? 'bg-indigo-100 text-indigo-800 font-bold' :
+                            req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800 font-bold' :
+                            req.status === 'reconciled' ? 'bg-teal-100 text-teal-800 font-bold' :
+                            req.status === 'settled' ? 'bg-emerald-800 text-white font-bold' :
                             'bg-rose-100 text-rose-800'
                           }`}>
-                            {req.status === 'pending_approval' ? 'Pending Finance Review' : req.status === 'disbursed' ? 'Invoiced & Disbursed' : req.status}
+                            {req.status === 'draft' ? '📝 Draft (Saved — Not Submitted)' :
+                             req.status === 'pending_pastor_approval' ? 'Step 1: Awaiting Senior Pastor Approval' :
+                             req.status === 'pastor_approved' ? 'Step 2: Approved by Senior Pastor — Sent to Finance' :
+                             req.status === 'pending_approval' ? 'Under Finance Triage' : 
+                             req.status === 'submitted_to_board' ? 'Escalated to Executive Board' :
+                             req.status === 'approved' ? 'Authorized by Board' :
+                             req.status === 'disbursed' ? 'Disbursed (Awaiting Receipts)' :
+                             req.status === 'reconciled' ? 'Receipts Uploaded (Under Audit)' :
+                             req.status === 'settled' ? 'Audited & Settled in Good Standing' :
+                             req.status}
                           </span>
                         </div>
                       </div>
@@ -2614,6 +3274,24 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                         </div>
                       </div>
 
+                      {/* Submitted Receipts & Reconciliation Preview */}
+                      {(req.status === 'reconciled' || req.status === 'settled') && (
+                        <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-2xl text-xs space-y-1.5 text-teal-950">
+                          <div className="flex justify-between font-black">
+                            <span className="flex items-center gap-1 text-teal-800">
+                              <CheckCircle2 size={15} className="text-teal-600" />
+                              Expenditure Report & Vendor Tax Receipt Submitted
+                            </span>
+                            <span className="font-mono">Spent: SLE {(req.actual_amount_spent || req.requested_amount).toLocaleString()}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 pt-0.5">
+                            <span>Receipt Proof: <strong className="text-indigo-700 font-mono">{req.receipt_proof_url}</strong></span>
+                            <span>Unspent Returned: <strong className="text-emerald-700 font-mono">SLE {(req.unspent_balance_returned || 0).toLocaleString()}</strong></span>
+                          </div>
+                          {req.receipt_notes && <p className="italic text-slate-600 text-[11px]">"{req.receipt_notes}"</p>}
+                        </div>
+                      )}
+
                       <div className="text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div>
                           <span>Preferred Payment: <strong className="text-slate-800 uppercase">{req.disbursement_method?.replace('_', ' ')}</strong></span>
@@ -2621,11 +3299,61 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             <span className="ml-3 font-mono text-slate-700">• Account: {req.disbursement_account_info}</span>
                           )}
                         </div>
-                        {req.status === 'disbursed' && req.transaction_ref && (
-                          <div className="px-3 py-1 bg-emerald-50 text-emerald-800 font-bold rounded-xl border border-emerald-200 text-xs flex items-center gap-1.5">
-                            <CheckCircle2 size={14} className="text-emerald-600" /> Disbursed Ref: {req.transaction_ref}
-                          </div>
-                        )}
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {req.status === 'draft' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleEditExistingProposal(req)}
+                                className="px-3.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer border border-amber-300"
+                              >
+                                <Edit size={14} /> Edit Draft
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handlePromoteDraftToSubmit(req.id)}
+                                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              >
+                                <Send size={14} /> Submit for Approval
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteProposal(req.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                                title="Delete Draft"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPreviewProposal({ ...req, items: req.items.map(i => ({ ...i })) });
+                                setShowProposalPreviewModal(true);
+                              }}
+                              className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                            >
+                              <FileText size={14} /> View Proforma Invoice
+                            </button>
+                          )}
+
+                          {req.status === 'disbursed' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-emerald-700 font-semibold">Ref: {req.transaction_ref}</span>
+                              <button
+                                type="button"
+                                onClick={() => openReconcileModal(req)}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer transition-all animate-pulse"
+                              >
+                                <Upload size={14} /> Reconcile Spending & Upload Receipts
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -2634,8 +3362,269 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
             </div>
           </div>
         </div>
+      ) : leaderConsoleSubTab === 'dept_ledger' ? (
+        /* MODULE 2: DEPARTMENT INCOME & EXPENSE LEDGER VIEW */
+        <div className="space-y-6">
+          {/* Summary KPIs - Strictly 3 columns per row across all screen sizes */}
+          {(() => {
+            const summary = getDepartmentLedgerSummary(activeDept);
+            return (
+              <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                  <div className="flex justify-between items-start gap-1">
+                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                      DEPARTMENT<br className="sm:hidden" /> REVENUE
+                    </span>
+                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                      <DollarSign size={14} className="sm:w-4 sm:h-4" />
+                    </span>
+                  </div>
+                  <div className="text-sm sm:text-2xl font-black text-emerald-600 font-mono tracking-tight my-0.5">
+                    SLE {summary.totalIncome.toLocaleString()}
+                  </div>
+                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Offerings & Grants</p>
+                </div>
+
+                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                  <div className="flex justify-between items-start gap-1">
+                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                      DEPARTMENT<br className="sm:hidden" /> EXPENSES
+                    </span>
+                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-rose-50 text-rose-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                      <ShoppingCart size={14} className="sm:w-4 sm:h-4" />
+                    </span>
+                  </div>
+                  <div className="text-sm sm:text-2xl font-black text-rose-600 font-mono tracking-tight my-0.5">
+                    SLE {summary.totalExpenses.toLocaleString()}
+                  </div>
+                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Supplies & Repairs</p>
+                </div>
+
+                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                  <div className="flex justify-between items-start gap-1">
+                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                      NET OPERATING<br className="sm:hidden" /> BALANCE
+                    </span>
+                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-indigo-50 text-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                      <Landmark size={14} className="sm:w-4 sm:h-4" />
+                    </span>
+                  </div>
+                  <div className={`text-sm sm:text-2xl font-black font-mono tracking-tight my-0.5 ${summary.netBalance >= 0 ? 'text-indigo-700' : 'text-rose-600'}`}>
+                    SLE {summary.netBalance.toLocaleString()}
+                  </div>
+                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Treasury Liquidity</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Department Ledger Header & Action Bar */}
+          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                  Treasury Ledger
+                </span>
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">{activeDept} Financial Operations</h3>
+                <p className="text-xs text-slate-500 mt-0.5 max-w-xl">
+                  Track and record ministry offerings, event collections, equipment repairs, and physical vendor receipts.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeptRecordType('income');
+                    setDeptRecordCategory('Ministry Offering & Grants');
+                    setShowDeptRecordModal(true);
+                  }}
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                >
+                  <Plus size={14} /> Record Income
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeptRecordType('expense');
+                    setDeptRecordCategory('Equipment Maintenance & Supplies');
+                    setShowDeptRecordModal(true);
+                  }}
+                  className="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                >
+                  <Plus size={14} /> Record Expense
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScannerContext('ledger');
+                    setShowDocumentScanner(true);
+                  }}
+                  className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                >
+                  <Camera size={14} /> Scan Receipt
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowReportGeneratorModal(true)}
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                >
+                  <Printer size={14} /> Audit Report (PDF)
+                </button>
+              </div>
+            </div>
+
+            {/* Department Ledger Records List */}
+            {deptLedgerRecords.length === 0 ? (
+              <div className="p-8 sm:p-12 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                No ledger records found for {activeDept}. Click "+ Record Income" or "+ Record Expense" to log transactions!
+              </div>
+            ) : (
+              <div>
+                {/* Desktop View Table (hidden on mobile, visible on md+) */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 bg-slate-50/50">
+                        <th className="p-3">Date</th>
+                        <th className="p-3">Type</th>
+                        <th className="p-3">Category & Description</th>
+                        <th className="p-3">Vendor / Payer</th>
+                        <th className="p-3">Method</th>
+                        <th className="p-3">Receipt Proof</th>
+                        <th className="p-3 text-right">Amount (SLE)</th>
+                        <th className="p-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {deptLedgerRecords.map(rec => (
+                        <tr key={rec.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="p-3 font-semibold text-slate-600">
+                            {new Date(rec.date).toLocaleDateString()}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              rec.type === 'income' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {rec.type}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-extrabold text-slate-900">{rec.category}</div>
+                            <div className="text-slate-500 text-[11px]">{rec.description}</div>
+                          </td>
+                          <td className="p-3 font-medium text-slate-700">
+                            {rec.vendor_name || '—'}
+                          </td>
+                          <td className="p-3 font-mono uppercase text-slate-500 text-[10px]">
+                            {rec.payment_method?.replace('_', ' ')}
+                          </td>
+                          <td className="p-3">
+                            {rec.receipt_image_url ? (
+                              <button
+                                type="button"
+                                onClick={() => setInspectingReceiptUrl(rec.receipt_image_url!)}
+                                className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye size={12} /> View Proof
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 italic text-[10px]">No Attachment</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-black font-mono">
+                            <span className={rec.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}>
+                              {rec.type === 'income' ? '+' : '-'}{rec.amount.toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                deleteDepartmentLedgerRecord(rec.id);
+                                setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Ledger Entry"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile / Tablet Card View (visible on mobile, hidden on md+) */}
+                <div className="md:hidden space-y-3">
+                  {deptLedgerRecords.map(rec => (
+                    <div key={rec.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5 text-xs">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                            rec.type === 'income' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {rec.type}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {new Date(rec.date).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="font-black font-mono text-sm">
+                          <span className={rec.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}>
+                            {rec.type === 'income' ? '+' : '-'}{rec.amount.toLocaleString()} SLE
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="font-extrabold text-slate-900">{rec.category}</div>
+                        <div className="text-slate-600 text-[11px] mt-0.5">{rec.description}</div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-500">
+                        <div>
+                          <span>Vendor/Payer: <strong className="text-slate-800">{rec.vendor_name || '—'}</strong></span>
+                          <span className="ml-2 font-mono uppercase text-[9px] text-slate-400">({rec.payment_method?.replace('_', ' ')})</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {rec.receipt_image_url && (
+                            <button
+                              type="button"
+                              onClick={() => setInspectingReceiptUrl(rec.receipt_image_url!)}
+                              className="px-2 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye size={12} /> Proof
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              deleteDepartmentLedgerRecord(rec.id);
+                              setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
+                            title="Delete Ledger Entry"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       ) : (
-        /* MODULE 2: ROSTER & ANNOUNCEMENTS VIEW */
+        /* MODULE 3: ROSTER & ANNOUNCEMENTS VIEW */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Department Roster and Duty Assignments */}
           <div className="lg:col-span-2 space-y-6">
@@ -2748,178 +3737,1282 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
         </div>
       )}
 
-      {/* --- PROPOSAL SUBMISSION MODAL FOR MINISTRY LEADERS --- */}
+      {/* --- PROPOSAL CREATOR & EDITOR MODAL --- */}
       {showProposalModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-3xl w-full shadow-2xl border border-slate-200 space-y-6 my-auto">
+            {/* Modal Header */}
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
               <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                  Internal Proposal Submission
-                </span>
-                <h3 className="text-xl font-black text-slate-900 mt-0.5">Submit Funding Request to Finance</h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                    {editingReqNum ? `Edit Proposal: ${editingReqNum}` : 'Draft New Proposal'}
+                  </span>
+                  <span className="text-xs text-slate-400 font-semibold">• {reqDept}</span>
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight">
+                  {editingReqNum ? 'Modify Procurement Proposal' : 'Draft Equipment Funding Proposal'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Build your itemized proposal invoice. You can save as a draft to edit later or submit directly to pastoral board.
+                </p>
               </div>
-              <button onClick={() => setShowProposalModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <X size={20} />
+              <button onClick={() => setShowProposalModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={22} />
               </button>
             </div>
 
-            <form onSubmit={handleSubmitFundingProposal} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Department / Ministry *</label>
-                  <select
-                    value={reqDept}
-                    onChange={e => setReqDept(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
-                  >
-                    <option value="Media & IT Ministry">Media & IT Ministry</option>
-                    <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-                    <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-                    <option value="Children Ministry">Children Ministry</option>
-                    <option value="Outreach & Evangelism">Outreach & Evangelism</option>
-                    <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-                  </select>
+            <form onSubmit={e => { e.preventDefault(); handleSaveFundingProposal(false); }} className="space-y-6 text-xs">
+              {/* SECTION 1: PROPOSAL ESSENTIALS */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-4">
+                <div className="flex items-center gap-2 font-black text-slate-900 text-sm">
+                  <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs">1</span>
+                  <span>Proposal Essentials & Target Ministry</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Target Department *</label>
+                    <select
+                      value={reqDept}
+                      onChange={e => setReqDept(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold cursor-pointer"
+                    >
+                      <option value="Media & IT Ministry">Media & IT Ministry</option>
+                      <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                      <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                      <option value="Children Ministry">Children Ministry</option>
+                      <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                      <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Applicant Leader Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={reqApplicantName}
+                      onChange={e => setReqApplicantName(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Priority Level</label>
+                    <select
+                      value={reqPriority}
+                      onChange={e => setReqPriority(e.target.value as any)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold cursor-pointer"
+                    >
+                      <option value="low">Low Priority</option>
+                      <option value="medium">Medium Priority</option>
+                      <option value="high">High Priority</option>
+                      <option value="urgent">Urgent Priority</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Applicant Leader Name *</label>
+                  <label className="font-extrabold text-slate-700 block mb-1">Proposal Title & Equipment Objective *</label>
                   <input
                     type="text"
                     required
-                    value={reqApplicantName}
-                    onChange={e => setReqApplicantName(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                    placeholder="e.g. Purchase 2x Sony Cinema Cameras & High-Speed SDI Cables"
+                    value={reqTitle}
+                    onChange={e => setReqTitle(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Priority Level</label>
-                  <select
-                    value={reqPriority}
-                    onChange={e => setReqPriority(e.target.value as any)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                  <label className="font-extrabold text-slate-700 block mb-1">Justification & Ministry Purpose</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Describe how this equipment supports Sunday services or ministry operations..."
+                    value={reqDesc}
+                    onChange={e => setReqDesc(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              {/* SECTION 2: ITEMIZED PRICE QUOTATION BUILDER */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3.5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-2 border-b border-slate-200/80">
+                  <div className="flex items-center gap-2 font-black text-slate-900 text-sm">
+                    <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs shadow-xs">2</span>
+                    <span>Itemized Price Quotation Breakdown</span>
+                  </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <button
+                      type="button"
+                      onClick={handleAddReqItemRow}
+                      className="text-xs font-extrabold text-indigo-700 hover:text-indigo-900 flex items-center gap-1 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-indigo-200 shadow-xs hover:border-indigo-300 transition-all"
+                    >
+                      <Plus size={14} /> Add Line Item
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Presets Bar */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
+                  <span className="font-extrabold text-slate-400 shrink-0 text-[10px] uppercase tracking-wider">Quick Presets:</span>
+                  {[
+                    { name: 'SDI High-Speed Video Cable (10m)', price: 450, qty: 2 },
+                    { name: 'Wireless UHF Lapel Microphone Kit', price: 1850, qty: 1 },
+                    { name: 'Heavy-Duty Aluminum Camera Tripod', price: 1200, qty: 1 },
+                    { name: 'Studio LED Stage Light Panel 60W', price: 2500, qty: 2 },
+                    { name: 'Power Extension Reel & Surge Strip', price: 350, qty: 2 }
+                  ].map((preset, pIdx) => (
+                    <button
+                      key={pIdx}
+                      type="button"
+                      onClick={() => {
+                        const newItems = [...reqItems, { item_name: preset.name, quantity: preset.qty, unit_price: preset.price }];
+                        setReqItems(newItems);
+                      }}
+                      className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-slate-700 hover:text-indigo-800 rounded-lg border border-slate-200 font-semibold cursor-pointer shrink-0 transition-colors"
+                    >
+                      + {preset.name} (SLE {preset.price.toLocaleString()})
+                    </button>
+                  ))}
+                </div>
+
+                {/* Itemized Table Header */}
+                <div className="hidden sm:grid grid-cols-12 gap-2 px-3 py-2 bg-slate-200/70 rounded-xl font-extrabold text-[11px] text-slate-700 uppercase tracking-wider">
+                  <div className="col-span-5">Item Description & Specification</div>
+                  <div className="col-span-2 text-center">Quantity</div>
+                  <div className="col-span-2 text-right">Unit Price (SLE)</div>
+                  <div className="col-span-2 text-right">Line Subtotal</div>
+                  <div className="col-span-1 text-center">Action</div>
+                </div>
+
+                {/* Itemized Rows */}
+                <div className="space-y-2">
+                  {reqItems.map((item, idx) => {
+                    const lineSubtotal = (Number(item.quantity || 1) * Number(item.unit_price || 0));
+                    return (
+                      <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2 sm:space-y-0 transition-all hover:border-slate-300">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                          {/* Item Name */}
+                          <div className="sm:col-span-5">
+                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Item Specification</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="e.g. Sony FX3 Cinema Camera Body or SDI Cable"
+                              value={item.item_name}
+                              onChange={e => handleUpdateReqItemRow(idx, 'item_name', e.target.value)}
+                              className="w-full p-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                            />
+                          </div>
+
+                          {/* Quantity */}
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Quantity</label>
+                            <div className="flex items-center justify-center bg-slate-50 border border-slate-200 rounded-lg p-0.5">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateReqItemRow(idx, 'quantity', Math.max(1, Number(item.quantity || 1) - 1))}
+                                className="w-6 h-6 rounded flex items-center justify-center font-black text-slate-600 hover:bg-slate-200 cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                required
+                                value={item.quantity}
+                                onChange={e => handleUpdateReqItemRow(idx, 'quantity', e.target.value)}
+                                className="w-12 text-center bg-transparent text-xs font-black text-slate-900 font-mono focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateReqItemRow(idx, 'quantity', Number(item.quantity || 1) + 1)}
+                                className="w-6 h-6 rounded flex items-center justify-center font-black text-slate-600 hover:bg-slate-200 cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Unit Price */}
+                          <div className="sm:col-span-2">
+                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Unit Price (SLE)</label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-2 text-[10px] font-bold text-slate-400 font-mono">SLE</span>
+                              <input
+                                type="number"
+                                min={0}
+                                required
+                                placeholder="0.00"
+                                value={item.unit_price}
+                                onChange={e => handleUpdateReqItemRow(idx, 'unit_price', e.target.value)}
+                                className="w-full pl-9 pr-2 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg text-xs font-black font-mono text-slate-900 text-right focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Line Total */}
+                          <div className="sm:col-span-2 text-right">
+                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Line Total</label>
+                            <div className="py-2 px-2.5 bg-indigo-50/70 border border-indigo-100 rounded-lg font-black text-indigo-900 font-mono text-xs text-right">
+                              SLE {lineSubtotal.toLocaleString()}
+                            </div>
+                          </div>
+
+                          {/* Action */}
+                          <div className="sm:col-span-1 flex justify-center">
+                            {reqItems.length > 1 ? (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveReqItemRow(idx)}
+                                className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                                title="Remove line item"
+                              >
+                                <X size={16} />
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-300 font-mono">1 item min</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Calculation Summary Footer Bar */}
+                <div className="pt-3 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-indigo-900 text-white p-3.5 rounded-xl shadow-md">
+                  <div className="flex items-center gap-4 text-xs">
+                    <div>
+                      <span className="text-indigo-300 block text-[10px] uppercase font-bold tracking-wider">Line Items</span>
+                      <span className="font-black font-mono text-sm">{reqItems.length} items</span>
+                    </div>
+                    <div className="h-6 w-px bg-indigo-700"></div>
+                    <div>
+                      <span className="text-indigo-300 block text-[10px] uppercase font-bold tracking-wider">Total Quantity</span>
+                      <span className="font-black font-mono text-sm">
+                        {reqItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0)} units
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 border-indigo-800 pt-2 sm:pt-0">
+                    <span className="text-indigo-300 block text-[10px] uppercase font-extrabold tracking-wider">Calculated Total Requested Budget</span>
+                    <span className="text-emerald-400 font-mono font-black text-xl tracking-tight">
+                      SLE {reqItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unit_price || 0)), 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: DISBURSEMENT DETAILS */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
+                <div className="flex items-center gap-2 font-black text-slate-900 text-sm">
+                  <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs">3</span>
+                  <span>Disbursement Preference & Vendor Quotes</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Preferred Payment Channel</label>
+                    <select
+                      value={reqDisbMethod}
+                      onChange={e => setReqDisbMethod(e.target.value as any)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold cursor-pointer"
+                    >
+                      <option value="bank_transfer">Direct Vendor Bank Wire</option>
+                      <option value="mobile_money">Mobile Money Transfer</option>
+                      <option value="cash">Petty Cash Voucher</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Vendor Proforma Ref / Link</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Proforma #TECH-SL-9912"
+                      value={reqVendorQuote}
+                      onChange={e => setReqVendorQuote(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 4: FORM ACTIONS BAR */}
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-4 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const formattedItems: RequisitionItem[] = reqItems.map((item, idx) => ({
+                      id: `item-${Date.now()}-${idx}`,
+                      item_name: item.item_name || 'Equipment Item',
+                      quantity: Number(item.quantity) || 1,
+                      unit_price: Number(item.unit_price) || 0,
+                      total_price: (Number(item.quantity) || 1) * (Number(item.unit_price) || 0)
+                    }));
+                    const totalReqAmount = formattedItems.reduce((sum, item) => sum + item.total_price, 0);
+
+                    const draftReq: DepartmentRequisition = {
+                      id: editingReqId || `req-${Date.now()}`,
+                      requisition_number: editingReqNum || `REQ-2026-00${requisitions.length + 1}`,
+                      department_name: reqDept,
+                      applicant_name: reqApplicantName.trim() || `${profile?.first_name} ${profile?.last_name}`,
+                      applicant_role: reqApplicantRole.trim() || 'Ministry Leader',
+                      title: reqTitle.trim() || 'Equipment Procurement Request',
+                      description: reqDesc.trim(),
+                      requested_amount: totalReqAmount > 0 ? totalReqAmount : 5000,
+                      currency: 'SLE',
+                      priority: reqPriority,
+                      status: 'draft',
+                      created_at: new Date().toISOString(),
+                      needed_by_date: reqNeededDate || new Date(Date.now() + 86400000 * 14).toISOString().slice(0, 10),
+                      vendor_quote_url: reqVendorQuote.trim() || undefined,
+                      disbursement_method: reqDisbMethod,
+                      disbursement_account_info: reqDisbInfo.trim() || undefined,
+                      items: formattedItems
+                    };
+
+                    setPreviewProposal(draftReq);
+                    setShowProposalPreviewModal(true);
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-200"
+                >
+                  <Eye size={15} /> Preview Invoice
+                </button>
+
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowProposalModal(false)}
+                    className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
                   >
-                    <option value="low">Low Priority</option>
-                    <option value="medium">Medium Priority</option>
-                    <option value="high">High Priority</option>
-                    <option value="urgent">Urgent Priority</option>
-                  </select>
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSaveFundingProposal(true)}
+                    className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Clock size={15} /> Save as Draft
+                  </button>
+
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Send size={15} /> Submit Proposal
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- EXPENDITURE RECONCILIATION & RECEIPT UPLOAD MODAL --- */}
+      {reconcileReq && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-teal-100 text-teal-800">
+                  Post-Disbursement Audit Governance
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-0.5">Expenditure Report & Receipt Upload</h3>
+              </div>
+              <button onClick={() => setReconcileReq(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Explanatory Banner: What is Reconcile Spending? */}
+            <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-2xl text-xs space-y-1 text-indigo-950">
+              <div className="font-extrabold flex items-center gap-1.5 text-indigo-900">
+                <AlertCircle size={15} className="text-indigo-600 shrink-0" />
+                What is Reconcile Spending & Upload Receipt?
+              </div>
+              <p className="text-[11px] leading-relaxed text-indigo-900/80">
+                This is the post-disbursement audit step in church financial governance. After Finance disburses budget to your department, you spend it with vendors and then upload/scan the physical tax receipt proof here. You also report the actual amount spent and return any unspent balance to treasury. Completing this keeps your ministry in <strong>Good Standing</strong> for future funding!
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Proposal ID:</span>
+                <strong className="text-indigo-600 font-mono">{reconcileReq.requisition_number}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Department:</span>
+                <strong className="text-slate-800">{reconcileReq.department_name}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Title:</span>
+                <span className="font-bold text-slate-900">{reconcileReq.title}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-200">
+                <span className="text-slate-400">Disbursed Amount:</span>
+                <strong className="text-emerald-700 font-black text-sm">SLE {reconcileReq.requested_amount.toLocaleString()}</strong>
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirmReconciliation} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Actual Amount Spent (SLE) *</label>
+                  <input
+                    type="number"
+                    required
+                    min={0}
+                    value={actualSpentInput}
+                    onChange={e => setActualSpentInput(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Unspent Returned (SLE)</label>
+                  <input
+                    type="number"
+                    readOnly
+                    value={Math.max(0, reconcileReq.requested_amount - (Number(actualSpentInput) || 0))}
+                    className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl font-bold font-mono text-emerald-700"
+                  />
                 </div>
               </div>
 
               <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Proposal Title & Equipment Purpose *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Purchase 2x Video Editing Laptops & 4K Cinema Camera System"
-                  value={reqTitle}
-                  onChange={e => setReqTitle(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
-                />
+                <label className="font-extrabold text-slate-700 block mb-1">Vendor Tax Receipt Proof Ref / File Name *</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Freetown_TechZone_Tax_Receipt_Signed.pdf"
+                    value={receiptProofInput}
+                    onChange={e => setReceiptProofInput(e.target.value)}
+                    className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono text-indigo-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerContext('reconciliation');
+                      setShowDocumentScanner(true);
+                    }}
+                    className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+                  >
+                    <Camera size={14} /> Scan Photo
+                  </button>
+                </div>
               </div>
 
+              {scannedReceiptUrl && (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
+                  <span className="font-bold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 size={14} className="text-emerald-600" /> Scanned Receipt Photo Attached
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInspectingReceiptUrl(scannedReceiptUrl)}
+                    className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px] underline"
+                  >
+                    Preview
+                  </button>
+                </div>
+              )}
+
               <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Justification & Context for Finance Officer</label>
+                <label className="font-extrabold text-slate-700 block mb-1">Itemized Spending Report & Explanations *</label>
                 <textarea
-                  rows={2}
-                  placeholder="Describe why this equipment is needed for ministry operations..."
-                  value={reqDesc}
-                  onChange={e => setReqDesc(e.target.value)}
+                  rows={3}
+                  required
+                  placeholder="Summarize how the funds were disbursed, vendor invoice details, and item condition..."
+                  value={receiptNotesInput}
+                  onChange={e => setReceiptNotesInput(e.target.value)}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
                 />
               </div>
 
-              {/* Dynamic Line Items Section */}
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-black text-slate-900 text-xs">Itemized Price Quotation Breakdown</span>
-                  <button
-                    type="button"
-                    onClick={handleAddReqItemRow}
-                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus size={14} /> Add Equipment Row
-                  </button>
-                </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={() => setReconcileReq(null)} className="px-4 py-2 text-slate-500 font-bold">
+                  Cancel
+                </button>
+                <button type="submit" className="px-6 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-black rounded-xl shadow-md cursor-pointer flex items-center gap-1.5">
+                  <CheckCircle2 size={16} /> Submit Receipt & Reconcile Spending
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
-                <div className="space-y-2">
-                  {reqItems.map((item, idx) => (
-                    <div key={idx} className="flex flex-col sm:flex-row items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Equipment / Item Name"
-                        value={item.item_name}
-                        onChange={e => handleUpdateReqItemRow(idx, 'item_name', e.target.value)}
-                        className="flex-1 p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
-                      />
-                      <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder="Qty"
-                          value={item.quantity}
-                          onChange={e => handleUpdateReqItemRow(idx, 'quantity', e.target.value)}
-                          className="w-16 p-2 bg-white border border-slate-200 rounded-xl text-xs text-center font-bold"
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          placeholder="Unit Price (SLE)"
-                          value={item.unit_price}
-                          onChange={e => handleUpdateReqItemRow(idx, 'unit_price', e.target.value)}
-                          className="w-28 p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono"
-                        />
-                        <span className="text-xs font-black text-indigo-700 w-24 text-right">
-                          SLE {(Number(item.quantity || 1) * Number(item.unit_price || 0)).toLocaleString()}
-                        </span>
-                        {reqItems.length > 1 && (
-                          <button type="button" onClick={() => handleRemoveReqItemRow(idx)} className="text-rose-500 p-1">
-                            <X size={16} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      {/* --- RECORD DEPARTMENT LEDGER ENTRY MODAL --- */}
+      {showDeptRecordModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  deptRecordType === 'income' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                }`}>
+                  {activeDept} Treasury
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-0.5">
+                  Record Department {deptRecordType === 'income' ? 'Income' : 'Expense'}
+                </h3>
+              </div>
+              <button onClick={() => setShowDeptRecordModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDeptRecord} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeptRecordType('income');
+                    setDeptRecordCategory('Ministry Offering & Grants');
+                  }}
+                  className={`py-2 rounded-lg font-black transition-all cursor-pointer ${
+                    deptRecordType === 'income' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600'
+                  }`}
+                >
+                  + Income Entry
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeptRecordType('expense');
+                    setDeptRecordCategory('Equipment Maintenance & Supplies');
+                  }}
+                  className={`py-2 rounded-lg font-black transition-all cursor-pointer ${
+                    deptRecordType === 'expense' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-600'
+                  }`}
+                >
+                  - Expense Entry
+                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Category *</label>
+                <select
+                  value={deptRecordCategory}
+                  onChange={e => setDeptRecordCategory(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                >
+                  {deptRecordType === 'income' ? (
+                    <>
+                      <option value="Ministry Offering & Grants">Ministry Offering & Grants</option>
+                      <option value="Event Registration Collections">Event Registration Collections</option>
+                      <option value="Special Ministry Sponsorship">Special Ministry Sponsorship</option>
+                      <option value="Internal Department Allocation">Internal Department Allocation</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Equipment Maintenance & Supplies">Equipment Maintenance & Supplies</option>
+                      <option value="Event Refreshments & Catering">Event Refreshments & Catering</option>
+                      <option value="Logistics & Transportation">Logistics & Transportation</option>
+                      <option value="Software Subscriptions & Cloud Media">Software Subscriptions & Cloud Media</option>
+                      <option value="Honorarium & Guest Speakers">Honorarium & Guest Speakers</option>
+                    </>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Description / Purpose *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder={deptRecordType === 'income' ? 'e.g. Sunday Service Youth Offering Collection' : 'e.g. Replacement SDI cables and tripod mounting plates'}
+                  value={deptRecordDesc}
+                  onChange={e => setDeptRecordDesc(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Preferred Payment Channel</label>
-                  <select
-                    value={reqDisbMethod}
-                    onChange={e => setReqDisbMethod(e.target.value as any)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
-                  >
-                    <option value="bank_transfer">Direct Vendor Bank Wire</option>
-                    <option value="mobile_money">Mobile Money Transfer</option>
-                    <option value="cash">Petty Cash Voucher</option>
-                  </select>
+                  <label className="font-extrabold text-slate-700 block mb-1">Amount (SLE) *</label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    placeholder="0.00"
+                    value={deptRecordAmount}
+                    onChange={e => setDeptRecordAmount(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono text-slate-900"
+                  />
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Vendor Proforma Ref / Link</label>
+                  <label className="font-extrabold text-slate-700 block mb-1">Vendor / Payer</label>
                   <input
                     type="text"
-                    placeholder="e.g. Proforma #TECH-SL-9912"
-                    value={reqVendorQuote}
-                    onChange={e => setReqVendorQuote(e.target.value)}
+                    placeholder={deptRecordType === 'income' ? 'e.g. Congregation' : 'e.g. Freetown TechZone'}
+                    value={deptRecordVendor}
+                    onChange={e => setDeptRecordVendor(e.target.value)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t">
-                <button type="button" onClick={() => setShowProposalModal(false)} className="px-4 py-2 text-slate-500 font-bold">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Payment Method</label>
+                  <select
+                    value={deptRecordMethod}
+                    onChange={e => setDeptRecordMethod(e.target.value as any)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                  >
+                    <option value="cash">Petty Cash</option>
+                    <option value="mobile_money">Mobile Money</option>
+                    <option value="bank_transfer">Bank Wire</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Receipt Attachment</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerContext('ledger');
+                      setShowDocumentScanner(true);
+                    }}
+                    className="w-full p-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold hover:bg-indigo-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Camera size={14} /> {scannedReceiptUrl ? 'Receipt Attached ✓' : 'Scan Receipt'}
+                  </button>
+                </div>
+              </div>
+
+              {scannedReceiptUrl && (
+                <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-emerald-800">Scanned Receipt Proof Attached</span>
+                  <button type="button" onClick={() => setScannedReceiptUrl(null)} className="text-emerald-700 hover:text-emerald-900">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={() => setShowDeptRecordModal(false)} className="px-4 py-2 text-slate-500 font-bold">
                   Cancel
                 </button>
-                <button type="submit" className="px-6 py-2.5 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 shadow-md">
-                  Submit Funding Proposal to Finance
+                <button type="submit" className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-md cursor-pointer">
+                  Save Ledger Entry
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- DOCUMENT SCANNER UI MODAL --- */}
+      {showDocumentScanner && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs z-[110] flex items-center justify-center p-4 overflow-y-auto">
+          <ReceiptDocumentScanner
+            initialImage={scannedReceiptUrl || undefined}
+            onCaptureReceipt={(imgUrl, detectedVendor, detectedAmount) => {
+              setScannedReceiptUrl(imgUrl);
+              setShowDocumentScanner(false);
+              if (scannerContext === 'ledger' && showDeptRecordModal) {
+                if (detectedVendor && !deptRecordVendor) setDeptRecordVendor(detectedVendor);
+                if (detectedAmount && !deptRecordAmount) setDeptRecordAmount(String(detectedAmount));
+              } else if (scannerContext === 'reconciliation' && reconcileReq) {
+                if (detectedAmount && !actualSpentInput) setActualSpentInput(String(detectedAmount));
+              }
+            }}
+            onCancel={() => setShowDocumentScanner(false)}
+          />
+        </div>
+      )}
+
+      {/* --- FULL RESOLUTION RECEIPT PROOF INSPECTOR MODAL --- */}
+      {inspectingReceiptUrl && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-4 max-w-xl w-full space-y-3 shadow-2xl">
+            <div className="flex justify-between items-center text-white pb-2 border-b border-slate-800">
+              <span className="text-xs font-black uppercase text-indigo-400 flex items-center gap-1.5">
+                <Eye size={14} /> Scanned Receipt Proof Inspector
+              </span>
+              <button onClick={() => setInspectingReceiptUrl(null)} className="text-slate-400 hover:text-white cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="bg-slate-950 p-2 rounded-2xl flex items-center justify-center max-h-[70vh] overflow-auto">
+              <img src={inspectingReceiptUrl} alt="Receipt Proof" className="max-w-full max-h-[65vh] object-contain rounded-xl bg-white" />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInspectingReceiptUrl(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- INCOME & EXPENSE REPORT GENERATOR MODAL --- */}
+      {showReportGeneratorModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                  Income & Expense Module Reports
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-0.5">Generate Financial Operations Report</h3>
+              </div>
+              <button onClick={() => setShowReportGeneratorModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 leading-relaxed">
+              Generate official financial audit statements and itemized transaction sheets derived exclusively from the <strong className="text-slate-900">{activeDept}</strong> Income & Expense Treasury Ledger.
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1.5">1. Select Report Scope *</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterType('all')}
+                    className={`p-3 rounded-xl border text-center font-extrabold transition-all cursor-pointer ${
+                      reportFilterType === 'all'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Combined (Income & Expense)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterType('income')}
+                    className={`p-3 rounded-xl border text-center font-extrabold transition-all cursor-pointer ${
+                      reportFilterType === 'income'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Income & Offerings Only
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterType('expense')}
+                    className={`p-3 rounded-xl border text-center font-extrabold transition-all cursor-pointer ${
+                      reportFilterType === 'expense'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    Expenses & Spending Only
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1.5">2. Select Accounting Timeframe *</label>
+                <select
+                  value={reportDateRange}
+                  onChange={e => setReportDateRange(e.target.value as any)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                >
+                  <option value="all">All-Time Cumulative Ledger Records</option>
+                  <option value="this_month">Current Month (30-Day Activity)</option>
+                  <option value="this_quarter">Current Financial Quarter</option>
+                  <option value="this_year">Current Fiscal Year (2026)</option>
+                </select>
+              </div>
+
+              <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-2xl flex justify-between items-center text-xs">
+                <div>
+                  <span className="font-bold text-slate-900 block">Report Target Ministry:</span>
+                  <span className="text-indigo-700 font-extrabold">{activeDept}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-500 font-semibold block">Source Ledger:</span>
+                  <span className="text-xs font-mono font-black text-emerald-700">Income & Expense Module</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleGenerateDeptFinancialPDFReport(activeDept, reportFilterType, reportDateRange);
+                    setShowReportGeneratorModal(false);
+                  }}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Printer size={15} /> Print / Download PDF Report
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReportGeneratorModal(false);
+                    setProposalSuccessToast(`Official ${reportFilterType.toUpperCase()} Financial Report for ${activeDept} submitted to Finance Officer Sahr Sesay & Pastoral Board for formal review!`);
+                    setTimeout(() => setProposalSuccessToast(null), 6000);
+                  }}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Send size={15} /> Submit Report to Finance
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- PROPOSAL & PROFORMA INVOICE PREVIEW / EDIT MODAL --- */}
+      {showProposalPreviewModal && previewProposal && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-[110] flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-100 rounded-3xl p-4 sm:p-6 max-w-4xl w-full shadow-2xl border border-slate-300 space-y-4 my-auto">
+            {/* Top Modal Navigation & View Mode Switcher */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-300">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-900">
+                  Official Church Financial Document
+                </span>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight mt-0.5">
+                  Proforma Invoice & Funding Requisition
+                </h3>
+              </div>
+
+              {/* View Selector Tabs */}
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab('invoice')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                      previewTab === 'invoice'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Eye size={14} /> Invoice View
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab('edit')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                      previewTab === 'edit'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Plus size={14} /> Edit Invoice Data
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowProposalPreviewModal(false)}
+                  className="text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-lg hover:bg-slate-200"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* TAB 1: AUTHENTIC INVOICE DOCUMENT DESIGN */}
+            {previewTab === 'invoice' && (
+              <div className="bg-white rounded-2xl p-6 sm:p-8 border border-slate-300 shadow-lg space-y-6 text-slate-900 font-sans relative overflow-hidden">
+                {/* Watermark Status Stamp */}
+                <div className="absolute top-6 right-6 opacity-15 pointer-events-none transform rotate-[-12deg] select-none text-right">
+                  <div className="text-4xl sm:text-5xl font-black uppercase tracking-widest text-indigo-900 border-4 border-indigo-900 p-2 rounded-xl">
+                    {previewProposal.status === 'draft' ? 'DRAFT' : previewProposal.status.replace(/_/g, ' ')}
+                  </div>
+                </div>
+
+                {/* Invoice Document Header */}
+                <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pb-6 border-b-2 border-indigo-950">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-900 text-white font-black flex items-center justify-center text-sm shadow-xs">
+                        GC
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-black uppercase tracking-wider text-indigo-950">
+                          Grace Cathedral International
+                        </h2>
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                          Office of General Treasury & Procurement
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-slate-950">
+                        Proforma Invoice & Purchase Requisition
+                      </h1>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        Official document for ministry equipment acquisition & budget allocation.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-right w-full sm:w-auto font-mono text-xs space-y-1 shrink-0">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider">Invoice No.</span>
+                      <strong className="text-indigo-900 text-sm font-black">{previewProposal.requisition_number}</strong>
+                    </div>
+                    <div className="pt-1 border-t border-slate-200">
+                      <span className="text-slate-500">Date Issued:</span>{' '}
+                      <strong className="text-slate-800">{new Date(previewProposal.created_at).toLocaleDateString()}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Needed By:</span>{' '}
+                      <strong className="text-amber-700">{previewProposal.needed_by_date || 'Within 14 Days'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Priority:</span>{' '}
+                      <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 font-black text-[10px] uppercase">
+                        {previewProposal.priority}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* From / To Entities Section */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
+                      ISSUED BY (REQUESTING MINISTRY):
+                    </span>
+                    <h3 className="font-black text-slate-900 text-sm">{previewProposal.department_name}</h3>
+                    <p className="text-slate-600 font-semibold">
+                      Leader: <strong>{previewProposal.applicant_name}</strong> ({previewProposal.applicant_role || 'Ministry Lead'})
+                    </p>
+                    <p className="text-slate-400 text-[11px]">Grace Cathedral Main Campus • Freetown, Sierra Leone</p>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 space-y-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                      BILLED TO (TREASURY & APPROVAL BODY):
+                    </span>
+                    <h3 className="font-black text-slate-900 text-sm">Board of Senior Pastors & Finance Secretariat</h3>
+                    <p className="text-slate-600 font-semibold">
+                      Attention: <strong>Senior Pastor Board & Finance Officer Sahr Sesay</strong>
+                    </p>
+                    <p className="text-slate-400 text-[11px]">Channel: {previewProposal.disbursement_method?.replace(/_/g, ' ').toUpperCase() || 'Bank Wire'}</p>
+                  </div>
+                </div>
+
+                {/* Subject & Purpose */}
+                <div className="p-3.5 bg-indigo-50/60 rounded-2xl border border-indigo-100 text-xs space-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-800 block">
+                    PROPOSAL SUBJECT & EXECUTIVE PURPOSE:
+                  </span>
+                  <div className="font-black text-slate-900 text-sm">{previewProposal.title}</div>
+                  <p className="text-slate-600 leading-relaxed italic">{previewProposal.description || 'No detailed justification provided.'}</p>
+                </div>
+
+                {/* Itemized Purchase Table */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">
+                    Itemized Procurement Breakdown
+                  </h4>
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900 text-white font-extrabold text-[11px] uppercase tracking-wider">
+                          <th className="py-2.5 px-3 text-center w-10">#</th>
+                          <th className="py-2.5 px-4">Item Description & Specifications</th>
+                          <th className="py-2.5 px-3 text-center w-16">Qty</th>
+                          <th className="py-2.5 px-4 text-right">Unit Price (SLE)</th>
+                          <th className="py-2.5 px-4 text-right">Line Subtotal (SLE)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {previewProposal.items.map((item, idx) => {
+                          const lineTotal = (Number(item.quantity || 1) * Number(item.unit_price || 0));
+                          return (
+                            <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                              <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
+                              <td className="py-3 px-4 font-bold text-slate-900">{item.item_name}</td>
+                              <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">{item.quantity}</td>
+                              <td className="py-3 px-4 text-right font-mono text-slate-700">{item.unit_price.toLocaleString()}</td>
+                              <td className="py-3 px-4 text-right font-mono font-black text-indigo-950">
+                                {lineTotal.toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Invoice Totals & Summary Block */}
+                <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pt-2">
+                  <div className="w-full sm:w-1/2 p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
+                    <span className="font-extrabold text-slate-700 block">Payment & Account Instructions</span>
+                    <p className="text-[11px] text-slate-500">
+                      Disbursement Method:{' '}
+                      <strong className="text-slate-800">{previewProposal.disbursement_method?.replace(/_/g, ' ').toUpperCase()}</strong>
+                    </p>
+                    {previewProposal.vendor_quote_url && (
+                      <p className="text-[11px] text-slate-500">
+                        Vendor Quote Ref: <strong className="text-indigo-700 font-mono">{previewProposal.vendor_quote_url}</strong>
+                      </p>
+                    )}
+                    {previewProposal.disbursement_account_info && (
+                      <p className="text-[11px] text-slate-500">
+                        Account Details: <span className="font-mono">{previewProposal.disbursement_account_info}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="w-full sm:w-1/2 bg-slate-900 text-white p-4 rounded-2xl space-y-2 text-xs font-mono">
+                    <div className="flex justify-between text-slate-300">
+                      <span>Items Subtotal:</span>
+                      <span>
+                        SLE {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-400 text-[11px]">
+                      <span>Tax / Import Duty (0% Exempt):</span>
+                      <span>SLE 0.00</span>
+                    </div>
+                    <div className="pt-2 border-t border-slate-700 flex justify-between items-center text-sm font-black">
+                      <span className="text-amber-400 uppercase font-sans">Total Requested Budget:</span>
+                      <span className="text-emerald-400 text-lg">
+                        SLE {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Official Signature Lines */}
+                <div className="pt-6 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4 text-center text-xs">
+                  <div className="space-y-2">
+                    <div className="h-10 border-b border-slate-400 flex items-end justify-center pb-1">
+                      <span className="font-serif italic font-bold text-indigo-900 text-sm">{previewProposal.applicant_name}</span>
+                    </div>
+                    <div>
+                      <strong className="block text-slate-900">{previewProposal.applicant_name}</strong>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Department Leader Signatory</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="h-10 border-b border-slate-300 flex items-end justify-center pb-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">
+                        {previewProposal.status === 'draft' ? '[ Pending Pastoral Review ]' : 'Pastor Approved ✓'}
+                      </span>
+                    </div>
+                    <div>
+                      <strong className="block text-slate-900">Senior Pastor Board</strong>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Ecclesiastical Approval</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="h-10 border-b border-slate-300 flex items-end justify-center pb-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">
+                        {['disbursed', 'reconciled', 'settled'].includes(previewProposal.status) ? 'Disbursed ✓' : '[ Pending Treasury Wire ]'}
+                      </span>
+                    </div>
+                    <div>
+                      <strong className="block text-slate-900">Finance Officer Sahr Sesay</strong>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Disbursement & Audit</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: INTERACTIVE EDIT PROPOSAL DATA */}
+            {previewTab === 'edit' && (
+              <div className="bg-white rounded-2xl p-6 border border-slate-300 shadow-sm space-y-4 text-xs">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                  <h4 className="font-black text-slate-900 text-sm">Edit Invoice Metadata & Items</h4>
+                  <span className="text-[11px] text-indigo-600 font-bold">Changes update invoice preview immediately</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Proposal Title *</label>
+                    <input
+                      type="text"
+                      value={previewProposal.title}
+                      onChange={e => setPreviewProposal({ ...previewProposal, title: e.target.value })}
+                      className="w-full p-2.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Priority Level</label>
+                    <select
+                      value={previewProposal.priority}
+                      onChange={e => setPreviewProposal({ ...previewProposal, priority: e.target.value as any })}
+                      className="w-full p-2.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl font-bold cursor-pointer"
+                    >
+                      <option value="low">Low Priority</option>
+                      <option value="medium">Medium Priority</option>
+                      <option value="high">High Priority</option>
+                      <option value="urgent">Urgent Priority</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Justification & Context</label>
+                  <textarea
+                    rows={2}
+                    value={previewProposal.description}
+                    onChange={e => setPreviewProposal({ ...previewProposal, description: e.target.value })}
+                    className="w-full p-2.5 bg-slate-50 focus:bg-white border border-slate-200 rounded-xl"
+                  />
+                </div>
+
+                {/* Editable Items */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex justify-between items-center pb-1">
+                    <span className="font-extrabold text-slate-800 text-xs">Itemized Invoice Items</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newItems = [
+                          ...previewProposal.items,
+                          { id: `item-${Date.now()}`, item_name: 'New Equipment Spec', quantity: 1, unit_price: 500, total_price: 500 }
+                        ];
+                        setPreviewProposal({ ...previewProposal, items: newItems });
+                      }}
+                      className="text-xs font-black text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus size={14} /> Add Line Item
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {previewProposal.items.map((item, idx) => (
+                      <div key={idx} className="flex flex-col sm:flex-row items-center gap-2 bg-white p-2 rounded-lg border border-slate-200">
+                        <input
+                          type="text"
+                          value={item.item_name}
+                          onChange={e => {
+                            const newItems = [...previewProposal.items];
+                            newItems[idx].item_name = e.target.value;
+                            setPreviewProposal({ ...previewProposal, items: newItems });
+                          }}
+                          className="flex-1 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
+                        />
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.quantity}
+                            onChange={e => {
+                              const newItems = [...previewProposal.items];
+                              const qty = Number(e.target.value) || 1;
+                              newItems[idx].quantity = qty;
+                              newItems[idx].total_price = qty * (newItems[idx].unit_price || 0);
+                              setPreviewProposal({ ...previewProposal, items: newItems });
+                            }}
+                            className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-center font-bold"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.unit_price}
+                            onChange={e => {
+                              const newItems = [...previewProposal.items];
+                              const price = Number(e.target.value) || 0;
+                              newItems[idx].unit_price = price;
+                              newItems[idx].total_price = (newItems[idx].quantity || 1) * price;
+                              setPreviewProposal({ ...previewProposal, items: newItems });
+                            }}
+                            className="w-28 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono text-right"
+                          />
+                          <span className="text-xs font-black text-indigo-700 w-24 text-right font-mono">
+                            SLE {(Number(item.quantity || 1) * Number(item.unit_price || 0)).toLocaleString()}
+                          </span>
+                          {previewProposal.items.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newItems = previewProposal.items.filter((_, i) => i !== idx);
+                                setPreviewProposal({ ...previewProposal, items: newItems });
+                              }}
+                              className="text-rose-500 p-1 cursor-pointer"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200 flex justify-between items-center font-black">
+                    <span className="text-slate-700">Calculated Proposal Total:</span>
+                    <span className="text-indigo-700 font-mono text-sm">
+                      SLE {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal Actions Footer Bar */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 border-t border-slate-300">
+              <button
+                type="button"
+                onClick={() => handlePrintProformaInvoicePDF(previewProposal)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Printer size={15} /> Print / Download PDF Invoice
+              </button>
+
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowProposalPreviewModal(false)}
+                  className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-200 rounded-xl cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const draft: DepartmentRequisition = { ...previewProposal, status: 'draft' };
+                    handleSaveAndSubmitEditedProposal(draft);
+                    setShowProposalPreviewModal(false);
+                    setProposalSuccessToast(`Proposal ${draft.requisition_number} updated and saved as Draft.`);
+                    setTimeout(() => setProposalSuccessToast(null), 5000);
+                  }}
+                  className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Clock size={15} /> Save as Draft
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const submitted: DepartmentRequisition = { ...previewProposal, status: 'pending_pastor_approval' };
+                    handleSaveAndSubmitEditedProposal(submitted);
+                    setShowProposalPreviewModal(false);
+                  }}
+                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Send size={15} /> Submit for Pastoral Approval
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -5975,6 +8068,7 @@ const App = () => {
               />
               <Sidebar 
                 role={profile?.primary_role || 'member'} 
+                profile={profile}
                 mobileOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
               />

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
-import { getRequisitions, saveRequisitions } from './requisitionService';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { getEventBudgetApprovals, approveEventBudget, rejectEventBudget, disburseEventBudget as executeDisburseEventBudget } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { 
@@ -362,6 +362,37 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   };
 
   // --- REQUISITION APPROVAL & INVOICING HANDLERS ---
+  const handleEscalateToBoard = (reqId: string) => {
+    const note = prompt("Enter triage notes for Senior Pastor & Executive Board review:", "Budget proposal reviewed by Treasury. Requires Pastoral & Board authorization.");
+    if (!note) return;
+    const updated = requisitions.map(r => r.id === reqId ? { 
+      ...r, 
+      status: 'submitted_to_board' as const,
+      finance_officer_review_notes: note,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: profile ? `${profile.first_name} ${profile.last_name} (Finance Officer)` : 'Finance Officer'
+    } : r);
+    setRequisitions(updated);
+    saveRequisitions(updated);
+    alert("Requisition escalated to Senior Pastor & Executive Board for authorization.");
+  };
+
+  const handleSettleRequisition = (reqId: string) => {
+    const note = prompt("Enter audit settlement notes (e.g. Verified 100% tax receipts):", "All vendor receipts verified. Closed in Good Standing.");
+    if (note === null) return;
+    const updated = requisitions.map(r => r.id === reqId ? {
+      ...r,
+      status: 'settled' as const,
+      audit_status: 'good_standing' as const,
+      audit_notes: note,
+      settled_at: new Date().toISOString(),
+      settled_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer'
+    } : r);
+    setRequisitions(updated);
+    saveRequisitions(updated);
+    alert("Requisition verified & settled in Good Standing!");
+  };
+
   const handleApproveRequisition = (reqId: string) => {
     const updated = requisitions.map(r => r.id === reqId ? { ...r, status: 'approved' as const } : r);
     setRequisitions(updated);
@@ -1683,28 +1714,37 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {workspaceTab === 'requisitions' && (
         <div className="space-y-6">
           {/* Requisitions Overview Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">Pending Ministry Proposals</span>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase text-amber-700 tracking-wider block">Awaiting Pastor Approval</span>
               <div className="text-2xl font-black text-amber-600">
-                {requisitions.filter(r => r.status === 'pending_approval').length} Proposals
+                {requisitions.filter(r => r.status === 'pending_pastor_approval' || r.status === 'pending_approval').length} Proposals
               </div>
-              <p className="text-[11px] text-slate-400">Total requested: SLE {requisitions.filter(r => r.status === 'pending_approval').reduce((s, r) => s + r.requested_amount, 0).toLocaleString()}</p>
+              <p className="text-[11px] text-slate-400">Step 1: Senior Pastor review</p>
             </div>
 
-            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">Approved & Disbursed</span>
+            <div className="bg-white p-5 rounded-3xl border border-purple-200 shadow-xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase text-purple-700 tracking-wider block">Pastor Approved (Disburse Queue)</span>
+              <div className="text-2xl font-black text-purple-700">
+                {requisitions.filter(r => r.status === 'pastor_approved' || r.status === 'approved').length} Ready to Disburse
+              </div>
+              <p className="text-[11px] text-slate-400">Step 2: FO invoice & payment</p>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-indigo-200 shadow-xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase text-indigo-700 tracking-wider block">Disbursed (Receipt Audit)</span>
+              <div className="text-2xl font-black text-indigo-600">
+                {requisitions.filter(r => r.status === 'disbursed' || r.status === 'reconciled').length} Active Requisitions
+              </div>
+              <p className="text-[11px] text-slate-400">Step 3 & 4: Expenditure report</p>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-emerald-200 shadow-xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase text-emerald-700 tracking-wider block">Settled in Good Standing</span>
               <div className="text-2xl font-black text-emerald-600">
-                {requisitions.filter(r => r.status === 'disbursed' || r.status === 'approved').length} Invoiced & Disbursed
+                {requisitions.filter(r => r.status === 'settled').length} Closed Requisitions
               </div>
-              <p className="text-[11px] text-slate-400">Total funded: SLE {requisitions.filter(r => r.status === 'disbursed' || r.status === 'approved').reduce((s, r) => s + r.requested_amount, 0).toLocaleString()}</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">Workflow Governance</span>
-                <p className="text-xs font-bold text-slate-800 mt-0.5">Ministry Leaders submit funding proposals in their console; Finance Officers issue invoices & disburse.</p>
-              </div>
+              <p className="text-[11px] text-slate-400">100% receipt verified</p>
             </div>
           </div>
 
@@ -1712,11 +1752,13 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
           <div className="space-y-4">
             {requisitions.map(req => {
               const isUrgent = req.priority === 'urgent' || req.priority === 'high';
+              const standing = getDepartmentFinancialStanding(req.department_name, requisitions);
+
               return (
                 <div key={req.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 hover:shadow-md transition-shadow">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                     <div>
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
                           {req.requisition_number}
                         </span>
@@ -1728,7 +1770,14 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                         }`}>
                           Priority: {req.priority}
                         </span>
+
+                        {/* Department Financial Standing Compliance Badge */}
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1 ${standing.badge_color}`}>
+                          <ShieldCheck size={12} />
+                          Department Standing: {standing.standing_status} ({standing.reconciliation_compliance_rate}%)
+                        </span>
                       </div>
+
                       <h3 className="text-xl font-black text-slate-900">{req.title}</h3>
                       <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">{req.description}</p>
                     </div>
@@ -1739,15 +1788,51 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                         {req.currency || 'SLE'} {req.requested_amount.toLocaleString()}
                       </div>
                       <span className={`inline-block mt-1 px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        req.status === 'pending_pastor_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
+                        req.status === 'pastor_approved' ? 'bg-purple-600 text-white font-black shadow-xs' :
                         req.status === 'pending_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                        req.status === 'approved' ? 'bg-indigo-100 text-indigo-800' :
-                        req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800' :
+                        req.status === 'submitted_to_board' ? 'bg-purple-100 text-purple-800 animate-bounce' :
+                        req.status === 'approved' ? 'bg-indigo-100 text-indigo-800 font-bold' :
+                        req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800 font-bold' :
+                        req.status === 'reconciled' ? 'bg-teal-100 text-teal-800 font-bold' :
+                        req.status === 'settled' ? 'bg-emerald-800 text-white font-bold' :
                         'bg-rose-100 text-rose-800'
                       }`}>
-                        {req.status === 'pending_approval' ? 'Pending Finance Approval' : req.status === 'disbursed' ? 'Invoiced & Disbursed' : req.status}
+                        {req.status === 'pending_pastor_approval' ? 'Step 1: Awaiting Senior Pastor Approval' :
+                         req.status === 'pastor_approved' ? 'Step 2: Approved by Senior Pastor — Disburse Now' :
+                         req.status === 'pending_approval' ? 'Under Finance Triage' : 
+                         req.status === 'submitted_to_board' ? 'Escalated to Senior Pastor & Board' :
+                         req.status === 'approved' ? 'Authorized by Pastor & Board — Disburse Now' :
+                         req.status === 'disbursed' ? 'Disbursed (Awaiting Receipts)' :
+                         req.status === 'reconciled' ? 'Receipts Submitted (Awaiting Settlement)' :
+                         req.status === 'settled' ? 'Audited & Settled in Good Standing' :
+                         req.status}
                       </span>
                     </div>
                   </div>
+
+                  {/* Stage Notes & Pastor Approvals */}
+                  {req.pastor_approval_notes && (
+                    <div className="p-3.5 bg-purple-50 rounded-2xl border border-purple-200 text-xs text-purple-950 font-medium flex items-start gap-2">
+                      <CheckCircle2 size={16} className="text-purple-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Senior Pastor Approval Sign-off:</strong> {req.pastor_approval_notes}
+                        <span className="text-[10px] text-purple-700 font-semibold block mt-0.5">Approved By: {req.pastor_approved_by || 'Senior Pastor'} ({req.pastor_approved_at ? new Date(req.pastor_approved_at).toLocaleString() : 'Approved'})</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {req.finance_officer_review_notes && (
+                    <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200 text-xs text-amber-900">
+                      <strong>Finance Officer Triage Note:</strong> {req.finance_officer_review_notes}
+                    </div>
+                  )}
+
+                  {req.board_notes && !req.pastor_approval_notes && (
+                    <div className="p-3 bg-purple-50/80 rounded-2xl border border-purple-200 text-xs text-purple-900">
+                      <strong>Board & Senior Pastor Authorization:</strong> {req.board_notes} ({req.board_approved_by})
+                    </div>
+                  )}
 
                   {/* Items Preview Table */}
                   <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/60 text-xs">
@@ -1765,6 +1850,48 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                     </div>
                   </div>
 
+                  {/* Receipt Upload & Post-Disbursement Spending Audit View (Stages 5 & 6) */}
+                  {(req.status === 'reconciled' || req.status === 'settled') && (
+                    <div className="p-4 bg-teal-50/80 border border-teal-200 rounded-2xl text-xs space-y-2">
+                      <div className="flex items-center justify-between text-teal-950 font-black">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2 size={16} className="text-teal-600" />
+                          Department Expenditure Report & Receipt Verification
+                        </span>
+                        <span className="font-mono text-[11px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-md">
+                          Spent: SLE {(req.actual_amount_spent || req.requested_amount).toLocaleString()}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-700 pt-1">
+                        <div>
+                          <span className="text-slate-500 font-medium">Vendor Tax Receipt Proof:</span>
+                          <p className="font-bold text-indigo-700 font-mono text-[11px] truncate">
+                            {req.receipt_proof_url || 'Vendor_Tax_Receipt_Signed.pdf'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 font-medium">Unspent Balance Returned:</span>
+                          <p className="font-bold text-emerald-700 font-mono">
+                            SLE {(req.unspent_balance_returned || 0).toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 font-medium">Audit Compliance Rating:</span>
+                          <p className="font-bold text-emerald-800">
+                            100% On-Time Receipt Verification
+                          </p>
+                        </div>
+                      </div>
+
+                      {req.receipt_notes && (
+                        <p className="text-slate-600 italic bg-white p-2.5 rounded-xl border border-teal-100 mt-1">
+                          "{req.receipt_notes}"
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Action Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                     <div className="text-xs text-slate-500 font-medium">
@@ -1777,14 +1904,22 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {req.status === 'pending_approval' && (
+                      {(req.status === 'pending_approval' || req.status === 'pending_pastor_approval') && (
                         <>
                           <button
                             onClick={() => handleApproveRequisition(req.id)}
-                            className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
                           >
                             Approve Proposal
                           </button>
+
+                          <button
+                            onClick={() => handleEscalateToBoard(req.id)}
+                            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <Send size={13} /> Escalate to Board
+                          </button>
+
                           <button
                             onClick={() => handleRejectRequisition(req.id)}
                             className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
@@ -1794,7 +1929,16 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                         </>
                       )}
 
-                      {(req.status === 'approved' || req.status === 'pending_approval') && (
+                      {req.status === 'reconciled' && (
+                        <button
+                          onClick={() => handleSettleRequisition(req.id)}
+                          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <ShieldCheck size={16} /> Audit & Settle in Good Standing
+                        </button>
+                      )}
+
+                      {(req.status === 'pastor_approved' || req.status === 'approved' || req.status === 'pending_approval') && (
                         <button
                           onClick={() => openDisbursementModal(req)}
                           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-1.5"

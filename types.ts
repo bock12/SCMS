@@ -10,6 +10,8 @@ export interface Profile {
   phone: string;
   avatar_url?: string;
   primary_role: AppRole;
+  department_name?: string;
+  assigned_department?: string;
   created_at: string;
   is_baptized?: boolean;
   baptism_date?: string;
@@ -447,7 +449,17 @@ export interface EventExpense {
   status: 'planned' | 'paid' | 'pending';
 }
 
-export type RequisitionStatus = 'pending_approval' | 'approved' | 'rejected' | 'disbursed' | 'settled';
+export type RequisitionStatus = 
+  | 'draft'                    // Saved locally by Ministry Lead, not yet submitted for pastoral approval
+  | 'pending_pastor_approval'  // Step 1: Submitted by Ministry Lead, awaiting Senior Pastor approval
+  | 'pastor_approved'          // Step 2: Approved by Senior Pastor; forwarded to Finance Officer for final disbursement
+  | 'pending_approval'         // Under Finance Officer review / triage
+  | 'submitted_to_board'       // Escalated to Executive Board
+  | 'approved'                 // Fully Authorized for disbursement
+  | 'rejected'                 // Rejected with feedback
+  | 'disbursed'                // Disbursed into department account by Finance Officer
+  | 'reconciled'               // Department submitted spending report & receipts
+  | 'settled';                // Finance Officer audited receipts and settled in Good Standing
 
 export interface RequisitionItem {
   id: string;
@@ -480,6 +492,62 @@ export interface DepartmentRequisition {
   disbursed_at?: string;
   disbursed_by?: string;
   admin_notes?: string;
+
+  // Step 1: Senior Pastor Approval
+  pastor_approved_by?: string;
+  pastor_approved_at?: string;
+  pastor_approval_notes?: string;
+
+  // Step 2: Finance Officer Triage & Board Approvals
+  finance_officer_review_notes?: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+  submitted_to_board_at?: string;
+  board_approved_by?: string;
+  board_approved_at?: string;
+  board_notes?: string;
+
+  // Step 3: Department Expenditure & Proof Upload
+  actual_amount_spent?: number;
+  unspent_balance_returned?: number;
+  receipt_proof_url?: string; // Vendor Receipt photo/document
+  receipt_notes?: string; // Itemized expenditure report by department
+  reconciled_at?: string;
+  reconciled_by?: string;
+
+  // Step 4: Audit & Governance Compliance Rating
+  audit_status?: 'good_standing' | 'flagged_discrepancy';
+  audit_notes?: string;
+  settled_at?: string;
+  settled_by?: string;
+}
+
+export interface DepartmentFinancialStanding {
+  department_name: string;
+  total_requisitions: number;
+  total_disbursed_amount: number;
+  total_reconciled_amount: number;
+  unspent_returned_amount: number;
+  reconciliation_compliance_rate: number; // Percentage e.g. 100
+  standing_status: 'Exemplary Standing (100%)' | 'Good Standing (80%+)' | 'Reconciliation Action Needed' | 'New Department';
+  badge_color: string;
+  pending_receipts_count: number;
+}
+
+export interface DepartmentLedgerRecord {
+  id: string;
+  department_name: string;
+  type: 'income' | 'expense';
+  category: string;
+  description: string;
+  amount: number;
+  currency: string;
+  date: string;
+  recorded_by: string;
+  receipt_image_url?: string; // Scanned physical receipt image data URL or path
+  vendor_name?: string;
+  payment_method?: string;
+  notes?: string;
 }
 
 export type PermissionKey = 
