@@ -478,10 +478,12 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     try {
       // Save the ledger entry first. If the status update fails, a retry reuses this same ID.
       const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
+      // Reuse the ledger's original reference on retry so both records stay linked.
+      const confirmedTxnRef = savedRecord.transaction_id || txnRef;
       const updatedReqs = getRequisitions().map(r => r.id === disburseReq.id ? {
         ...r,
         status: 'disbursed' as const,
-        transaction_ref: txnRef,
+        transaction_ref: confirmedTxnRef,
         vendor_quote_url: vendorReceiptUrl || r.vendor_quote_url,
         disbursed_at: r.disbursed_at || now,
         disbursed_by: r.disbursed_by || actor
@@ -489,7 +491,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
       saveRequisitions(updatedReqs);
       const confirmedReq = getRequisitions().find(r => r.id === disburseReq.id);
-      if (!confirmedReq || confirmedReq.status !== 'disbursed' || confirmedReq.transaction_ref !== txnRef) {
+      if (!confirmedReq || confirmedReq.status !== 'disbursed' || confirmedReq.transaction_ref !== confirmedTxnRef) {
         throw new Error('The ledger entry was saved, but the requisition status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
       }
 
@@ -539,23 +541,25 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     try {
       // Persist the ledger first; retries reuse the event's deterministic ledger ID.
       const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
+      // Reuse the ledger's original reference on retry so both records stay linked.
+      const confirmedTxnRef = savedRecord.transaction_id || txnRef;
       executeDisburseEventBudget(
         disburseEventBudget.event_id,
         actor,
-        txnRef,
+        confirmedTxnRef,
         evtDisburseChannel,
         'Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' via ' + evtDisburseChannel.toUpperCase() + ' (Ref: ' + txnRef + ').'
       );
 
       const confirmedBudget = getEventBudgetApprovals().find(b => b.event_id === disburseEventBudget.event_id);
-      if (!confirmedBudget || confirmedBudget.status !== 'disbursed' || confirmedBudget.transaction_ref !== txnRef) {
+      if (!confirmedBudget || confirmedBudget.status !== 'disbursed' || confirmedBudget.transaction_ref !== confirmedTxnRef) {
         throw new Error('The ledger entry was saved, but the event budget status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
       }
 
       setRecords(prev => [savedRecord, ...prev.filter(record => record.id !== savedRecord.id)]);
       setEventBudgets(getEventBudgetApprovals());
       setDisburseEventBudget(null);
-      setEvtDisburseSuccessMsg('🎉 Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' for ' + disburseEventBudget.event_title + '! Transaction ref ' + txnRef + ' recorded into Treasury Ledger.');
+      setEvtDisburseSuccessMsg('🎉 Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' for ' + disburseEventBudget.event_title + '! Transaction ref ' + confirmedTxnRef + ' recorded into Treasury Ledger.');
       setTimeout(() => setEvtDisburseSuccessMsg(null), 5000);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
