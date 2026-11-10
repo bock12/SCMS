@@ -7752,19 +7752,40 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
     setSaving(true);
     setSaveSuccess(false);
 
-    await supabase.from('profiles').update({
-      first_name: firstName,
-      last_name: lastName,
-      phone,
+    const updatedProfileData = {
+      first_name: firstName.trim(),
+      last_name: lastName.trim(),
+      phone: phone.trim(),
       date_of_birth: dobInput || undefined,
       marital_status: maritalStatusInput,
       marriage_date: maritalStatusInput === 'Married' ? marriageDateInput : undefined,
       baptism_date: bDateInput,
       baptized_by: bByInput
-    }).eq('id', profile.id);
+    };
 
-    setSaving(false);
-    setSaveSuccess(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update(updatedProfileData)
+        .eq('id', profile.id);
+
+      if (error) {
+        console.error('Unable to update member profile:', error);
+        setSaving(false);
+        return;
+      }
+
+      // Keep the signed-in profile, header, and other profile consumers in sync.
+      window.dispatchEvent(new CustomEvent('profile-updated', {
+        detail: { id: profile.id, ...updatedProfileData }
+      }));
+      setSaving(false);
+      setSaveSuccess(true);
+    } catch (error) {
+      console.error('Unable to update member profile:', error);
+      setSaving(false);
+      return;
+    }
     setTimeout(() => setSaveSuccess(false), 3000);
   };
 
