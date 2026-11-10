@@ -21,6 +21,8 @@ import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { getMembers } from './memberService';
+import { getDirectoryMembers } from './memberDirectoryService';
+import type { DirectoryMember } from './memberDirectoryService';
 import { syncLinkedMemberIdentity } from './memberProfileSyncService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
@@ -1153,16 +1155,16 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
 // --- Church Member Directory Page with Admin CRUD, Suspend, Soft Delete & Pic Upload ---
 
 const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profiles, setProfiles] = useState<DirectoryMember[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>('all');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   // Modals state
-  const [viewingPerson, setViewingPerson] = useState<Profile | null>(null);
+  const [viewingPerson, setViewingPerson] = useState<DirectoryMember | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [editingPerson, setEditingPerson] = useState<Profile | null>(null);
+  const [editingPerson, setEditingPerson] = useState<DirectoryMember | null>(null);
 
   // Add / Edit Form State
   const [formFirstName, setFormFirstName] = useState('');
@@ -1188,6 +1190,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     email: string;
     pass: string;
     isBaptized: boolean;
+    isNew: boolean;
   } | null>(null);
 
   const isAdminOrPastor = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile?.primary_role || '');
@@ -1198,9 +1201,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const loadDirectory = async () => {
     setLoading(true);
-    const { data } = await supabase.from('profiles').select('*');
-    if (data) setProfiles(data as Profile[]);
-    setLoading(false);
+    try {
+      const members = await getDirectoryMembers();
+      setProfiles(members);
+    } catch (error) {
+      console.error('Unable to load church membership directory:', error);
+      setProfiles([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1229,149 +1238,243 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormDob('');
     setFormMaritalStatus('Single');
     setFormMarriageDate('');
-    setFormCreateCredentials(true);
-    setFormPassword('FaithConnect2026!');
+    setFormCreateCredentials(false);
+    setFormPassword('');
     setAddModalOpen(true);
   };
 
-  const openEditModal = (p: Profile) => {
-    setEditingPerson(p);
-    setFormFirstName(p.first_name);
-    setFormLastName(p.last_name);
-    setFormEmail(p.email);
-    setFormPhone(p.phone || '');
-    setFormRole(p.primary_role || 'member');
-    setFormAssignedDepartment((p as any).assigned_department || (p as any).department_name || 'Media & IT Ministry');
-    setFormStatus((p as any).status || 'active');
-    setFormAvatar(p.avatar_url || '');
-    setFormIsBaptized(Boolean((p as any).is_baptized));
-    setFormBaptismDate((p as any).baptism_date || '2022-10-17');
-    setFormBaptizedBy((p as any).baptized_by || 'Rev. Sarah Johnson');
-    setFormDob((p as any).date_of_birth || '');
-    setFormMaritalStatus((p as any).marital_status || 'Single');
-    setFormMarriageDate((p as any).marriage_date || '');
-    setFormCreateCredentials(Boolean((p as any).has_login_credentials ?? true));
-    setFormPassword((p as any).temporary_password || 'FaithConnect2026!');
+  const openEditModal = (person: DirectoryMember) => {
+    setEditingPerson(person);
+    setFormFirstName(person.first_name);
+    setFormLastName(person.last_name);
+    setFormEmail(person.email || '');
+    setFormPhone(person.phone || '');
+    setFormRole(person.primary_role || 'member');
+    setFormAssignedDepartment(person.assigned_department || person.department_name || 'Media & IT Ministry');
+    setFormStatus(person.status || 'active');
+    setFormAvatar(person.avatar_url || '');
+    setFormIsBaptized(Boolean(person.is_baptized));
+    setFormBaptismDate(person.baptism_date || '');
+    setFormBaptizedBy(person.baptized_by || '');
+    setFormDob(person.date_of_birth || '');
+    setFormMaritalStatus(person.marital_status || 'Single');
+    setFormMarriageDate(person.marriage_date || '');
+    setFormCreateCredentials(Boolean(person.profile));
+    setFormPassword('');
   };
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newProfile: Profile = {
-      id: `usr_${Date.now()}`,
-      branch_id: 'branch-1',
+    if (formCreateCredentials && (!formEmail.trim() || !formPassword)) {
+      alert('Enter an email address and initial password to create a portal account.');
+      return;
+    }
+
+    const memberId = globalThis.crypto.randomUUID();
+    const branchId = profile?.branch_id || 'branch-1';
+    const newMember: Member = {
+      id: memberId,
+      branch_id: branchId,
       first_name: formFirstName.trim(),
       last_name: formLastName.trim(),
-      email: formEmail.trim(),
-      phone: formPhone.trim(),
-      primary_role: formRole as any,
-      department_name: formAssignedDepartment,
-      assigned_department: formAssignedDepartment,
-      avatar_url: formAvatar || `https://picsum.photos/seed/${Date.now()}/200`,
-      created_at: new Date().toISOString(),
+      gender: 'other',
+      status: formStatus as Member['status'],
+      membership_date: new Date().toISOString().slice(0, 10),
+      email: formEmail.trim() || undefined,
+      phone: formPhone.trim() || undefined,
+      avatar_url: formAvatar || undefined,
       is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
+      baptism_date: formIsBaptized ? formBaptismDate || undefined : undefined,
+      baptized_by: formIsBaptized ? formBaptizedBy || undefined : undefined,
       date_of_birth: formDob || undefined,
       marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined
+      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate || undefined : undefined
     };
-    (newProfile as any).status = formStatus;
-    (newProfile as any).has_login_credentials = formCreateCredentials;
-    (newProfile as any).login_email = formEmail.trim();
-    (newProfile as any).temporary_password = formPassword || 'FaithConnect2026!';
 
-    await supabase.from('profiles').insert(newProfile);
-    setProfiles(prev => [newProfile, ...prev]);
-    window.dispatchEvent(new CustomEvent('profile-updated', { detail: newProfile }));
-    setAddModalOpen(false);
+    try {
+      const { error: memberError } = await supabase.from('members').insert(newMember);
+      if (memberError) throw memberError;
 
-    if (formCreateCredentials) {
-      setCreatedCredsModal({
-        name: `${formFirstName} ${formLastName}`,
-        email: formEmail.trim(),
-        pass: formPassword || 'FaithConnect2026!',
-        isBaptized: formIsBaptized
-      });
+      let createdAccount: { id: string; email: string } | null = null;
+      if (formCreateCredentials) {
+        const { data, error } = await supabase.auth.createUser({
+          email: formEmail.trim(),
+          password: formPassword,
+          options: {
+            data: {
+              branch_id: branchId,
+              first_name: newMember.first_name,
+              last_name: newMember.last_name,
+              phone: newMember.phone || '',
+              avatar_url: newMember.avatar_url,
+              primary_role: formRole,
+              department_name: formAssignedDepartment,
+              assigned_department: formAssignedDepartment
+            }
+          }
+        });
+        if (error || !data?.user) {
+          await supabase.from('members').delete().eq('id', memberId);
+          throw new Error(error?.message || 'The portal account could not be created.');
+        }
+
+        createdAccount = { id: data.user.id, email: data.user.email };
+        const { error: linkError } = await supabase
+          .from('members')
+          .update({ profile_id: createdAccount.id })
+          .eq('id', memberId);
+        if (linkError) {
+          await supabase.auth.deleteUser({ id: createdAccount.id });
+          await supabase.from('members').delete().eq('id', memberId);
+          throw linkError;
+        }
+      }
+
+      await loadDirectory();
+      window.dispatchEvent(new CustomEvent('members-updated'));
+      setAddModalOpen(false);
+
+      if (createdAccount) {
+        setCreatedCredsModal({
+          name: `${newMember.first_name} ${newMember.last_name}`,
+          email: createdAccount.email,
+          pass: formPassword,
+          isBaptized: formIsBaptized,
+          isNew: true
+        });
+      }
+    } catch (error) {
+      console.error('Unable to create church member:', error);
+      alert(error instanceof Error ? error.message : 'Unable to create church member.');
     }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPerson) return;
-
-    const updatedData = {
-      first_name: formFirstName.trim(),
-      last_name: formLastName.trim(),
-      email: formEmail.trim(),
-      phone: formPhone.trim(),
-      primary_role: formRole as any,
-      department_name: formAssignedDepartment,
-      assigned_department: formAssignedDepartment,
-      status: formStatus,
-      avatar_url: formAvatar || editingPerson.avatar_url,
-      is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
-      date_of_birth: formDob || undefined,
-      marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined,
-      has_login_credentials: formCreateCredentials,
-      login_email: formEmail.trim(),
-      temporary_password: formPassword || 'FaithConnect2026!'
-    };
-
-    const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
-    if (error) {
-      console.error('Unable to update profile:', error);
+    if (!editingPerson.profile && formCreateCredentials && (!formEmail.trim() || !formPassword)) {
+      alert('Enter an email address and initial password to create a portal account.');
       return;
     }
 
+    const updatedMember = {
+      first_name: formFirstName.trim(),
+      last_name: formLastName.trim(),
+      email: formEmail.trim() || undefined,
+      phone: formPhone.trim() || undefined,
+      status: formStatus as Member['status'],
+      avatar_url: formAvatar || undefined,
+      is_baptized: formIsBaptized,
+      baptism_date: formIsBaptized ? formBaptismDate || undefined : undefined,
+      baptized_by: formIsBaptized ? formBaptizedBy || undefined : undefined,
+      date_of_birth: formDob || undefined,
+      marital_status: formMaritalStatus,
+      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate || undefined : undefined
+    };
+
     try {
-      await syncLinkedMemberIdentity(editingPerson.id, {
-        first_name: updatedData.first_name,
-        last_name: updatedData.last_name
-      });
-    } catch (syncError) {
-      console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
+      const { error: memberError } = await supabase
+        .from('members')
+        .update(updatedMember)
+        .eq('id', editingPerson.id);
+      if (memberError) throw memberError;
+
+      if (editingPerson.profile) {
+        const profileUpdate = {
+          first_name: updatedMember.first_name,
+          last_name: updatedMember.last_name,
+          phone: updatedMember.phone || '',
+          avatar_url: updatedMember.avatar_url,
+          primary_role: formRole as Profile['primary_role'],
+          department_name: formAssignedDepartment,
+          assigned_department: formAssignedDepartment
+        };
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update(profileUpdate)
+          .eq('id', editingPerson.profile.id);
+        if (profileError) throw profileError;
+
+        window.dispatchEvent(new CustomEvent('profile-updated', {
+          detail: { id: editingPerson.profile.id, ...profileUpdate }
+        }));
+      } else if (formCreateCredentials) {
+        const { data, error } = await supabase.auth.createUser({
+          email: formEmail.trim(),
+          password: formPassword,
+          options: {
+            data: {
+              branch_id: editingPerson.branch_id,
+              first_name: updatedMember.first_name,
+              last_name: updatedMember.last_name,
+              phone: updatedMember.phone || '',
+              avatar_url: updatedMember.avatar_url,
+              primary_role: formRole,
+              department_name: formAssignedDepartment,
+              assigned_department: formAssignedDepartment
+            }
+          }
+        });
+        if (error || !data?.user) {
+          throw new Error(error?.message || 'The portal account could not be created.');
+        }
+
+        const { error: linkError } = await supabase
+          .from('members')
+          .update({ profile_id: data.user.id })
+          .eq('id', editingPerson.id);
+        if (linkError) {
+          await supabase.auth.deleteUser({ id: data.user.id });
+          throw linkError;
+        }
+
+        setCreatedCredsModal({
+          name: `${updatedMember.first_name} ${updatedMember.last_name}`,
+          email: data.user.email,
+          pass: formPassword,
+          isBaptized: formIsBaptized,
+          isNew: true
+        });
+      }
+
+      await loadDirectory();
+      window.dispatchEvent(new CustomEvent('members-updated'));
+      setEditingPerson(null);
+    } catch (error) {
+      console.error('Unable to save church member:', error);
+      alert(error instanceof Error ? error.message : 'Unable to save church member.');
+      await loadDirectory();
     }
+  };
 
-    setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
-    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
-    setEditingPerson(null);
-
-    if (formCreateCredentials) {
-      setCreatedCredsModal({
-        name: `${formFirstName} ${formLastName}`,
-        email: formEmail.trim(),
-        pass: formPassword || 'FaithConnect2026!',
-        isBaptized: formIsBaptized
-      });
+  const handleToggleSuspend = async (person: DirectoryMember) => {
+    const newStatus = person.status === 'suspended' ? 'active' : 'suspended';
+    const { error } = await supabase.from('members').update({ status: newStatus }).eq('id', person.id);
+    if (error) {
+      console.error('Unable to update member status:', error);
+      alert('Unable to update member status.');
+      return;
     }
+    await loadDirectory();
   };
 
-  const handleToggleSuspend = async (person: Profile) => {
-    const isCurrentlySuspended = (person as any).status === 'suspended';
-    const newStatus = isCurrentlySuspended ? 'active' : 'suspended';
-
-    await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
+  const handleSoftDelete = async (person: DirectoryMember) => {
+    const newStatus = person.status === 'archived' ? 'active' : 'archived';
+    const { error } = await supabase.from('members').update({ status: newStatus }).eq('id', person.id);
+    if (error) {
+      console.error('Unable to archive member:', error);
+      alert('Unable to update member archive status.');
+      return;
+    }
+    await loadDirectory();
   };
 
-  const handleSoftDelete = async (person: Profile) => {
-    const isDeleted = (person as any).status === 'archived';
-    const newStatus = isDeleted ? 'active' : 'archived';
+  const filtered = profiles.filter(person => {
+    if (!showArchived && person.status === 'archived') return false;
+    if (showArchived && person.status !== 'archived') return false;
 
-    await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
-  };
-
-  const filtered = profiles.filter(p => {
-    const personStatus = (p as any).status || 'active';
-    if (!showArchived && personStatus === 'archived') return false;
-    if (showArchived && personStatus !== 'archived') return false;
-
-    const matchesRole = selectedRole === 'all' || p.primary_role === selectedRole;
-    const nameMatch = `${p.first_name} ${p.last_name} ${p.email} ${p.phone || ''}`.toLowerCase().includes(search.toLowerCase());
+    const matchesRole = selectedRole === 'all' || person.primary_role === selectedRole;
+    const nameMatch = `${person.first_name} ${person.last_name} ${person.email} ${person.phone || ''}`.toLowerCase().includes(search.toLowerCase());
     return matchesRole && nameMatch;
   });
 
@@ -1444,12 +1547,11 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map(person => {
-            const personStatus = (person as any).status || 'active';
-            const isSuspended = personStatus === 'suspended';
-            const isArchived = personStatus === 'archived';
-            const isBaptized = Boolean((person as any).is_baptized);
-            const bDate = (person as any).baptism_date;
-            const hasLogin = Boolean((person as any).has_login_credentials ?? true);
+            const isSuspended = person.status === 'suspended';
+            const isArchived = person.status === 'archived';
+            const isBaptized = Boolean(person.is_baptized);
+            const bDate = person.baptism_date;
+            const hasLogin = Boolean(person.profile);
 
             return (
               <div 
@@ -1553,8 +1655,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                         onClick={() => setCreatedCredsModal({
                           name: `${person.first_name} ${person.last_name}`,
                           email: person.email,
-                          pass: (person as any).temporary_password || 'FaithConnect2026!',
-                          isBaptized: isBaptized
+                          pass: 'For security, an existing password cannot be viewed. Use the account password-reset process.',
+                          isBaptized: isBaptized,
+                          isNew: false
                         })}
                         title="View / Create Login Credentials"
                         className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
@@ -1630,15 +1733,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-between">
                 <span className="text-slate-400">Date of Birth:</span> 
                 <span className="font-bold text-purple-700">
-                  {(viewingPerson as any).date_of_birth ? new Date((viewingPerson as any).date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
+                  {viewingPerson.date_of_birth ? new Date((viewingPerson as any).date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{(viewingPerson as any).marital_status || 'Single'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{viewingPerson.marital_status || 'Single'}</span></div>
               {(viewingPerson as any).marital_status === 'Married' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Marriage Anniversary:</span> 
                   <span className="font-bold text-purple-800">
-                    {(viewingPerson as any).marriage_date ? new Date((viewingPerson as any).marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                    {viewingPerson.marriage_date ? new Date((viewingPerson as any).marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
                   </span>
                 </div>
               )}
@@ -1646,12 +1749,12 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-between">
                 <span className="text-slate-400">Water Baptism:</span> 
                 <span className="font-bold text-amber-700">
-                  {(viewingPerson as any).is_baptized ? `Baptized (${(viewingPerson as any).baptism_date || 'Oct 2022'})` : 'Not Baptized'}
+                  {viewingPerson.is_baptized ? `Baptized (${viewingPerson.baptism_date || 'Oct 2022'})` : 'Not Baptized'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Login Account:</span> <span className="font-bold text-emerald-600">Active</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">System Status:</span> <span className="font-bold uppercase text-emerald-600">{(viewingPerson as any).status || 'Active'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Member Since:</span> <span className="font-bold">{new Date(viewingPerson.created_at).toLocaleDateString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Login Account:</span> <span className={`font-bold ${viewingPerson.profile ? 'text-emerald-600' : 'text-slate-500'}`}>{viewingPerson.profile ? 'Linked' : 'No account'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">System Status:</span> <span className="font-bold uppercase text-emerald-600">{viewingPerson.status || 'active'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Member Since:</span> <span className="font-bold">{new Date(viewingPerson.membership_date).toLocaleDateString()}</span></div>
             </div>
 
             <div className="pt-2 flex justify-end">
@@ -1691,10 +1794,14 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Login Email</span>
                 <p className="text-slate-900 font-bold text-sm">{createdCredsModal.email}</p>
               </div>
-              <div>
-                <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Temporary Password</span>
-                <p className="text-indigo-600 font-bold text-sm">{createdCredsModal.pass}</p>
-              </div>
+              {createdCredsModal.isNew ? (
+                <div>
+                  <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Initial Password (shown once)</span>
+                  <p className="text-indigo-600 font-bold text-sm">{createdCredsModal.pass}</p>
+                </div>
+              ) : (
+                <p className="text-slate-600 font-sans">{createdCredsModal.pass}</p>
+              )}
               <div>
                 <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Baptism Status</span>
                 <p className="text-amber-800 font-bold font-sans">
@@ -1704,16 +1811,18 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <button 
-                type="button"
-                onClick={() => {
-                  navigator.clipboard?.writeText(`Email: ${createdCredsModal.email}\nPassword: ${createdCredsModal.pass}`);
-                  alert('Login details copied to clipboard!');
-                }}
-                className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-200 cursor-pointer"
-              >
-                Copy Details
-              </button>
+              {createdCredsModal.isNew && (
+                <button 
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(`Email: ${createdCredsModal.email}\nPassword: ${createdCredsModal.pass}`);
+                    alert('Login details copied to clipboard!');
+                  }}
+                  className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-200 cursor-pointer"
+                >
+                  Copy Details
+                </button>
+              )}
               <button 
                 type="button" 
                 onClick={() => setCreatedCredsModal(null)} 
@@ -1766,7 +1875,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
               <div>
                 <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="member@domain.com" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
+                <input type="email" required={formCreateCredentials} value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="member@domain.com" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
               </div>
 
               <div>
@@ -1777,7 +1886,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <select value={formRole} disabled={!formCreateCredentials} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
                     <option value="leader">Leader (Dept Lead)</option>
@@ -1976,7 +2085,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
               <div>
                 <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
+                <input type="email" required={!editingPerson?.profile && formCreateCredentials} value={formEmail} onChange={e => setFormEmail(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
               </div>
 
               <div>
@@ -2107,16 +2216,17 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <input 
                     type="checkbox" 
                     checked={formCreateCredentials} 
+                    disabled={Boolean(editingPerson?.profile)}
                     onChange={e => setFormCreateCredentials(e.target.checked)} 
                     className="w-4 h-4 text-indigo-600 rounded"
                   />
-                  <span>Generate / Enable Portal Login</span>
+                  <span>{editingPerson?.profile ? 'Portal Account Linked' : 'Create Portal Login'}</span>
                 </label>
 
-                {formCreateCredentials && (
+                {formCreateCredentials && !editingPerson?.profile && (
                   <div className="space-y-2 pt-1">
                     <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Password</label>
+                      <label className="font-bold text-slate-600 block mb-0.5">Initial Password</label>
                       <input 
                         type="text" 
                         value={formPassword} 
