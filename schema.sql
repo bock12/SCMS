@@ -21,7 +21,8 @@ DO $$ BEGIN
     'active',
     'inactive',
     'suspended',
-    'transferred'
+    'transferred',
+    'archived'
   );
 EXCEPTION
   WHEN duplicate_object THEN null;
