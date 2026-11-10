@@ -1,3 +1,5 @@
+ALTER TYPE member_status ADD VALUE IF NOT EXISTS 'archived';
+
 -- Expand church membership records to hold member-specific details.
 -- Login credentials, passwords and application roles remain in public.profiles/auth.
 ALTER TABLE public.members
