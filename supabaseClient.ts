@@ -216,6 +216,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: '2nd Saturday 8:00 AM', 
     member_count: 28, 
     category: 'Men',
+    type: 'social_fellowship',
     roles_and_responsibilities: [
       'Men\'s Discipleship & Mentorship Lead',
       'Brotherhood Breakfast Coordinator',
@@ -232,6 +233,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: '3rd Saturday 10:00 AM', 
     member_count: 38, 
     category: 'Women',
+    type: 'social_fellowship',
     roles_and_responsibilities: [
       'Sisterhood Mentorship Coordinator',
       'Annual Women\'s Retreat Planning Lead',
@@ -248,6 +250,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: 'Thursdays 6:30 PM', 
     member_count: 24, 
     category: 'Worship',
+    type: 'service_department',
     roles_and_responsibilities: [
       'Soprano / Alto / Tenor Section Leaders',
       'Communion & Special Soloist Leader',
@@ -263,6 +266,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: 'Saturdays 5:00 PM', 
     member_count: 42, 
     category: 'Youth',
+    type: 'social_fellowship',
     roles_and_responsibilities: [
       'Campus Outreach Coordinator',
       'Acoustic Youth Worship Leader',
@@ -278,6 +282,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: '1st Sunday 8:00 AM', 
     member_count: 18, 
     category: 'Hospitality',
+    type: 'service_department',
     roles_and_responsibilities: [
       'Head Usher & Protocol Lead',
       'First-Time Visitor Welcome Liaison',
@@ -293,6 +298,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: 'Tuesdays 6:00 AM', 
     member_count: 15, 
     category: 'Prayer',
+    type: 'service_department',
     roles_and_responsibilities: [
       'Morning Prayer Chain Leader',
       'Altar Call Intercessor',
@@ -309,6 +315,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: 'Sundays 7:30 AM', 
     member_count: 10, 
     category: 'Production',
+    type: 'service_department',
     roles_and_responsibilities: [
       'Main Camera Operator',
       'OBS / Live Broadcast Engineer',
@@ -324,6 +331,7 @@ const initialMinistries: Ministry[] = [
     meeting_time: 'Sundays 9:30 AM', 
     member_count: 35, 
     category: 'Children',
+    type: 'social_fellowship',
     roles_and_responsibilities: [
       'Children Sunday School Teacher',
       'Nursery Care Attendant',
@@ -531,12 +539,23 @@ function loadLocalDatabase() {
         if (!hasMen) parsed.ministries.unshift(initialMinistries[0]);
         if (!hasWomen) parsed.ministries.unshift(initialMinistries[1]);
 
-        // Enrich existing ministries with default roles_and_responsibilities if missing
+        // Enrich existing ministries with default type and roles_and_responsibilities if missing
         parsed.ministries = parsed.ministries.map((m: any) => {
+          let inferredType = m.type;
+          if (!inferredType) {
+            const cat = (m.category || '').toLowerCase();
+            const name = (m.name || '').toLowerCase();
+            if (['men', 'women', 'youth', 'children', 'social', 'fellowship', 'guild'].some(k => cat.includes(k) || name.includes(k))) {
+              inferredType = 'social_fellowship';
+            } else {
+              inferredType = 'service_department';
+            }
+          }
           if (!m.roles_and_responsibilities || m.roles_and_responsibilities.length === 0) {
             const match = initialMinistries.find(i => i.id === m.id || i.name === m.name);
             return {
               ...m,
+              type: inferredType,
               roles_and_responsibilities: match?.roles_and_responsibilities || [
                 'Department Team Member',
                 'Service Duty Volunteer',
@@ -544,7 +563,10 @@ function loadLocalDatabase() {
               ]
             };
           }
-          return m;
+          return {
+            ...m,
+            type: inferredType
+          };
         });
       }
       if (!parsed.financial_records || parsed.financial_records.length === 0) parsed.financial_records = initialFinancials;

@@ -175,6 +175,7 @@ export interface Ministry {
   meeting_time: string;
   member_count: number;
   category: string;
+  type?: 'social_fellowship' | 'service_department';
   roles_and_responsibilities?: string[];
 }
 

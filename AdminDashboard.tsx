@@ -2067,6 +2067,7 @@ const MinistriesAdminTab = () => {
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedType, setSelectedType] = useState<'All' | 'social_fellowship' | 'service_department'>('All');
   
   // Custom categories state
   const [customCategories, setCustomCategories] = useState<string[]>(() => {
@@ -2094,6 +2095,7 @@ const MinistriesAdminTab = () => {
     leader_id: '',
     meeting_time: '',
     category: 'Worship',
+    type: 'service_department' as 'social_fellowship' | 'service_department',
     roles: ['Department Team Lead', 'Volunteer Coordinator', 'Service Duty Member']
   });
   const [newRoleInput, setNewRoleInput] = useState('');
@@ -2163,6 +2165,7 @@ const MinistriesAdminTab = () => {
       meeting_time: newMinistry.meeting_time.trim() || 'Weekly Gathering',
       member_count: 1,
       category: newMinistry.category,
+      type: newMinistry.type,
       roles_and_responsibilities: newMinistry.roles.length > 0 ? newMinistry.roles : ['Department Member']
     };
 
@@ -2175,6 +2178,7 @@ const MinistriesAdminTab = () => {
       leader_id: '',
       meeting_time: '',
       category: 'Worship',
+      type: 'service_department',
       roles: ['Department Team Lead', 'Volunteer Coordinator', 'Service Duty Member']
     });
     fetchMinistriesAndProfiles();
@@ -2197,6 +2201,7 @@ const MinistriesAdminTab = () => {
       meeting_time: editingMinistry.meeting_time,
       member_count: Number(editingMinistry.member_count) || 1,
       category: editingMinistry.category,
+      type: editingMinistry.type || 'service_department',
       roles_and_responsibilities: editingMinistry.roles_and_responsibilities || []
     };
 
@@ -2231,9 +2236,14 @@ const MinistriesAdminTab = () => {
     });
   };
 
+  const socialCount = ministries.filter(m => m.type === 'social_fellowship').length;
+  const serviceCount = ministries.filter(m => (m.type || 'service_department') === 'service_department').length;
+
   const filteredMinistries = ministries.filter(m => {
-    if (selectedCategory === 'All') return true;
-    return m.category.toLowerCase() === selectedCategory.toLowerCase();
+    const matchesCat = selectedCategory === 'All' || m.category.toLowerCase() === selectedCategory.toLowerCase();
+    const itemType = m.type || 'service_department';
+    const matchesType = selectedType === 'All' || itemType === selectedType;
+    return matchesCat && matchesType;
   });
 
   return (
@@ -2244,19 +2254,19 @@ const MinistriesAdminTab = () => {
           <div className="flex items-center gap-2 mb-1">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 flex items-center gap-1">
               <Building2 size={12} />
-              {ministries.length} Departments Active
+              {ministries.length} Groups Active
             </span>
-            <span className="text-xs text-slate-400 font-semibold">• Grace Cathedral Teams</span>
+            <span className="text-xs text-slate-400 font-semibold">• Grace Cathedral Groups & Departments</span>
           </div>
           <h3 className="font-extrabold text-slate-900 text-2xl tracking-tight">Church Ministries & Departments</h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage choir, youth, ushers, Men's & Women's fellowships, assign department leaders, and define team responsibilities.
+            Differentiate Social Fellowships (Women's, Youth, Men's) from Service Departments (Media, Choir, Ushers), assign leaders, and manage team roles.
           </p>
         </div>
 
         <div className="flex flex-row items-center gap-2.5 w-full md:w-auto">
           {/* Category Dropdown Filter */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs flex-1 md:flex-initial min-w-0 sm:min-w-[240px]">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs flex-1 md:flex-initial min-w-0 sm:min-w-[220px]">
             <Filter size={15} className="text-slate-400 shrink-0" />
             <select
               value={selectedCategory}
@@ -2291,23 +2301,71 @@ const MinistriesAdminTab = () => {
         </div>
       </div>
 
+      {/* Ministry Type Segmented Filter Tabs */}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
+        <button
+          onClick={() => setSelectedType('All')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            selectedType === 'All'
+              ? 'bg-white text-slate-900 shadow-sm font-black'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Building2 size={14} className={selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'} />
+          <span>All Ministry Types ({ministries.length})</span>
+        </button>
+
+        <button
+          onClick={() => setSelectedType('social_fellowship')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            selectedType === 'social_fellowship'
+              ? 'bg-amber-600 text-white shadow-md shadow-amber-100 font-black'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Users size={14} className={selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'} />
+          <span>👥 Social Fellowships ({socialCount})</span>
+        </button>
+
+        <button
+          onClick={() => setSelectedType('service_department')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            selectedType === 'service_department'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <Building2 size={14} className={selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'} />
+          <span>🛠️ Service Departments ({serviceCount})</span>
+        </button>
+      </div>
+
       {/* Ministries Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredMinistries.map((m) => {
           const leaderProfile = profiles.find(p => p.id === m.leader_id || `${p.first_name} ${p.last_name}` === m.leader_name);
           const rolesList = m.roles_and_responsibilities || [];
+          const isSocial = m.type === 'social_fellowship';
 
           return (
             <div key={m.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                    m.category === 'Men' || m.category === 'Women' 
-                      ? 'bg-amber-50 text-amber-900 border-amber-200' 
-                      : 'bg-indigo-50 text-indigo-700 border-indigo-100'
-                  }`}>
-                    {m.category}
-                  </span>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Ministry Type Badge */}
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1 ${
+                      isSocial 
+                        ? 'bg-amber-100 text-amber-900 border-amber-300' 
+                        : 'bg-indigo-100 text-indigo-900 border-indigo-200'
+                    }`}>
+                      {isSocial ? '👥 Social Fellowship' : '🛠️ Service Department'}
+                    </span>
+                    {/* Category Tag */}
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-slate-100 text-slate-700 border border-slate-200">
+                      {m.category}
+                    </span>
+                  </div>
+
                   <span className="text-xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
                     {m.member_count} Servants
                   </span>
@@ -2508,6 +2566,46 @@ const MinistriesAdminTab = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* Ministry Classification Type */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                  Ministry Group Type *
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewMinistry({ ...newMinistry, type: 'social_fellowship' })}
+                    className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                      newMinistry.type === 'social_fellowship'
+                        ? 'bg-amber-50 border-amber-400 text-amber-950 font-black shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                    }`}
+                  >
+                    <Users size={16} className={newMinistry.type === 'social_fellowship' ? 'text-amber-600' : 'text-slate-400'} />
+                    <div>
+                      <span className="block text-xs">👥 Social Fellowship</span>
+                      <span className="block text-[9px] text-slate-400 font-normal">Women's, Youth, Men's, Children's</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewMinistry({ ...newMinistry, type: 'service_department' })}
+                    className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                      newMinistry.type === 'service_department'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-950 font-black shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                    }`}
+                  >
+                    <Building2 size={16} className={newMinistry.type === 'service_department' ? 'text-indigo-600' : 'text-slate-400'} />
+                    <div>
+                      <span className="block text-xs">🛠️ Service Department</span>
+                      <span className="block text-[9px] text-slate-400 font-normal">Media, Choir, Ushers, Prayer, etc.</span>
+                    </div>
+                  </button>
                 </div>
               </div>
 
@@ -2752,6 +2850,46 @@ const MinistriesAdminTab = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* Ministry Group Type Selection */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                  Ministry Group Type *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditingMinistry({ ...editingMinistry, type: 'social_fellowship' })}
+                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
+                      editingMinistry.type === 'social_fellowship'
+                        ? 'bg-amber-50 border-amber-400 text-amber-950 font-black shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                    }`}
+                  >
+                    <Users size={18} className={editingMinistry.type === 'social_fellowship' ? 'text-amber-600' : 'text-slate-400'} />
+                    <div>
+                      <span className="block text-xs font-extrabold">👥 Social Fellowship</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">Women's, Youth, Men's, Children's</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditingMinistry({ ...editingMinistry, type: 'service_department' })}
+                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
+                      (editingMinistry.type || 'service_department') === 'service_department'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-950 font-black shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                    }`}
+                  >
+                    <Building2 size={18} className={(editingMinistry.type || 'service_department') === 'service_department' ? 'text-indigo-600' : 'text-slate-400'} />
+                    <div>
+                      <span className="block text-xs font-extrabold">🛠️ Service Department</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">Media, Choir, Ushers, Prayer, etc.</span>
+                    </div>
+                  </button>
                 </div>
               </div>
 

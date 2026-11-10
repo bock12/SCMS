@@ -9,17 +9,27 @@ import {
   Users, Layers, Award, Sparkles, CheckCircle2, FileText, Calendar, Building2, Filter
 } from 'lucide-react';
 
+export const DEMOGRAPHIC_FELLOWSHIPS = [
+  "Women's Fellowship & Caring Hands",
+  "Men's Fellowship & Brotherhood",
+  "Kingdom Youth & Young Adult Fellowship",
+  "Children's Church & Sunday School",
+  "Senior Citizens & Elders Circle"
+];
+
+export const SERVICE_DEPARTMENTS = [
+  "Voices of Grace Choir & Music Ministry",
+  "Media & Digital Production Team",
+  "Ushering & Sanctuary Protocol",
+  "Intercessory Prayer & Deliverance",
+  "Outreach & Evangelism Department",
+  "Finance & Treasury Department"
+];
+
 export const DEFAULT_MINISTRY_SCOPES = [
   'All Ministries / Global Scope',
-  'Sanctuary Choir & Music Ministry',
-  'Youth & Young Adult Fellowship',
-  'Ushering & Sanctuary Protocol',
-  'Media & Digital Production Team',
-  'Finance & Treasury Department',
-  "Women's Fellowship & Caring Hands",
-  "Men's Ministry & Brotherhood",
-  "Children's Church & Sunday School",
-  'Intercessory Prayer & Deliverance'
+  ...DEMOGRAPHIC_FELLOWSHIPS,
+  ...SERVICE_DEPARTMENTS
 ];
 
 export const RolesAndPermissionsTab: React.FC = () => {
@@ -30,6 +40,10 @@ export const RolesAndPermissionsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'roles' | 'assignments'>('roles');
   const [selectedMinistryFilter, setSelectedMinistryFilter] = useState<string>('All');
+
+  // Delete Confirmation Modal State (No native browser confirm blocking)
+  const [deletingRole, setDeletingRole] = useState<CustomRole | null>(null);
+  const [deletingAssignment, setDeletingAssignment] = useState<MemberRoleAssignment | null>(null);
 
   // Modal State - Create/Edit Role
   const [showRoleModal, setShowRoleModal] = useState(false);
@@ -186,11 +200,18 @@ export const RolesAndPermissionsTab: React.FC = () => {
     setShowRoleModal(false);
   };
 
-  const handleDeleteRole = (roleId: string) => {
-    if (!confirm("Are you sure you want to remove this custom role definition?")) return;
-    const updated = roles.filter(r => r.id !== roleId);
+  const handleDeleteRole = (role: CustomRole) => {
+    setDeletingRole(role);
+  };
+
+  const confirmDeleteRole = () => {
+    if (!deletingRole) return;
+    const updated = roles.filter(r => r.id !== deletingRole.id);
     setRoles(updated);
     saveCustomRoles(updated);
+    setDeletingRole(null);
+    setAssignmentSuccess(`Removed role definition "${deletingRole.name}".`);
+    setTimeout(() => setAssignmentSuccess(null), 4000);
   };
 
   const handleAssignMemberRole = (e: React.FormEvent) => {
@@ -231,11 +252,18 @@ export const RolesAndPermissionsTab: React.FC = () => {
     setTimeout(() => setAssignmentSuccess(null), 5000);
   };
 
-  const handleRemoveAssignment = (assignmentId: string) => {
-    if (!confirm("Remove this member's custom role assignment?")) return;
-    const updated = assignments.filter(a => a.id !== assignmentId);
+  const handleRemoveAssignment = (assignment: MemberRoleAssignment) => {
+    setDeletingAssignment(assignment);
+  };
+
+  const confirmRemoveAssignment = () => {
+    if (!deletingAssignment) return;
+    const updated = assignments.filter(a => a.id !== deletingAssignment.id);
     setAssignments(updated);
     saveRoleAssignments(updated);
+    setDeletingAssignment(null);
+    setAssignmentSuccess(`Revoked appointed role "${deletingAssignment.role_name}" from ${deletingAssignment.member_name}.`);
+    setTimeout(() => setAssignmentSuccess(null), 4000);
   };
 
   // Filter roles by ministry
@@ -337,12 +365,19 @@ export const RolesAndPermissionsTab: React.FC = () => {
               <select
                 value={selectedMinistryFilter}
                 onChange={(e) => setSelectedMinistryFilter(e.target.value)}
-                className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer w-full sm:w-auto min-w-[200px]"
+                className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer w-full sm:w-auto min-w-[220px]"
               >
                 <option value="All">All Department Scopes ({roles.length})</option>
-                {availableMinistryOptions.map(mOpt => (
-                  <option key={mOpt} value={mOpt}>{mOpt}</option>
-                ))}
+                <optgroup label="👥 Demographic Fellowships (Social Groups)">
+                  {DEMOGRAPHIC_FELLOWSHIPS.map(mOpt => (
+                    <option key={mOpt} value={mOpt}>{mOpt}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="🛠️ Service & Volunteer Departments">
+                  {SERVICE_DEPARTMENTS.map(mOpt => (
+                    <option key={mOpt} value={mOpt}>{mOpt}</option>
+                  ))}
+                </optgroup>
               </select>
             </div>
 
@@ -382,7 +417,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
                           <Edit size={16} />
                         </button>
                         <button
-                          onClick={() => handleDeleteRole(r.id)}
+                          onClick={() => handleDeleteRole(r)}
                           className="p-2 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
                           title="Delete Role Definition"
                         >
@@ -498,7 +533,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
                       <Edit size={15} />
                     </button>
                     <button
-                      onClick={() => handleRemoveAssignment(a.id)}
+                      onClick={() => handleRemoveAssignment(a)}
                       className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
                       title="Revoke Role Appointment"
                     >
@@ -576,7 +611,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
                           <Edit size={15} />
                         </button>
                         <button
-                          onClick={() => handleRemoveAssignment(a.id)}
+                          onClick={() => handleRemoveAssignment(a)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
                           title="Revoke / Delete Role Appointment"
                         >
@@ -991,6 +1026,94 @@ export const RolesAndPermissionsTab: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* MODAL: DELETE ROLE CONFIRMATION */}
+      {deletingRole && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[130] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 text-xs animate-in fade-in">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Delete Custom Role Definition?</h3>
+                <p className="text-slate-500 text-xs">Confirm removing custom role title</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+              <div className="font-extrabold text-slate-900 text-sm">{deletingRole.name}</div>
+              <div className="text-indigo-700 font-bold text-[11px]">{deletingRole.ministry_name || deletingRole.category}</div>
+              <p className="text-slate-500 text-[11px] mt-1">{deletingRole.description}</p>
+            </div>
+
+            <p className="text-slate-600 leading-relaxed font-medium">
+              Are you sure you want to delete this custom role definition? Any congregation member currently appointed to this role will have their assignment unlinked.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeletingRole(null)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteRole}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl shadow-sm cursor-pointer"
+              >
+                Delete Role Definition
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DELETE ASSIGNMENT CONFIRMATION */}
+      {deletingAssignment && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[130] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 text-xs animate-in fade-in">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Revoke Role Appointment?</h3>
+                <p className="text-slate-500 text-xs">Remove leadership role from roster</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+              <div className="font-extrabold text-slate-900 text-sm">{deletingAssignment.member_name}</div>
+              <div className="text-indigo-700 font-bold text-[11px]">
+                Role: {deletingAssignment.role_name} • {deletingAssignment.ministry_name || 'All Ministries'}
+              </div>
+            </div>
+
+            <p className="text-slate-600 leading-relaxed font-medium">
+              Are you sure you want to revoke <strong>{deletingAssignment.member_name}</strong>'s appointment as <strong>{deletingAssignment.role_name}</strong>?
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeletingAssignment(null)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRemoveAssignment}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl shadow-sm cursor-pointer"
+              >
+                Confirm Revoke Appointment
+              </button>
+            </div>
           </div>
         </div>
       )}
