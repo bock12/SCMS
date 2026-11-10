@@ -361,6 +361,44 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     setExpenseNotes('');
   };
 
+  // Persist a disbursement ledger entry exactly once. Deterministic IDs make retries safe.
+  const persistDisbursementRecord = async (record: FinancialRecord): Promise<FinancialRecord> => {
+    const { data: existing, error: lookupError } = await supabase
+      .from('financial_records')
+      .select('*')
+      .eq('id', record.id)
+      .maybeSingle();
+
+    if (lookupError) throw new Error('Could not check the finance ledger: ' + lookupError.message);
+    if (existing) return existing as unknown as FinancialRecord;
+
+    const { data, error } = await supabase
+      .from('financial_records')
+      .insert([record])
+      .select('*')
+      .maybeSingle();
+
+    if (error) throw new Error('Could not save the disbursement to the finance ledger: ' + error.message);
+    const inserted = Array.isArray(data) ? data[0] : data;
+    if (!inserted) throw new Error('The finance ledger did not confirm the saved disbursement.');
+    return inserted as unknown as FinancialRecord;
+  };
+
+  const normalizeDisbursementPaymentMethod = (method?: string): FinancialRecord['payment_method'] => {
+    switch ((method || '').toLowerCase()) {
+      case 'cash':
+      case 'mobile_money':
+      case 'bank_transfer':
+      case 'card':
+      case 'check':
+        return method!.toLowerCase() as FinancialRecord['payment_method'];
+      case 'bank_wire':
+      case 'church_treasury':
+      default:
+        return 'bank_transfer';
+    }
+  };
+
   // --- REQUISITION APPROVAL & INVOICING HANDLERS ---
   const handleEscalateToBoard = (reqId: string) => {
     const note = prompt("Enter triage notes for Senior Pastor & Executive Board review:", "Budget proposal reviewed by Treasury. Requires Pastoral & Board authorization.");
@@ -413,47 +451,58 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     setVendorReceiptUrl(req.vendor_quote_url || 'Vendor_Tax_Receipt_Signed.pdf');
   };
 
-  const handleConfirmInvoiceAndDisbursement = (e: React.FormEvent) => {
+  const handleConfirmInvoiceAndDisbursement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!disburseReq) return;
 
-    const txnRef = disbursementTxnRef.trim() || `DISB-SLCB-${Math.floor(100000 + Math.random() * 900000)}`;
+    const txnRef = disbursementTxnRef.trim() || ('DISB-SLCB-' + Math.floor(100000 + Math.random() * 900000));
+    const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
+    const now = new Date().toISOString();
 
-    // Update Requisition Status to Disbursed
-    const updatedReqs = requisitions.map(r => r.id === disburseReq.id ? { 
-      ...r, 
-      status: 'disbursed' as const, 
-      transaction_ref: txnRef,
-      vendor_quote_url: vendorReceiptUrl || r.vendor_quote_url,
-      disbursed_at: new Date().toISOString(),
-      disbursed_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer / Treasury'
-    } : r);
-
-    setRequisitions(updatedReqs);
-    saveRequisitions(updatedReqs);
-
-    // Automatically Record Expense in Finance Ledger & Link directly
     const autoExpenseRecord: FinancialRecord = {
-      id: `rec-disb-${Date.now()}`,
-      contributor_name: `${disburseReq.department_name} (${disburseReq.applicant_name})`,
+      id: 'rec-disb-' + disburseReq.id,
+      contributor_name: disburseReq.department_name + ' (' + disburseReq.applicant_name + ')',
       type: 'expense',
       category: disburseReq.department_name.includes('Media') ? 'Media & IT Equipment' : 'Ministry & Worship Budgets',
       amount: disburseReq.requested_amount,
       currency: disburseReq.currency || 'SLE',
-      date: new Date().toISOString(),
-      payment_method: disburseReq.disbursement_method as any || 'bank_transfer',
+      date: now,
+      payment_method: normalizeDisbursementPaymentMethod(disburseReq.disbursement_method),
       status: 'completed',
-      approved_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer / Treasury',
+      approved_by: actor,
       transaction_id: txnRef,
       payment_proof_ref: vendorReceiptUrl.trim() || undefined,
-      notes: `Church Expense Invoice ${disbursementInvoiceNo}: ${disburseReq.title}`
+      notes: 'Church Expense Invoice ' + disbursementInvoiceNo + ': ' + disburseReq.title
     };
 
-    setRecords(prev => [autoExpenseRecord, ...prev]);
-    setDisburseReq(null);
-    setDisbursementTxnRef('');
-    setVendorReceiptUrl('');
-    alert(`Expense Invoice ${disbursementInvoiceNo} processed! SLE ${disburseReq.requested_amount.toLocaleString()} has been disbursed and linked to the Treasury Financial Ledger.`);
+    try {
+      // Save the ledger entry first. If the status update fails, a retry reuses this same ID.
+      const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
+      const updatedReqs = getRequisitions().map(r => r.id === disburseReq.id ? {
+        ...r,
+        status: 'disbursed' as const,
+        transaction_ref: txnRef,
+        vendor_quote_url: vendorReceiptUrl || r.vendor_quote_url,
+        disbursed_at: r.disbursed_at || now,
+        disbursed_by: r.disbursed_by || actor
+      } : r);
+
+      saveRequisitions(updatedReqs);
+      const confirmedReq = getRequisitions().find(r => r.id === disburseReq.id);
+      if (!confirmedReq || confirmedReq.status !== 'disbursed' || confirmedReq.transaction_ref !== txnRef) {
+        throw new Error('The ledger entry was saved, but the requisition status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
+      }
+
+      setRequisitions(getRequisitions());
+      setRecords(prev => [savedRecord, ...prev.filter(record => record.id !== savedRecord.id)]);
+      setDisburseReq(null);
+      setDisbursementTxnRef('');
+      setVendorReceiptUrl('');
+      alert('Expense Invoice ' + disbursementInvoiceNo + ' processed! SLE ' + disburseReq.requested_amount.toLocaleString() + ' has been disbursed and linked to the Treasury Financial Ledger.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert('Disbursement was not fully completed: ' + message);
+    }
   };
 
   const openEventBudgetDisbursementModal = (b: EventBudgetApproval) => {
@@ -463,42 +512,55 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     setEvtDisburseProofUrl('Bank_Payment_Receipt_Signed.pdf');
   };
 
-  const handleConfirmEventBudgetDisbursement = (e: React.FormEvent) => {
+  const handleConfirmEventBudgetDisbursement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!disburseEventBudget) return;
 
-    const txnRef = evtDisburseTxnRef.trim() || `DISB-EVT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const txnRef = evtDisburseTxnRef.trim() || ('DISB-EVT-' + Math.floor(100000 + Math.random() * 900000));
+    const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
+    const now = new Date().toISOString();
 
     const autoExpenseRecord: FinancialRecord = {
-      id: `rec-evt-disb-${Date.now()}`,
-      contributor_name: `Event: ${disburseEventBudget.event_title} (${disburseEventBudget.submitted_by})`,
+      id: 'rec-evt-disb-' + disburseEventBudget.event_id,
+      contributor_name: 'Event: ' + disburseEventBudget.event_title + ' (' + disburseEventBudget.submitted_by + ')',
       type: 'expense',
       category: 'Ministry & Worship Budgets',
       amount: disburseEventBudget.total_budget || 1000,
       currency: 'SLE',
-      date: new Date().toISOString(),
-      payment_method: evtDisburseChannel as any || 'bank_transfer',
+      date: now,
+      payment_method: normalizeDisbursementPaymentMethod(evtDisburseChannel),
       status: 'completed',
-      approved_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer / Treasury',
+      approved_by: actor,
       transaction_id: txnRef,
       payment_proof_ref: evtDisburseProofUrl.trim() || undefined,
-      notes: `Event Budget Disbursement Invoice ${disburseEventBudget.invoice_number || 'INV-EVT'}: ${disburseEventBudget.event_title}`
+      notes: 'Event Budget Disbursement Invoice ' + (disburseEventBudget.invoice_number || 'INV-EVT') + ': ' + disburseEventBudget.event_title
     };
 
-    setRecords(prev => [autoExpenseRecord, ...prev]);
+    try {
+      // Persist the ledger first; retries reuse the event's deterministic ledger ID.
+      const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
+      executeDisburseEventBudget(
+        disburseEventBudget.event_id,
+        actor,
+        txnRef,
+        evtDisburseChannel,
+        'Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' via ' + evtDisburseChannel.toUpperCase() + ' (Ref: ' + txnRef + ').'
+      );
 
-    executeDisburseEventBudget(
-      disburseEventBudget.event_id,
-      profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer',
-      txnRef,
-      evtDisburseChannel,
-      `Disbursed SLE ${(disburseEventBudget.total_budget || 0).toLocaleString()} via ${evtDisburseChannel.toUpperCase()} (Ref: ${txnRef}).`
-    );
+      const confirmedBudget = getEventBudgetApprovals().find(b => b.event_id === disburseEventBudget.event_id);
+      if (!confirmedBudget || confirmedBudget.status !== 'disbursed' || confirmedBudget.transaction_ref !== txnRef) {
+        throw new Error('The ledger entry was saved, but the event budget status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
+      }
 
-    setEventBudgets(getEventBudgetApprovals());
-    setDisburseEventBudget(null);
-    setEvtDisburseSuccessMsg(`🎉 Disbursed SLE ${(disburseEventBudget.total_budget || 0).toLocaleString()} for ${disburseEventBudget.event_title}! Transaction ref ${txnRef} recorded into Treasury Ledger.`);
-    setTimeout(() => setEvtDisburseSuccessMsg(null), 5000);
+      setRecords(prev => [savedRecord, ...prev.filter(record => record.id !== savedRecord.id)]);
+      setEventBudgets(getEventBudgetApprovals());
+      setDisburseEventBudget(null);
+      setEvtDisburseSuccessMsg('🎉 Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' for ' + disburseEventBudget.event_title + '! Transaction ref ' + txnRef + ' recorded into Treasury Ledger.');
+      setTimeout(() => setEvtDisburseSuccessMsg(null), 5000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert('Event budget disbursement was not fully completed: ' + message);
+    }
   };
 
   // --- PRINT OFFICIAL REQUISITION VOUCHER & INVOICE ---
