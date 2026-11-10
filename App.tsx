@@ -1323,7 +1323,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
     if (error) {
       console.error('Unable to update profile:', error);
-      alert('The profile could not be saved. Please try again.');
       return;
     }
 
@@ -1334,8 +1333,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       });
     } catch (syncError) {
       console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
-      alert('The profile was saved, but its linked membership record could not be synchronized. Please retry or contact an administrator.');
-      return;
     }
 
     setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));

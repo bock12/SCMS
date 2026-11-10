@@ -787,7 +787,7 @@ const UsersTab = () => {
     const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingUser.id);
     if (error) {
       console.error('Unable to update user profile:', error);
-      alert('The profile could not be saved. Please try again.');
+      setFormError('The profile could not be saved. Please try again.');
       return;
     }
 
@@ -798,7 +798,7 @@ const UsersTab = () => {
       });
     } catch (syncError) {
       console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
-      alert('The profile was saved, but its linked membership record could not be synchronized. Please retry or contact an administrator.');
+      setFormError('The profile was saved, but its linked membership record could not be synchronized. Please retry or contact an administrator.');
       return;
     }
 
