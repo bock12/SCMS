@@ -1679,7 +1679,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       <button
                         type="button"
                         onClick={() => handleToggleSuspend(person)}
-                        title={isSuspended ? "Unsuspend Member" : "Suspend Member Access"}
+                        title={isSuspended ? "Restore Membership" : "Suspend Membership"}
                         className={`p-2 rounded-xl transition-colors cursor-pointer ${
                           isSuspended ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600'
                         }`}
