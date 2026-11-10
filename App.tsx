@@ -23,7 +23,7 @@ import { getChurchProfile } from './churchProfileService';
 import { getMembers } from './memberService';
 import { getDirectoryMembers } from './memberDirectoryService';
 import type { DirectoryMember } from './memberDirectoryService';
-import { syncLinkedMemberIdentity } from './memberProfileSyncService';
+import { syncLinkedMemberProfile } from './memberProfileSyncService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
   const title = (titleStr || 'FaithConnect').trim();
@@ -8011,9 +8011,9 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
       }
 
       // Keep the linked church membership identity aligned with the account profile.
-      await syncLinkedMemberIdentity(profile.id, {
-        first_name: updatedProfileData.first_name,
-        last_name: updatedProfileData.last_name
+      await syncLinkedMemberProfile(profile.id, {
+        ...updatedProfileData,
+        is_baptized: Boolean(updatedProfileData.baptism_date)
       });
 
       // Keep the signed-in profile, header, and other profile consumers in sync.
