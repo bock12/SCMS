@@ -362,7 +362,7 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
   useEffect(() => {
     const fetchStats = async () => {
       const [members, streams, financials] = await Promise.all([
-        supabase.from('profiles').select('*', { count: 'exact', head: true }),
+        supabase.from('members').select('*', { count: 'exact', head: true }),
         supabase.from('streams').select('*', { count: 'exact', head: true }),
         supabase.from('financial_records').select('*')
       ]);
@@ -372,7 +372,7 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
         : 2580;
 
       setStats({
-        members: members.count || 9,
+        members: members.count ?? 0,
         ministries: 6,
         streams: streams.count || 4,
         donations: totalGiving
