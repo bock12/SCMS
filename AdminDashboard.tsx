@@ -10,7 +10,7 @@ import { hasPermission, getUserPermissions, ALL_PERMISSIONS, getCustomRoles, get
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
-import { syncLinkedMemberIdentity } from './memberProfileSyncService';
+import { syncLinkedMemberProfile } from './memberProfileSyncService';
 import { 
   Users, Building2, Map, MapPin, Radio, Activity, Plus, Search, 
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
@@ -792,9 +792,17 @@ const UsersTab = () => {
     }
 
     try {
-      await syncLinkedMemberIdentity(editingUser.id, {
+      await syncLinkedMemberProfile(editingUser.id, {
         first_name: updatedData.first_name,
-        last_name: updatedData.last_name
+        last_name: updatedData.last_name,
+        phone: updatedData.phone,
+        avatar_url: updatedData.avatar_url,
+        is_baptized: updatedData.is_baptized,
+        baptism_date: updatedData.baptism_date,
+        baptized_by: updatedData.baptized_by,
+        date_of_birth: updatedData.date_of_birth,
+        marital_status: updatedData.marital_status,
+        marriage_date: updatedData.marriage_date
       });
     } catch (syncError) {
       console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
