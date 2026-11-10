@@ -997,6 +997,77 @@ const localAuth = {
     };
   },
 
+  /**
+   * Creates a demo portal account without signing the administrator out or
+   * switching the active demo session to the newly created user.
+   * This is mock-auth functionality only; production account provisioning
+   * must use a trusted server-side authentication flow.
+   */
+  async createUser({ email, password, options }: { email: string; password: string; options?: { data?: any } }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) {
+      return { data: { user: null }, error: { message: 'Email and password are required.' } };
+    }
+
+    const users = getStoredUsers();
+    if (users[normalizedEmail]) {
+      return { data: { user: null }, error: { message: 'An account with this email already exists.' } };
+    }
+
+    const newId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const userMetadata = options?.data || {};
+    users[normalizedEmail] = {
+      id: newId,
+      email: normalizedEmail,
+      password,
+      user_metadata: userMetadata
+    };
+    saveStoredUsers(users);
+
+    localDb = loadLocalDatabase();
+    const firstBranch = localDb.church_branches?.[0]?.id || 'branch-1';
+    const newProfile: Profile = {
+      id: newId,
+      branch_id: userMetadata.branch_id || firstBranch,
+      first_name: userMetadata.first_name || 'Faithful',
+      last_name: userMetadata.last_name || 'Member',
+      email: normalizedEmail,
+      phone: userMetadata.phone || '',
+      avatar_url: userMetadata.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
+      primary_role: (userMetadata.primary_role as any) || 'member',
+      department_name: userMetadata.department_name,
+      assigned_department: userMetadata.assigned_department,
+      created_at: new Date().toISOString()
+    };
+    localDb.profiles = [...(localDb.profiles || []), newProfile];
+    saveLocalDatabase(localDb);
+
+    return {
+      data: {
+        user: {
+          id: newId,
+          email: normalizedEmail,
+          user_metadata: userMetadata
+        }
+      },
+      error: null
+    };
+  },
+
+  async deleteUser({ id }: { id: string }) {
+    const users = getStoredUsers();
+    const entry = Object.entries(users).find(([, user]) => user.id === id);
+    if (entry) {
+      delete users[entry[0]];
+      saveStoredUsers(users);
+    }
+
+    localDb = loadLocalDatabase();
+    localDb.profiles = (localDb.profiles || []).filter((item: any) => item.id !== id);
+    saveLocalDatabase(localDb);
+    return { error: null };
+  },
+
   async signInWithPassword({ email, password }: { email: string; password?: string }) {
     const normalizedEmail = email.trim().toLowerCase();
     const users = getStoredUsers();
