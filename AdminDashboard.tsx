@@ -10,6 +10,7 @@ import { hasPermission, getUserPermissions, ALL_PERMISSIONS, getCustomRoles, get
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
+import { syncLinkedMemberIdentity } from './memberProfileSyncService';
 import { 
   Users, Building2, Map, MapPin, Radio, Activity, Plus, Search, 
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
@@ -783,8 +784,26 @@ const UsersTab = () => {
       temporary_password: formPassword || generateTempPassword()
     };
 
-    await supabase.from('profiles').update(updatedData).eq('id', editingUser.id);
+    const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingUser.id);
+    if (error) {
+      console.error('Unable to update user profile:', error);
+      alert('The profile could not be saved. Please try again.');
+      return;
+    }
+
+    try {
+      await syncLinkedMemberIdentity(editingUser.id, {
+        first_name: updatedData.first_name,
+        last_name: updatedData.last_name
+      });
+    } catch (syncError) {
+      console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
+      alert('The profile was saved, but its linked membership record could not be synchronized. Please retry or contact an administrator.');
+      return;
+    }
+
     setUsers(prev => prev.map(p => p.id === editingUser.id ? { ...p, ...updatedData } as Profile : p));
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingUser.id, ...updatedData } }));
     setEditingUser(null);
 
     if (formCreateCredentials) {
