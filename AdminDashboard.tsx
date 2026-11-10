@@ -798,11 +798,11 @@ const UsersTab = () => {
         phone: updatedData.phone,
         avatar_url: updatedData.avatar_url,
         is_baptized: updatedData.is_baptized,
-        baptism_date: updatedData.baptism_date,
-        baptized_by: updatedData.baptized_by,
-        date_of_birth: updatedData.date_of_birth,
+        baptism_date: updatedData.baptism_date || null,
+        baptized_by: updatedData.baptized_by || null,
+        date_of_birth: updatedData.date_of_birth || null,
         marital_status: updatedData.marital_status,
-        marriage_date: updatedData.marriage_date
+        marriage_date: updatedData.marriage_date || null
       });
     } catch (syncError) {
       console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
