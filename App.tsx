@@ -20,6 +20,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
+import { syncLinkedMemberIdentity } from './memberProfileSyncService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
   const title = (titleStr || 'FaithConnect').trim();
@@ -1318,7 +1319,24 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       temporary_password: formPassword || 'FaithConnect2026!'
     };
 
-    await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
+    const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
+    if (error) {
+      console.error('Unable to update profile:', error);
+      alert('The profile could not be saved. Please try again.');
+      return;
+    }
+
+    try {
+      await syncLinkedMemberIdentity(editingPerson.id, {
+        first_name: updatedData.first_name,
+        last_name: updatedData.last_name
+      });
+    } catch (syncError) {
+      console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
+      alert('The profile was saved, but its linked membership record could not be synchronized. Please retry or contact an administrator.');
+      return;
+    }
+
     setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
     window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
     setEditingPerson(null);
@@ -7774,6 +7792,12 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
         setSaving(false);
         return;
       }
+
+      // Keep the linked church membership identity aligned with the account profile.
+      await syncLinkedMemberIdentity(profile.id, {
+        first_name: updatedProfileData.first_name,
+        last_name: updatedProfileData.last_name
+      });
 
       // Keep the signed-in profile, header, and other profile consumers in sync.
       window.dispatchEvent(new CustomEvent('profile-updated', {
