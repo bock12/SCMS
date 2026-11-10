@@ -8012,8 +8012,15 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
 
       // Keep the linked church membership identity aligned with the account profile.
       await syncLinkedMemberProfile(profile.id, {
-        ...updatedProfileData,
-        is_baptized: Boolean(updatedProfileData.baptism_date)
+        first_name: updatedProfileData.first_name,
+        last_name: updatedProfileData.last_name,
+        phone: updatedProfileData.phone,
+        date_of_birth: updatedProfileData.date_of_birth ?? null,
+        marital_status: updatedProfileData.marital_status,
+        marriage_date: updatedProfileData.marriage_date ?? null,
+        is_baptized: Boolean(updatedProfileData.baptism_date),
+        baptism_date: updatedProfileData.baptism_date || null,
+        baptized_by: updatedProfileData.baptized_by || null
       });
 
       // Keep the signed-in profile, header, and other profile consumers in sync.
