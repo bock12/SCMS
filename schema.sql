@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS public.members (
   gender TEXT CHECK (gender IN ('male', 'female', 'other')) DEFAULT 'male',
   status member_status DEFAULT 'active',
   membership_date DATE DEFAULT CURRENT_DATE,
+  email TEXT,
+  phone TEXT,
+  avatar_url TEXT,
+  is_baptized BOOLEAN DEFAULT false,
+  baptism_date DATE,
+  baptized_by TEXT,
+  date_of_birth DATE,
+  marital_status TEXT CHECK (marital_status IN ('Single', 'Married', 'Widowed', 'Divorced')),
+  marriage_date DATE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
