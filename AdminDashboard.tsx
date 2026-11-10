@@ -362,7 +362,7 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
   useEffect(() => {
     const fetchStats = async () => {
       const [members, streams, financials] = await Promise.all([
-        supabase.from('members').select('*', { count: 'exact', head: true }),
+        supabase.from('members').select('*', { count: 'exact', head: true }).eq('status', 'active'),
         supabase.from('streams').select('*', { count: 'exact', head: true }),
         supabase.from('financial_records').select('*')
       ]);
