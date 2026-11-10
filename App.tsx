@@ -1650,20 +1650,22 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
                   {isAdminOrPastor && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => setCreatedCredsModal({
-                          name: `${person.first_name} ${person.last_name}`,
-                          email: person.email,
-                          pass: 'For security, an existing password cannot be viewed. Use the account password-reset process.',
-                          isBaptized: isBaptized,
-                          isNew: false
-                        })}
-                        title="View / Create Login Credentials"
-                        className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
-                      >
-                        <Key size={16} />
-                      </button>
+                      {hasLogin && (
+                        <button
+                          type="button"
+                          onClick={() => setCreatedCredsModal({
+                            name: `${person.first_name} ${person.last_name}`,
+                            email: person.profile?.email || person.email,
+                            pass: 'For security, an existing password cannot be viewed. Use the account password-reset process.',
+                            isBaptized: isBaptized,
+                            isNew: false
+                          })}
+                          title="View Portal Account Information"
+                          className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
+                        >
+                          <Key size={16} />
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -1733,15 +1735,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-between">
                 <span className="text-slate-400">Date of Birth:</span> 
                 <span className="font-bold text-purple-700">
-                  {viewingPerson.date_of_birth ? new Date((viewingPerson as any).date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
+                  {viewingPerson.date_of_birth ? new Date(viewingPerson.date_of_birth!).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
                 </span>
               </div>
               <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{viewingPerson.marital_status || 'Single'}</span></div>
-              {(viewingPerson as any).marital_status === 'Married' && (
+              {viewingPerson.marital_status === 'Married' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Marriage Anniversary:</span> 
                   <span className="font-bold text-purple-800">
-                    {viewingPerson.marriage_date ? new Date((viewingPerson as any).marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                    {viewingPerson.marriage_date ? new Date(viewingPerson.marriage_date!).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
                   </span>
                 </div>
               )}
@@ -2096,7 +2098,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <select value={formRole} disabled={!formCreateCredentials} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
                     <option value="leader">Leader (Dept Lead)</option>
