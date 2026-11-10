@@ -6,11 +6,11 @@ export interface MemberProfileUpdate {
   phone?: string;
   avatar_url?: string;
   is_baptized?: boolean;
-  baptism_date?: string;
-  baptized_by?: string;
-  date_of_birth?: string;
+  baptism_date?: string | null;
+  baptized_by?: string | null;
+  date_of_birth?: string | null;
   marital_status?: 'Single' | 'Married' | 'Widowed' | 'Divorced';
-  marriage_date?: string;
+  marriage_date?: string | null;
 }
 
 /**
