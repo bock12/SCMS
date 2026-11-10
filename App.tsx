@@ -20,6 +20,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
+import { getMembers } from './memberService';
 import { syncLinkedMemberIdentity } from './memberProfileSyncService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
@@ -2890,21 +2891,20 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [addRosterPhone, setAddRosterPhone] = useState('');
 
   // Registered Congregation Members Directory
-  const [congregationMembers, setCongregationMembers] = useState<Profile[]>([]);
+  const [congregationMembers, setCongregationMembers] = useState<Member[]>([]);
   const [selectedCongregationMemberId, setSelectedCongregationMemberId] = useState('');
 
   useEffect(() => {
-    supabase.from('profiles').select('*').order('first_name').then(({ data }) => {
-      if (data && data.length > 0) {
-        setCongregationMembers(data as Profile[]);
-      } else {
-        setCongregationMembers([
-          { id: 'cm-1', branch_id: 'b1', first_name: 'Jonathan', last_name: 'Davis', email: 'jdavis@gmail.com', phone: '+232 76 901234', primary_role: 'member', created_at: new Date().toISOString() },
-          { id: 'cm-2', branch_id: 'b1', first_name: 'Maria', last_name: 'Santos', email: 'msantos@gmail.com', phone: '+232 77 890123', primary_role: 'member', created_at: new Date().toISOString() },
-          { id: 'cm-3', branch_id: 'b1', first_name: 'Samuel', last_name: 'Cole', email: 'scole@gracecathedral.org', phone: '+232 78 987654', primary_role: 'member', created_at: new Date().toISOString() }
-        ]);
-      }
-    });
+    let isMounted = true;
+    getMembers()
+      .then(data => {
+        if (isMounted) setCongregationMembers(data);
+      })
+      .catch(error => {
+        console.error('Unable to load church membership records:', error);
+        if (isMounted) setCongregationMembers([]);
+      });
+    return () => { isMounted = false; };
   }, []);
 
   const openEditRosterMember = (member: any) => {
