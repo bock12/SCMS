@@ -119,9 +119,6 @@ export interface Member {
   date_of_birth?: string;
   marital_status?: 'Single' | 'Married' | 'Widowed' | 'Divorced';
   marriage_date?: string;
-  has_login_credentials?: boolean;
-  login_email?: string;
-  temporary_password?: string;
 }
 
 export interface MemberTransfer {
