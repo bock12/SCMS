@@ -13,6 +13,8 @@ import { supabase, isConfigured, resetLocalDatabase } from './supabaseClient';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Member, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
+import { MemberResourcesPage } from './MemberResourcesPage';
+import { MemberEventSurveysPage } from './MemberEventSurveysPage';
 import { getGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
@@ -239,6 +241,8 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
     { to: '/portal/directory', icon: Users, label: 'Member Directory' },
     { to: '/portal/ministries', icon: Building2, label: 'Ministries & Teams' },
     { to: '/portal/calendar', icon: Calendar, label: 'Events & Calendar' },
+    { to: '/portal/resources', icon: BookOpen, label: 'Church Resources' },
+    { to: '/portal/surveys', icon: ClipboardList, label: 'Event Feedback' },
     { to: '/portal/streaming', icon: Video, label: 'Live Sanctuary' },
     { to: '/portal/giving', icon: DollarSign, label: 'Giving & Tithes' },
     { to: '/portal/prayer', icon: Heart, label: 'Prayer Wall' },
@@ -10471,6 +10475,8 @@ const App = () => {
                   <Route path="giving" element={<GivingPage profile={profile} />} />
                   <Route path="prayer" element={<PrayerPage profile={profile} />} />
                   <Route path="calendar" element={<CalendarPage profile={profile} />} />
+                  <Route path="resources" element={<MemberResourcesPage />} />
+                  <Route path="surveys" element={<MemberEventSurveysPage profile={profile} />} />
                   <Route path="streaming" element={<StreamingPage profile={profile} />} />
                   <Route path="profile" element={<ProfilePage profile={profile} />} />
                   <Route path="leader" element={<LeaderConsolePage profile={profile} />} />
