@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
-import { CustomRole, MemberRoleAssignment, PermissionKey, Profile, Ministry } from './types';
+import { CustomRole, MemberRoleAssignment, PermissionKey, Member, Ministry } from './types';
+import { getMembers } from './memberService';
 import { 
   getCustomRoles, saveCustomRoles, getRoleAssignments, saveRoleAssignments, ALL_PERMISSIONS 
 } from './roleService';
@@ -35,7 +36,7 @@ export const DEFAULT_MINISTRY_SCOPES = [
 export const RolesAndPermissionsTab: React.FC = () => {
   const [roles, setRoles] = useState<CustomRole[]>(getCustomRoles());
   const [assignments, setAssignments] = useState<MemberRoleAssignment[]>(getRoleAssignments());
-  const [members, setMembers] = useState<Profile[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'roles' | 'assignments'>('roles');
@@ -99,16 +100,12 @@ export const RolesAndPermissionsTab: React.FC = () => {
 
   const fetchMembersAndMinistries = async () => {
     setLoading(true);
-    const { data: pData } = await supabase.from('profiles').select('*').order('first_name', { ascending: true });
-    if (pData && pData.length > 0) {
-      setMembers(pData as Profile[]);
-    } else {
-      setMembers([
-        { id: 'p1', branch_id: 'b1', first_name: 'Pastor Samuel', last_name: 'Koroma', email: 'samuel@gracecathedral.org', phone: '+232 76 111 222', primary_role: 'pastor', created_at: new Date().toISOString() },
-        { id: 'p2', branch_id: 'b1', first_name: 'Emmanuel', last_name: 'Sesay', email: 'emmanuel@gracecathedral.org', phone: '+232 77 333 444', primary_role: 'finance_officer', created_at: new Date().toISOString() },
-        { id: 'p3', branch_id: 'b1', first_name: 'David', last_name: 'Koroma', email: 'david@gracecathedral.org', phone: '+232 78 555 666', primary_role: 'leader', created_at: new Date().toISOString() },
-        { id: 'p4', branch_id: 'b1', first_name: 'Hannah', last_name: 'Adams', email: 'hannah@gracecathedral.org', phone: '+232 79 777 888', primary_role: 'leader', created_at: new Date().toISOString() }
-      ]);
+    try {
+      const membershipRecords = await getMembers();
+      setMembers(membershipRecords.filter(member => member.status === 'active'));
+    } catch (error) {
+      console.error('Unable to load ministry role appointment members:', error);
+      setMembers([]);
     }
 
     const { data: mData } = await supabase.from('ministries').select('*');
@@ -227,7 +224,8 @@ export const RolesAndPermissionsTab: React.FC = () => {
 
     const newAssignment: MemberRoleAssignment = {
       id: `asgn-${Date.now()}`,
-      profile_id: selectedProfileId,
+      member_id: member.id,
+      profile_id: member.profile_id,
       member_name: memberName,
       role_id: roleObj.id,
       role_name: roleObj.name,
@@ -236,14 +234,24 @@ export const RolesAndPermissionsTab: React.FC = () => {
       assigned_by: 'Administrator'
     };
 
-    const existingFiltered = assignments.filter(a => a.profile_id !== selectedProfileId || a.role_id !== selectedRoleId);
+    const existingFiltered = assignments.filter(a =>
+      !((a.member_id === member.id || (!a.member_id && a.profile_id === member.profile_id)) && a.role_id === selectedRoleId)
+    );
     const updated = [newAssignment, ...existingFiltered];
 
     setAssignments(updated);
     saveRoleAssignments(updated);
 
-    // Update primary_role in Supabase profiles
-    supabase.from('profiles').update({ primary_role: 'leader' }).eq('id', selectedProfileId);
+    // A ministry appointment is a membership record. Only linked login accounts
+    // receive the application-level leader role used by demo permission checks.
+    if (member.profile_id) {
+      const { error } = await supabase.from('profiles')
+        .update({ primary_role: 'leader' })
+        .eq('id', member.profile_id);
+      if (error) {
+        console.error('Unable to update linked account role:', error);
+      }
+    }
 
     setAssignmentSuccess(`🎉 ${memberName} appointed as "${roleObj.name}" in ${targetMinistry}!`);
     setShowAssignModal(false);
@@ -808,7 +816,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
                   <option value="">-- Choose Member from Roster --</option>
                   {members.map(m => (
                     <option key={m.id} value={m.id}>
-                      {m.first_name} {m.last_name} ({m.email})
+                      {m.first_name} {m.last_name} ({m.email || 'No login account'})
                     </option>
                   ))}
                 </select>
