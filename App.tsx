@@ -21,7 +21,7 @@ import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { getMembers } from './memberService';
-import { syncLinkedMemberIdentity } from './memberProfileSyncService';
+import { syncLinkedMemberProfile } from './memberProfileSyncService';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
@@ -1350,7 +1350,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     }
 
     try {
-      await syncLinkedMemberIdentity(editingPerson.id, {
+      await syncLinkedMemberProfile(editingPerson.id, {
         first_name: updatedData.first_name,
         last_name: updatedData.last_name
       });
@@ -9518,7 +9518,7 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
       }
 
       // Keep the linked church membership identity aligned with the account profile.
-      await syncLinkedMemberIdentity(profile.id, {
+      await syncLinkedMemberProfile(profile.id, {
         first_name: updatedProfileData.first_name,
         last_name: updatedProfileData.last_name
       });
