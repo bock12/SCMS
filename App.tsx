@@ -21,9 +21,30 @@ import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { getMembers } from './memberService';
-import { getDirectoryMembers } from './memberDirectoryService';
-import type { DirectoryMember } from './memberDirectoryService';
-import { syncLinkedMemberProfile } from './memberProfileSyncService';
+import { syncLinkedMemberIdentity } from './memberProfileSyncService';
+import { 
+  getMemberContributions, 
+  saveMemberContribution, 
+  getMemberWelfareCard, 
+  getDeptWelfareSummary, 
+  getWelfareReasonLabel, 
+  getCategoryBadgeColor, 
+  generateWelfareCardNumber,
+  getWelfareCampaigns,
+  saveWelfareCampaign,
+  getCampaignProgress
+} from './welfareContributionService';
+import type { MemberContribution, MemberWelfareCard, WelfareCampaignDrive, ContributionCategory, WelfareReason } from './types';
+import {
+  getDepartmentNotifications,
+  sendInAppNotification,
+  sendDriveReminderToPendingMembers,
+  sendMonthlyDuesReminderToPendingMembers,
+  markNotificationAsRead,
+  markAllDeptNotificationsAsRead,
+  deleteNotification
+} from './inAppNotificationService';
+import type { InAppNotification } from './inAppNotificationService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
   const title = (titleStr || 'FaithConnect').trim();
@@ -1155,23 +1176,22 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
 // --- Church Member Directory Page with Admin CRUD, Suspend, Soft Delete & Pic Upload ---
 
 const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
-  const [profiles, setProfiles] = useState<DirectoryMember[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>('all');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   // Modals state
-  const [viewingPerson, setViewingPerson] = useState<DirectoryMember | null>(null);
+  const [viewingPerson, setViewingPerson] = useState<Profile | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [editingPerson, setEditingPerson] = useState<DirectoryMember | null>(null);
+  const [editingPerson, setEditingPerson] = useState<Profile | null>(null);
 
   // Add / Edit Form State
   const [formFirstName, setFormFirstName] = useState('');
   const [formLastName, setFormLastName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
-  const [formGender, setFormGender] = useState<Member['gender']>('other');
   const [formRole, setFormRole] = useState('member');
   const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
   const [formStatus, setFormStatus] = useState('active');
@@ -1191,7 +1211,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     email: string;
     pass: string;
     isBaptized: boolean;
-    isNew: boolean;
   } | null>(null);
 
   const isAdminOrPastor = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile?.primary_role || '');
@@ -1202,15 +1221,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const loadDirectory = async () => {
     setLoading(true);
-    try {
-      const members = await getDirectoryMembers();
-      setProfiles(members);
-    } catch (error) {
-      console.error('Unable to load church membership directory:', error);
-      setProfiles([]);
-    } finally {
-      setLoading(false);
-    }
+    const { data } = await supabase.from('profiles').select('*');
+    if (data) setProfiles(data as Profile[]);
+    setLoading(false);
   };
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1229,7 +1242,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormLastName('');
     setFormEmail('');
     setFormPhone('');
-    setFormGender('other');
     setFormRole('member');
     setFormAssignedDepartment('Media & IT Ministry');
     setFormStatus('active');
@@ -1240,245 +1252,149 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormDob('');
     setFormMaritalStatus('Single');
     setFormMarriageDate('');
-    setFormCreateCredentials(false);
-    setFormPassword('');
+    setFormCreateCredentials(true);
+    setFormPassword('FaithConnect2026!');
     setAddModalOpen(true);
   };
 
-  const openEditModal = (person: DirectoryMember) => {
-    setEditingPerson(person);
-    setFormFirstName(person.first_name);
-    setFormLastName(person.last_name);
-    setFormEmail(person.email || '');
-    setFormPhone(person.phone || '');
-    setFormGender(person.gender || 'other');
-    setFormRole(person.primary_role || 'member');
-    setFormAssignedDepartment(person.assigned_department || person.department_name || 'Media & IT Ministry');
-    setFormStatus(person.status || 'active');
-    setFormAvatar(person.avatar_url || '');
-    setFormIsBaptized(Boolean(person.is_baptized));
-    setFormBaptismDate(person.baptism_date || '');
-    setFormBaptizedBy(person.baptized_by || '');
-    setFormDob(person.date_of_birth || '');
-    setFormMaritalStatus(person.marital_status || 'Single');
-    setFormMarriageDate(person.marriage_date || '');
-    setFormCreateCredentials(Boolean(person.profile));
-    setFormPassword('');
+  const openEditModal = (p: Profile) => {
+    setEditingPerson(p);
+    setFormFirstName(p.first_name);
+    setFormLastName(p.last_name);
+    setFormEmail(p.email);
+    setFormPhone(p.phone || '');
+    setFormRole(p.primary_role || 'member');
+    setFormAssignedDepartment((p as any).assigned_department || (p as any).department_name || 'Media & IT Ministry');
+    setFormStatus((p as any).status || 'active');
+    setFormAvatar(p.avatar_url || '');
+    setFormIsBaptized(Boolean((p as any).is_baptized));
+    setFormBaptismDate((p as any).baptism_date || '2022-10-17');
+    setFormBaptizedBy((p as any).baptized_by || 'Rev. Sarah Johnson');
+    setFormDob((p as any).date_of_birth || '');
+    setFormMaritalStatus((p as any).marital_status || 'Single');
+    setFormMarriageDate((p as any).marriage_date || '');
+    setFormCreateCredentials(Boolean((p as any).has_login_credentials ?? true));
+    setFormPassword((p as any).temporary_password || 'FaithConnect2026!');
   };
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formCreateCredentials && (!formEmail.trim() || !formPassword)) {
-      alert('Enter an email address and initial password to create a portal account.');
-      return;
-    }
-
-    const memberId = globalThis.crypto.randomUUID();
-    const branchId = profile?.branch_id || 'branch-1';
-    const newMember: Member = {
-      id: memberId,
-      branch_id: branchId,
+    const newProfile: Profile = {
+      id: `usr_${Date.now()}`,
+      branch_id: 'branch-1',
       first_name: formFirstName.trim(),
       last_name: formLastName.trim(),
-      gender: formGender,
-      status: formStatus as Member['status'],
-      membership_date: new Date().toISOString().slice(0, 10),
-      email: formEmail.trim() || undefined,
-      phone: formPhone.trim() || undefined,
-      avatar_url: formAvatar || undefined,
+      email: formEmail.trim(),
+      phone: formPhone.trim(),
+      primary_role: formRole as any,
+      department_name: formAssignedDepartment,
+      assigned_department: formAssignedDepartment,
+      avatar_url: formAvatar || `https://picsum.photos/seed/${Date.now()}/200`,
+      created_at: new Date().toISOString(),
       is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate || undefined : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy || undefined : undefined,
+      baptism_date: formIsBaptized ? formBaptismDate : undefined,
+      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
       date_of_birth: formDob || undefined,
       marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate || undefined : undefined
+      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined
     };
+    (newProfile as any).status = formStatus;
+    (newProfile as any).has_login_credentials = formCreateCredentials;
+    (newProfile as any).login_email = formEmail.trim();
+    (newProfile as any).temporary_password = formPassword || 'FaithConnect2026!';
 
-    try {
-      const { error: memberError } = await supabase.from('members').insert(newMember);
-      if (memberError) throw memberError;
+    await supabase.from('profiles').insert(newProfile);
+    setProfiles(prev => [newProfile, ...prev]);
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: newProfile }));
+    setAddModalOpen(false);
 
-      let createdAccount: { id: string; email: string } | null = null;
-      if (formCreateCredentials) {
-        const { data, error } = await supabase.auth.createUser({
-          email: formEmail.trim(),
-          password: formPassword,
-          options: {
-            data: {
-              branch_id: branchId,
-              first_name: newMember.first_name,
-              last_name: newMember.last_name,
-              phone: newMember.phone || '',
-              avatar_url: newMember.avatar_url,
-              primary_role: formRole,
-              department_name: formAssignedDepartment,
-              assigned_department: formAssignedDepartment
-            }
-          }
-        });
-        if (error || !data?.user) {
-          await supabase.from('members').delete().eq('id', memberId);
-          throw new Error(error?.message || 'The portal account could not be created.');
-        }
-
-        createdAccount = { id: data.user.id, email: data.user.email };
-        const { error: linkError } = await supabase
-          .from('members')
-          .update({ profile_id: createdAccount.id })
-          .eq('id', memberId);
-        if (linkError) {
-          await supabase.auth.deleteUser({ id: createdAccount.id });
-          await supabase.from('members').delete().eq('id', memberId);
-          throw linkError;
-        }
-      }
-
-      await loadDirectory();
-      window.dispatchEvent(new CustomEvent('members-updated'));
-      setAddModalOpen(false);
-
-      if (createdAccount) {
-        setCreatedCredsModal({
-          name: `${newMember.first_name} ${newMember.last_name}`,
-          email: createdAccount.email,
-          pass: formPassword,
-          isBaptized: formIsBaptized,
-          isNew: true
-        });
-      }
-    } catch (error) {
-      console.error('Unable to create church member:', error);
-      alert(error instanceof Error ? error.message : 'Unable to create church member.');
+    if (formCreateCredentials) {
+      setCreatedCredsModal({
+        name: `${formFirstName} ${formLastName}`,
+        email: formEmail.trim(),
+        pass: formPassword || 'FaithConnect2026!',
+        isBaptized: formIsBaptized
+      });
     }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPerson) return;
-    if (!editingPerson.profile && formCreateCredentials && (!formEmail.trim() || !formPassword)) {
-      alert('Enter an email address and initial password to create a portal account.');
-      return;
-    }
 
-    const updatedMember = {
+    const updatedData = {
       first_name: formFirstName.trim(),
       last_name: formLastName.trim(),
-      gender: formGender,
-      email: formEmail.trim() || undefined,
-      phone: formPhone.trim() || undefined,
-      status: formStatus as Member['status'],
-      avatar_url: formAvatar || undefined,
+      email: formEmail.trim(),
+      phone: formPhone.trim(),
+      primary_role: formRole as any,
+      department_name: formAssignedDepartment,
+      assigned_department: formAssignedDepartment,
+      status: formStatus,
+      avatar_url: formAvatar || editingPerson.avatar_url,
       is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate || undefined : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy || undefined : undefined,
+      baptism_date: formIsBaptized ? formBaptismDate : undefined,
+      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
       date_of_birth: formDob || undefined,
       marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate || undefined : undefined
+      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined,
+      has_login_credentials: formCreateCredentials,
+      login_email: formEmail.trim(),
+      temporary_password: formPassword || 'FaithConnect2026!'
     };
 
+    const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
+    if (error) {
+      console.error('Unable to update profile:', error);
+      return;
+    }
+
     try {
-      const { error: memberError } = await supabase
-        .from('members')
-        .update(updatedMember)
-        .eq('id', editingPerson.id);
-      if (memberError) throw memberError;
+      await syncLinkedMemberIdentity(editingPerson.id, {
+        first_name: updatedData.first_name,
+        last_name: updatedData.last_name
+      });
+    } catch (syncError) {
+      console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
+    }
 
-      if (editingPerson.profile) {
-        const profileUpdate = {
-          first_name: updatedMember.first_name,
-          last_name: updatedMember.last_name,
-          phone: updatedMember.phone || '',
-          avatar_url: updatedMember.avatar_url,
-          primary_role: formRole as Profile['primary_role'],
-          department_name: formAssignedDepartment,
-          assigned_department: formAssignedDepartment
-        };
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update(profileUpdate)
-          .eq('id', editingPerson.profile.id);
-        if (profileError) throw profileError;
+    setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
+    setEditingPerson(null);
 
-        window.dispatchEvent(new CustomEvent('profile-updated', {
-          detail: { id: editingPerson.profile.id, ...profileUpdate }
-        }));
-      } else if (formCreateCredentials) {
-        const { data, error } = await supabase.auth.createUser({
-          email: formEmail.trim(),
-          password: formPassword,
-          options: {
-            data: {
-              branch_id: editingPerson.branch_id,
-              first_name: updatedMember.first_name,
-              last_name: updatedMember.last_name,
-              phone: updatedMember.phone || '',
-              avatar_url: updatedMember.avatar_url,
-              primary_role: formRole,
-              department_name: formAssignedDepartment,
-              assigned_department: formAssignedDepartment
-            }
-          }
-        });
-        if (error || !data?.user) {
-          throw new Error(error?.message || 'The portal account could not be created.');
-        }
-
-        const { error: linkError } = await supabase
-          .from('members')
-          .update({ profile_id: data.user.id })
-          .eq('id', editingPerson.id);
-        if (linkError) {
-          await supabase.auth.deleteUser({ id: data.user.id });
-          throw linkError;
-        }
-
-        setCreatedCredsModal({
-          name: `${updatedMember.first_name} ${updatedMember.last_name}`,
-          email: data.user.email,
-          pass: formPassword,
-          isBaptized: formIsBaptized,
-          isNew: true
-        });
-      }
-
-      await loadDirectory();
-      window.dispatchEvent(new CustomEvent('members-updated'));
-      setEditingPerson(null);
-    } catch (error) {
-      console.error('Unable to save church member:', error);
-      alert(error instanceof Error ? error.message : 'Unable to save church member.');
-      await loadDirectory();
+    if (formCreateCredentials) {
+      setCreatedCredsModal({
+        name: `${formFirstName} ${formLastName}`,
+        email: formEmail.trim(),
+        pass: formPassword || 'FaithConnect2026!',
+        isBaptized: formIsBaptized
+      });
     }
   };
 
-  const handleToggleSuspend = async (person: DirectoryMember) => {
-    const newStatus = person.status === 'suspended' ? 'active' : 'suspended';
-    const { error } = await supabase.from('members').update({ status: newStatus }).eq('id', person.id);
-    if (error) {
-      console.error('Unable to update member status:', error);
-      alert('Unable to update member status.');
-      return;
-    }
-    await loadDirectory();
+  const handleToggleSuspend = async (person: Profile) => {
+    const isCurrentlySuspended = (person as any).status === 'suspended';
+    const newStatus = isCurrentlySuspended ? 'active' : 'suspended';
+
+    await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
+    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
   };
 
-  const handleSoftDelete = async (person: DirectoryMember) => {
-    const newStatus = person.status === 'archived' ? 'active' : 'archived';
-    const { error } = await supabase.from('members').update({ status: newStatus }).eq('id', person.id);
-    if (error) {
-      console.error('Unable to archive member:', error);
-      alert('Unable to update member archive status.');
-      return;
-    }
-    await loadDirectory();
+  const handleSoftDelete = async (person: Profile) => {
+    const isDeleted = (person as any).status === 'archived';
+    const newStatus = isDeleted ? 'active' : 'archived';
+
+    await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
+    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
   };
 
-  const filtered = profiles.filter(person => {
-    if (!showArchived && person.status === 'archived') return false;
-    if (showArchived && person.status !== 'archived') return false;
+  const filtered = profiles.filter(p => {
+    const personStatus = (p as any).status || 'active';
+    if (!showArchived && personStatus === 'archived') return false;
+    if (showArchived && personStatus !== 'archived') return false;
 
-    const matchesRole = selectedRole === 'all' || person.primary_role === selectedRole;
-    const nameMatch = `${person.first_name} ${person.last_name} ${person.email} ${person.phone || ''}`.toLowerCase().includes(search.toLowerCase());
+    const matchesRole = selectedRole === 'all' || p.primary_role === selectedRole;
+    const nameMatch = `${p.first_name} ${p.last_name} ${p.email} ${p.phone || ''}`.toLowerCase().includes(search.toLowerCase());
     return matchesRole && nameMatch;
   });
 
@@ -1551,11 +1467,12 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map(person => {
-            const isSuspended = person.status === 'suspended';
-            const isArchived = person.status === 'archived';
-            const isBaptized = Boolean(person.is_baptized);
-            const bDate = person.baptism_date;
-            const hasLogin = Boolean(person.profile);
+            const personStatus = (person as any).status || 'active';
+            const isSuspended = personStatus === 'suspended';
+            const isArchived = personStatus === 'archived';
+            const isBaptized = Boolean((person as any).is_baptized);
+            const bDate = (person as any).baptism_date;
+            const hasLogin = Boolean((person as any).has_login_credentials ?? true);
 
             return (
               <div 
@@ -1654,22 +1571,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
                   {isAdminOrPastor && (
                     <>
-                      {hasLogin && (
-                        <button
-                          type="button"
-                          onClick={() => setCreatedCredsModal({
-                            name: `${person.first_name} ${person.last_name}`,
-                            email: person.profile?.email || person.email,
-                            pass: 'For security, an existing password cannot be viewed. Use the account password-reset process.',
-                            isBaptized: isBaptized,
-                            isNew: false
-                          })}
-                          title="View Portal Account Information"
-                          className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
-                        >
-                          <Key size={16} />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setCreatedCredsModal({
+                          name: `${person.first_name} ${person.last_name}`,
+                          email: person.email,
+                          pass: (person as any).temporary_password || 'FaithConnect2026!',
+                          isBaptized: isBaptized
+                        })}
+                        title="View / Create Login Credentials"
+                        className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Key size={16} />
+                      </button>
 
                       <button
                         type="button"
@@ -1683,7 +1597,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       <button
                         type="button"
                         onClick={() => handleToggleSuspend(person)}
-                        title={isSuspended ? "Restore Membership" : "Suspend Membership"}
+                        title={isSuspended ? "Unsuspend Member" : "Suspend Member Access"}
                         className={`p-2 rounded-xl transition-colors cursor-pointer ${
                           isSuspended ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600'
                         }`}
@@ -1735,20 +1649,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <div className="space-y-2 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-700">
-              <div className="flex justify-between"><span className="text-slate-400">Gender:</span> <span className="font-bold capitalize">{viewingPerson.gender || 'Not recorded'}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">Phone:</span> <span className="font-bold">{viewingPerson.phone || 'N/A'}</span></div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Date of Birth:</span> 
                 <span className="font-bold text-purple-700">
-                  {viewingPerson.date_of_birth ? new Date(viewingPerson.date_of_birth!).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
+                  {(viewingPerson as any).date_of_birth ? new Date((viewingPerson as any).date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{viewingPerson.marital_status || 'Single'}</span></div>
-              {viewingPerson.marital_status === 'Married' && (
+              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{(viewingPerson as any).marital_status || 'Single'}</span></div>
+              {(viewingPerson as any).marital_status === 'Married' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Marriage Anniversary:</span> 
                   <span className="font-bold text-purple-800">
-                    {viewingPerson.marriage_date ? new Date(viewingPerson.marriage_date!).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                    {(viewingPerson as any).marriage_date ? new Date((viewingPerson as any).marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
                   </span>
                 </div>
               )}
@@ -1756,12 +1669,12 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-between">
                 <span className="text-slate-400">Water Baptism:</span> 
                 <span className="font-bold text-amber-700">
-                  {viewingPerson.is_baptized ? `Baptized (${viewingPerson.baptism_date || 'Oct 2022'})` : 'Not Baptized'}
+                  {(viewingPerson as any).is_baptized ? `Baptized (${(viewingPerson as any).baptism_date || 'Oct 2022'})` : 'Not Baptized'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Login Account:</span> <span className={`font-bold ${viewingPerson.profile ? 'text-emerald-600' : 'text-slate-500'}`}>{viewingPerson.profile ? 'Linked' : 'No account'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">System Status:</span> <span className="font-bold uppercase text-emerald-600">{viewingPerson.status || 'active'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Member Since:</span> <span className="font-bold">{new Date(viewingPerson.membership_date).toLocaleDateString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Login Account:</span> <span className="font-bold text-emerald-600">Active</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">System Status:</span> <span className="font-bold uppercase text-emerald-600">{(viewingPerson as any).status || 'Active'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Member Since:</span> <span className="font-bold">{new Date(viewingPerson.created_at).toLocaleDateString()}</span></div>
             </div>
 
             <div className="pt-2 flex justify-end">
@@ -1801,14 +1714,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Login Email</span>
                 <p className="text-slate-900 font-bold text-sm">{createdCredsModal.email}</p>
               </div>
-              {createdCredsModal.isNew ? (
-                <div>
-                  <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Initial Password (shown once)</span>
-                  <p className="text-indigo-600 font-bold text-sm">{createdCredsModal.pass}</p>
-                </div>
-              ) : (
-                <p className="text-slate-600 font-sans">{createdCredsModal.pass}</p>
-              )}
+              <div>
+                <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Temporary Password</span>
+                <p className="text-indigo-600 font-bold text-sm">{createdCredsModal.pass}</p>
+              </div>
               <div>
                 <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Baptism Status</span>
                 <p className="text-amber-800 font-bold font-sans">
@@ -1818,18 +1727,16 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              {createdCredsModal.isNew && (
-                <button 
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(`Email: ${createdCredsModal.email}\nPassword: ${createdCredsModal.pass}`);
-                    alert('Login details copied to clipboard!');
-                  }}
-                  className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-200 cursor-pointer"
-                >
-                  Copy Details
-                </button>
-              )}
+              <button 
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(`Email: ${createdCredsModal.email}\nPassword: ${createdCredsModal.pass}`);
+                  alert('Login details copied to clipboard!');
+                }}
+                className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-200 cursor-pointer"
+              >
+                Copy Details
+              </button>
               <button 
                 type="button" 
                 onClick={() => setCreatedCredsModal(null)} 
@@ -1881,17 +1788,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Gender</label>
-                <select value={formGender} onChange={e => setFormGender(e.target.value as Member['gender'])} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                  <option value="female">Female</option>
-                  <option value="male">Male</option>
-                  <option value="other">Other / Not specified</option>
-                </select>
-              </div>
-
-              <div>
                 <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required={formCreateCredentials} value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="member@domain.com" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
+                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="member@domain.com" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
               </div>
 
               <div>
@@ -1902,7 +1800,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} disabled={!formCreateCredentials} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
                     <option value="leader">Leader (Dept Lead)</option>
@@ -2100,17 +1998,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Gender</label>
-                <select value={formGender} onChange={e => setFormGender(e.target.value as Member['gender'])} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                  <option value="female">Female</option>
-                  <option value="male">Male</option>
-                  <option value="other">Other / Not specified</option>
-                </select>
-              </div>
-
-              <div>
                 <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required={!editingPerson?.profile && formCreateCredentials} value={formEmail} onChange={e => setFormEmail(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
+                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
               </div>
 
               <div>
@@ -2121,7 +2010,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} disabled={!formCreateCredentials} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
                     <option value="member">Member</option>
                     <option value="worker">Worker</option>
                     <option value="leader">Leader (Dept Lead)</option>
@@ -2241,17 +2130,16 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <input 
                     type="checkbox" 
                     checked={formCreateCredentials} 
-                    disabled={Boolean(editingPerson?.profile)}
                     onChange={e => setFormCreateCredentials(e.target.checked)} 
                     className="w-4 h-4 text-indigo-600 rounded"
                   />
-                  <span>{editingPerson?.profile ? 'Portal Account Linked' : 'Create Portal Login'}</span>
+                  <span>Generate / Enable Portal Login</span>
                 </label>
 
-                {formCreateCredentials && !editingPerson?.profile && (
+                {formCreateCredentials && (
                   <div className="space-y-2 pt-1">
                     <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Initial Password</label>
+                      <label className="font-bold text-slate-600 block mb-0.5">Password</label>
                       <input 
                         type="text" 
                         value={formPassword} 
@@ -2383,41 +2271,44 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
       </div>
 
       {/* Ministry Type Filter Segmented Tabs */}
-      <div className="flex flex-wrap items-center gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
         <button
+          type="button"
           onClick={() => setSelectedType('All')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'All'
               ? 'bg-white text-slate-900 shadow-sm font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Building2 size={14} className={selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'} />
-          <span>All Ministries ({ministries.length})</span>
+          <Building2 size={14} className={`shrink-0 ${selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'}`} />
+          <span className="truncate">All Ministries ({ministries.length})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setSelectedType('social_fellowship')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'social_fellowship'
               ? 'bg-amber-600 text-white shadow-md shadow-amber-100 font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Users size={14} className={selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'} />
-          <span>👥 Social Fellowships ({socialCount})</span>
+          <Users size={14} className={`shrink-0 ${selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'}`} />
+          <span className="truncate">👥 Social Fellowships ({socialCount})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setSelectedType('service_department')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'service_department'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Building2 size={14} className={selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'} />
-          <span>🛠️ Service Departments ({serviceCount})</span>
+          <Building2 size={14} className={`shrink-0 ${selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'}`} />
+          <span className="truncate">🛠️ Service Departments ({serviceCount})</span>
         </button>
       </div>
 
@@ -2574,7 +2465,213 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const userAssignedDept = (profile as any)?.assigned_department || (profile as any)?.department_name || 'Media & IT Ministry';
 
   const [activeDept, setActiveDept] = useState(canSwitchDepts ? 'Media & IT Ministry' : userAssignedDept);
-  const [leaderConsoleSubTab, setLeaderConsoleSubTab] = useState<'funding' | 'dept_ledger' | 'roster'>('funding');
+  const [leaderConsoleSubTab, setLeaderConsoleSubTab] = useState<'finance' | 'roster' | 'welfare'>('finance');
+  const [financeSectionFilter, setFinanceSectionFilter] = useState<'all' | 'proposals' | 'ledger'>('all');
+
+  // Member Welfare & Contributions Module State
+  const [memberContributions, setMemberContributions] = useState<MemberContribution[]>(() => getMemberContributions(activeDept));
+  const [welfareCampaigns, setWelfareCampaigns] = useState<WelfareCampaignDrive[]>(() => getWelfareCampaigns(activeDept));
+  const [activeWelfareTab, setActiveWelfareTab] = useState<'drives' | 'monthly_dues' | 'cards' | 'ledger'>('drives');
+  const [selectedCampaignDriveId, setSelectedCampaignDriveId] = useState<string>('');
+  const [welfareFilterCategory, setWelfareFilterCategory] = useState<string>('all');
+  const [welfareSearchQuery, setWelfareSearchQuery] = useState<string>('');
+
+  // Launch Dedicated Welfare Campaign Drive Modal State
+  const [showLaunchCampaignModal, setShowLaunchCampaignModal] = useState(false);
+  const [campBeneficiaryId, setCampBeneficiaryId] = useState('');
+  const [campBeneficiaryName, setCampBeneficiaryName] = useState('');
+  const [campReason, setCampReason] = useState<WelfareReason>('marriage');
+  const [campTitle, setCampTitle] = useState('');
+  const [campDesc, setCampDesc] = useState('');
+  const [campExpectedPerMember, setCampExpectedPerMember] = useState<string | number>(200);
+  const [campTargetTotal, setCampTargetTotal] = useState<string | number>(2000);
+  const [campDeadline, setCampDeadline] = useState('2026-11-28');
+
+  // Record Member Contribution Modal State
+  const [showRecordContribModal, setShowRecordContribModal] = useState(false);
+  const [contribCampaignId, setContribCampaignId] = useState('');
+  const [contribMemberId, setContribMemberId] = useState('');
+  const [contribMemberName, setContribMemberName] = useState('');
+  const [contribCategory, setContribCategory] = useState<ContributionCategory>('welfare');
+  const [contribWelfareReason, setContribWelfareReason] = useState<WelfareReason>('marriage');
+  const [contribSpecialPurpose, setContribSpecialPurpose] = useState('');
+  const [contribMonthYear, setContribMonthYear] = useState('2026-11');
+  const [contribAmount, setContribAmount] = useState<string | number>('');
+  const [contribPaymentMethod, setContribPaymentMethod] = useState<'cash' | 'mobile_money' | 'bank_transfer'>('mobile_money');
+  const [contribRef, setContribRef] = useState('');
+  const [contribNotes, setContribNotes] = useState('');
+
+  // Member Welfare Passbook Card Modal State
+  const [showWelfareCardModal, setShowWelfareCardModal] = useState(false);
+  const [selectedWelfareCard, setSelectedWelfareCard] = useState<MemberWelfareCard | null>(null);
+
+  // In-App Reminders & Notifications Modal State
+  const [deptNotifications, setDeptNotifications] = useState<InAppNotification[]>(() => getDepartmentNotifications(activeDept));
+  const [showInAppNotifModal, setShowInAppNotifModal] = useState(false);
+
+  useEffect(() => {
+    setMemberContributions(getMemberContributions(activeDept));
+    setWelfareCampaigns(getWelfareCampaigns(activeDept));
+    setDeptNotifications(getDepartmentNotifications(activeDept));
+
+    const handleWelfareUpd = (e: any) => {
+      if (!e.detail || e.detail.department === activeDept) {
+        setMemberContributions(getMemberContributions(activeDept));
+        setWelfareCampaigns(getWelfareCampaigns(activeDept));
+        setDeptNotifications(getDepartmentNotifications(activeDept));
+      }
+    };
+    const handleNotifUpd = () => {
+      setDeptNotifications(getDepartmentNotifications(activeDept));
+    };
+    window.addEventListener('dept_welfare_updated', handleWelfareUpd);
+    window.addEventListener('dept_welfare_campaigns_updated', handleWelfareUpd);
+    window.addEventListener('dept_notification_sent', handleNotifUpd);
+    return () => {
+      window.removeEventListener('dept_welfare_updated', handleWelfareUpd);
+      window.removeEventListener('dept_welfare_campaigns_updated', handleWelfareUpd);
+      window.removeEventListener('dept_notification_sent', handleNotifUpd);
+    };
+  }, [activeDept]);
+
+  const handleSaveWelfareCampaign = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!campBeneficiaryName.trim() || !campTitle.trim() || !campExpectedPerMember) return;
+
+    const newCamp: WelfareCampaignDrive = {
+      id: `camp-${Date.now()}`,
+      department_name: activeDept,
+      beneficiary_member_id: campBeneficiaryId || undefined,
+      beneficiary_member_name: campBeneficiaryName.trim(),
+      reason: campReason,
+      title: campTitle.trim(),
+      description: campDesc.trim() || undefined,
+      expected_amount_per_member: Number(campExpectedPerMember),
+      target_total_amount: Number(campTargetTotal) || (Number(campExpectedPerMember) * Math.max(1, deptRoster.length)),
+      deadline: campDeadline || '2026-11-28',
+      status: 'active',
+      created_at: new Date().toISOString(),
+      created_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+    };
+
+    saveWelfareCampaign(newCamp);
+    setWelfareCampaigns(getWelfareCampaigns(activeDept));
+    setShowLaunchCampaignModal(false);
+    setProposalSuccessToast(`Launched Dedicated Welfare Support Drive: "${newCamp.title}"`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
+  };
+
+  const handleSaveMemberContribution = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contribMemberName.trim() || !contribAmount || Number(contribAmount) <= 0) return;
+
+    const mId = contribMemberId || `m_${Date.now()}`;
+    const cardNumber = generateWelfareCardNumber(activeDept, mId);
+
+    const newContrib: MemberContribution = {
+      id: `contrib-${Date.now()}`,
+      department_name: activeDept,
+      campaign_id: contribCampaignId || undefined,
+      member_id: mId,
+      member_name: contribMemberName.trim(),
+      welfare_card_number: cardNumber,
+      category: contribCategory,
+      welfare_reason: contribCategory === 'welfare' ? contribWelfareReason : undefined,
+      special_support_purpose: contribCategory === 'special_support' ? (contribSpecialPurpose.trim() || 'Special Support Task') : undefined,
+      period_month_year: contribCategory === 'monthly_dues' ? (contribMonthYear || '2026-11') : undefined,
+      amount: Number(contribAmount),
+      currency: 'SLE',
+      date: new Date().toISOString(),
+      payment_method: contribPaymentMethod as any,
+      transaction_ref: contribRef.trim() || undefined,
+      recorded_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Secretary',
+      notes: contribNotes.trim() || undefined
+    };
+
+    saveMemberContribution(newContrib);
+    setMemberContributions(getMemberContributions(activeDept));
+    setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
+    setShowRecordContribModal(false);
+    setProposalSuccessToast(`Recorded SLE ${newContrib.amount.toLocaleString()} contribution for ${contribMemberName.trim()}!`);
+    setTimeout(() => setProposalSuccessToast(null), 4000);
+  };
+
+  const openRecordContribForMember = (member: any) => {
+    setContribMemberId(member.id);
+    setContribMemberName(member.name);
+    setContribCategory('welfare');
+    setContribWelfareReason('marriage');
+    setContribSpecialPurpose('');
+    setContribMonthYear('2026-11');
+    setContribAmount('');
+    setContribPaymentMethod('mobile_money');
+    setContribRef('');
+    setContribNotes('');
+    setShowRecordContribModal(true);
+  };
+
+  const openViewWelfareCard = (member: any) => {
+    const card = getMemberWelfareCard(member.id, member.name, activeDept);
+    setSelectedWelfareCard(card);
+    setShowWelfareCardModal(true);
+  };
+
+  const handlePrintWelfareCard = () => {
+    if (!selectedWelfareCard) return;
+    const printWin = window.open('', '_blank');
+    if (!printWin) return;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Welfare Card - ${selectedWelfareCard.member_name}</title>
+          <style>
+            body { font-family: 'Segoe UI', Tahoma, sans-serif; padding: 30px; color: #0f172a; background: #f8fafc; }
+            .card { border: 3px solid #6b21a8; border-radius: 20px; padding: 25px; max-width: 500px; margin: 0 auto; background: linear-gradient(135deg, #faf5ff 0%, #ffffff 100%); box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+            .header { text-align: center; border-bottom: 2px solid #e9d5ff; padding-bottom: 15px; margin-bottom: 15px; }
+            .church-name { font-size: 18px; font-weight: 900; color: #581c87; text-transform: uppercase; letter-spacing: 1px; }
+            .dept-name { font-size: 13px; font-weight: 700; color: #7e22ce; margin-top: 4px; }
+            .card-num { font-family: monospace; font-size: 13px; font-weight: 900; background: #f3e8ff; color: #6b21a8; padding: 4px 12px; border-radius: 8px; display: inline-block; margin-top: 8px; }
+            .member-info { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; }
+            .avatar { width: 50px; height: 50px; border-radius: 50%; background: #6b21a8; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; }
+            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; margin-bottom: 20px; }
+            .box { background: #ffffff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 12px; }
+            .box-label { font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; }
+            .box-val { font-size: 14px; font-weight: 900; font-family: monospace; color: #581c87; margin-top: 4px; }
+            .footer { font-size: 11px; text-align: center; color: #94a3b8; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="header">
+              <div class="church-name">FaithConnect • Grace Cathedral</div>
+              <div class="dept-name">${selectedWelfareCard.department_name} Passbook</div>
+              <div class="card-num">${selectedWelfareCard.card_number}</div>
+            </div>
+            <div class="member-info">
+              <div class="avatar">${selectedWelfareCard.member_name[0]}</div>
+              <div>
+                <h2 style="margin:0; font-size:18px;">${selectedWelfareCard.member_name}</h2>
+                <span style="font-size:11px; color:#16a34a; font-weight:bold; text-transform:uppercase;">Status: ${selectedWelfareCard.status}</span>
+              </div>
+            </div>
+            <div class="grid">
+              <div class="box"><div class="box-label">Welfare</div><div class="box-val">SLE ${selectedWelfareCard.total_welfare_paid.toLocaleString()}</div></div>
+              <div class="box"><div class="box-label">Monthly Dues</div><div class="box-val">SLE ${selectedWelfareCard.total_dues_paid.toLocaleString()}</div></div>
+              <div class="box"><div class="box-label">Support</div><div class="box-val">SLE ${selectedWelfareCard.total_support_paid.toLocaleString()}</div></div>
+            </div>
+            <div class="footer">
+              Official Ministry Treasury Member Welfare Passbook Card • Issued: ${selectedWelfareCard.issued_date}
+            </div>
+          </div>
+          <script>window.onload = function() { window.print(); }</script>
+        </body>
+      </html>
+    `;
+    printWin.document.write(html);
+    printWin.document.close();
+  };
 
   // Enforce department console isolation for assigned Department Leaders
   useEffect(() => {
@@ -3409,91 +3506,114 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={openNewProposalModal}
+            onClick={openAddRosterModal}
             className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-2 cursor-pointer transition-all shrink-0"
           >
-            <Plus size={16} /> Submit Funding Proposal
+            <UserPlus size={16} /> {
+              (() => {
+                const lower = (activeDept || '').toLowerCase();
+                const isSocial = lower.includes('youth') || lower.includes('women') || lower.includes('men') || lower.includes('children') || lower.includes('fellowship') || lower.includes('social');
+                return isSocial ? 'Add Member' : 'Add Volunteer';
+              })()
+            }
           </button>
 
-          {canSwitchDepts ? (
-            <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200">
-              <span className="text-[10px] font-black uppercase text-indigo-700 tracking-wider px-2 flex items-center gap-1 shrink-0">
-                👑 Admin Access:
-              </span>
-              <select 
-                value={activeDept}
-                onChange={(e) => {
-                  setActiveDept(e.target.value);
-                  setReqDept(e.target.value);
-                }}
-                className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
-              >
-                <option value="Media & IT Ministry">Media & IT Ministry</option>
-                <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-                <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-                <option value="Children Ministry">Children Ministry</option>
-                <option value="Outreach & Evangelism">Outreach & Evangelism</option>
-                <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-                <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
-              </select>
-            </div>
-          ) : (
-            <div className="px-3.5 py-2 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center gap-2 text-xs font-extrabold text-indigo-900 shadow-xs">
-              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
-              <span>🔒 {activeDept} Console</span>
-              <span className="text-[10px] font-normal text-indigo-600 font-mono">(Assigned Leader View)</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowInAppNotifModal(true)}
+              className="relative p-2 sm:px-3 sm:py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all"
+              title="View In-App Contribution Reminders & Notifications"
+            >
+              <Bell size={15} className="text-purple-700 shrink-0" />
+              <span className="hidden sm:inline font-bold">Reminders</span>
+              {deptNotifications.filter(n => !n.is_read).length > 0 && (
+                <span className="w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-black flex items-center justify-center animate-pulse">
+                  {deptNotifications.filter(n => !n.is_read).length}
+                </span>
+              )}
+            </button>
+
+            {canSwitchDepts ? (
+              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-black uppercase text-indigo-700 tracking-wider px-2 flex items-center gap-1 shrink-0">
+                  👑 Admin Access:
+                </span>
+                <select 
+                  value={activeDept}
+                  onChange={(e) => {
+                    setActiveDept(e.target.value);
+                    setReqDept(e.target.value);
+                  }}
+                  className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
+                >
+                  <option value="Media & IT Ministry">Media & IT Ministry</option>
+                  <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                  <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                  <option value="Children Ministry">Children Ministry</option>
+                  <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                  <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                  <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+                </select>
+              </div>
+            ) : (
+              <div className="px-3.5 py-2 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center gap-2 text-xs font-extrabold text-indigo-900 shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+                <span>🔒 {activeDept} Console</span>
+                <span className="text-[10px] font-normal text-indigo-600 font-mono">(Assigned Leader View)</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Console Sub-Tab Switcher */}
-      <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 overflow-x-auto">
+      {/* Console Sub-Tab Switcher - Fits 1 line with zero scrollbar */}
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
         <button
           type="button"
-          onClick={() => setLeaderConsoleSubTab('funding')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
-            leaderConsoleSubTab === 'funding'
-              ? 'bg-white text-indigo-700 shadow-xs'
+          onClick={() => setLeaderConsoleSubTab('finance')}
+          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
+            leaderConsoleSubTab === 'finance'
+              ? 'bg-white text-indigo-700 shadow-xs font-black'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <ShoppingCart size={15} />
-          <span>Internal Funding Proposals & Invoices</span>
-          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700">
-            {requisitions.length} Total
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setLeaderConsoleSubTab('dept_ledger')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
-            leaderConsoleSubTab === 'dept_ledger'
-              ? 'bg-white text-indigo-700 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Landmark size={15} />
-          <span>Department Income & Expense Ledger</span>
-          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-            {deptLedgerRecords.length} Entries
+          <Landmark size={16} className="shrink-0 text-indigo-600" />
+          <span className="truncate">💳 Financials</span>
+          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 shrink-0">
+            {requisitions.length + deptLedgerRecords.length}
           </span>
         </button>
 
         <button
           type="button"
           onClick={() => setLeaderConsoleSubTab('roster')}
-          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
             leaderConsoleSubTab === 'roster'
-              ? 'bg-white text-indigo-700 shadow-xs'
+              ? 'bg-white text-indigo-700 shadow-xs font-black'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Users size={15} />
-          <span>Team Roster & Volunteers</span>
-          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800">
+          <Users size={16} className="shrink-0 text-indigo-600" />
+          <span className="truncate">👥 Team Roster</span>
+          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800 shrink-0">
             {deptRoster.length} Active
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setLeaderConsoleSubTab('welfare')}
+          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
+            leaderConsoleSubTab === 'welfare'
+              ? 'bg-white text-purple-700 shadow-xs font-black'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Heart size={16} className="shrink-0 text-purple-600" />
+          <span className="truncate">🤝 Welfare & Dues</span>
+          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 shrink-0">
+            {memberContributions.length} Records
           </span>
         </button>
       </div>
@@ -3511,69 +3631,139 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
         </div>
       )}
 
-      {/* MODULE 1: INTERNAL FUNDING PROPOSALS VIEW */}
-      {leaderConsoleSubTab === 'funding' ? (
+      {/* UNIFIED MODULE: DEPARTMENT FINANCIALS, PROPOSALS & LEDGER */}
+      {leaderConsoleSubTab === 'finance' ? (
         <div className="space-y-6">
-          {/* Department Financial Standing & Compliance Header */}
+          {/* Summary KPIs & Governance Status Bar */}
           {(() => {
+            const summary = getDepartmentLedgerSummary(activeDept);
             const activeDeptStanding = getDepartmentFinancialStanding(activeDept, requisitions);
             return (
-              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-md border border-indigo-900/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      360° Financial Governance Rating
-                    </span>
-                    <span className="text-xs text-slate-300 font-semibold">• {activeDept}</span>
+              <div className="space-y-3">
+                {/* 3 Summary KPI Cards */}
+                <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                        REVENUE
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <DollarSign size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-2xl font-black text-emerald-600 font-mono tracking-tight my-0.5">
+                      SLE {summary.totalIncome.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Offerings & Grants</p>
                   </div>
-                  <h3 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
-                    <ShieldCheck className="text-emerald-400" size={22} />
-                    Department Standing: <span className="text-emerald-300">{activeDeptStanding.standing_status}</span>
-                  </h3>
-                  <p className="text-xs text-indigo-200/80 max-w-xl">
-                    Timely submission of expenditure reports and vendor receipts directly impacts future budget authorizations by the Finance Officer & Board.
-                  </p>
+
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                        EXPENSES
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-rose-50 text-rose-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <ShoppingCart size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-2xl font-black text-rose-600 font-mono tracking-tight my-0.5">
+                      SLE {summary.totalExpenses.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Supplies & Repairs</p>
+                  </div>
+
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
+                        NET BALANCE
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-indigo-50 text-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <Landmark size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className={`text-sm sm:text-2xl font-black font-mono tracking-tight my-0.5 ${summary.netBalance >= 0 ? 'text-indigo-700' : 'text-rose-600'}`}>
+                      SLE {summary.netBalance.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Treasury Liquidity</p>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-indigo-800/80 pt-3 md:pt-0 md:pl-6 shrink-0 text-xs">
-                  <div>
-                    <span className="text-indigo-300 font-medium block">Compliance Rate</span>
-                    <span className="text-2xl font-black text-emerald-400 font-mono">{activeDeptStanding.reconciliation_compliance_rate}%</span>
+                {/* Governance Bar */}
+                <div className="bg-slate-900 text-white px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs font-medium">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+                    <span>Standing: <strong className="text-emerald-300 font-black">{activeDeptStanding.standing_status}</strong> ({activeDept})</span>
                   </div>
-                  <div>
-                    <span className="text-indigo-300 font-medium block">Total Disbursed</span>
-                    <span className="text-lg font-black text-white font-mono">SLE {activeDeptStanding.total_disbursed_amount.toLocaleString()}</span>
+                  <div className="flex items-center gap-3 font-mono text-[11px]">
+                    <span className="text-slate-300">Compliance: <strong className="text-emerald-400">{activeDeptStanding.reconciliation_compliance_rate}%</strong></span>
+                    <span className="hidden sm:inline-block text-slate-400">•</span>
+                    <span className="hidden sm:inline-block text-slate-300">Disbursed: <strong>SLE {activeDeptStanding.total_disbursed_amount.toLocaleString()}</strong></span>
                   </div>
-                  {activeDeptStanding.pending_receipts_count > 0 && (
-                    <div className="px-3 py-1.5 bg-amber-400/20 border border-amber-400/40 text-amber-200 rounded-xl font-bold text-[11px] animate-pulse">
-                      ⚠️ {activeDeptStanding.pending_receipts_count} Receipt Pending
-                    </div>
-                  )}
                 </div>
               </div>
             );
           })()}
 
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+          {/* Inner Section Switcher Card */}
+          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                  Procurement Hub
-                </span>
-                <h3 className="text-xl font-black text-slate-900 mt-1">Department Equipment & Budget Proposals</h3>
-                <p className="text-xs text-slate-500 mt-0.5 max-w-xl">
-                  Submit equipment proposals (e.g. video cameras, editing workstations, wireless mics) directly to the Finance Officer & Board.
-                </p>
+              {/* Clean 2-Option Switcher */}
+              <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 max-w-sm w-full">
+                <button
+                  type="button"
+                  onClick={() => setFinanceSectionFilter('proposals')}
+                  className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                    financeSectionFilter !== 'ledger'
+                      ? 'bg-white text-indigo-900 shadow-xs font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <ShoppingCart size={14} className="text-indigo-600 shrink-0" />
+                  <span className="truncate">Budget Proposals ({requisitions.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFinanceSectionFilter('ledger')}
+                  className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                    financeSectionFilter === 'ledger'
+                      ? 'bg-white text-indigo-900 shadow-xs font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Landmark size={14} className="text-emerald-600 shrink-0" />
+                  <span className="truncate">Income & Expense ({deptLedgerRecords.length})</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={openNewProposalModal}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-2 cursor-pointer transition-all self-start sm:self-auto"
-              >
-                <Plus size={16} /> Draft New Proposal
-              </button>
+              {/* View-Specific Actions */}
+              {financeSectionFilter !== 'ledger' && (
+                <button
+                  type="button"
+                  onClick={openNewProposalModal}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all self-start sm:self-auto"
+                >
+                  <Plus size={15} /> Draft Funding Proposal
+                </button>
+              )}
             </div>
+
+            {/* SECTION 1: INTERNAL FUNDING PROPOSALS & INVOICES */}
+            {financeSectionFilter !== 'ledger' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                    <ShoppingCart size={16} className="text-indigo-600" />
+                    Internal Funding Proposals & Proforma Invoices ({requisitions.length})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={openNewProposalModal}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                  >
+                    + Draft New Proposal
+                  </button>
+                </div>
 
             {/* List of Funding Proposals */}
             <div className="space-y-4 pt-1">
@@ -3739,121 +3929,76 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               )}
             </div>
           </div>
-        </div>
-      ) : leaderConsoleSubTab === 'dept_ledger' ? (
-        /* MODULE 2: DEPARTMENT INCOME & EXPENSE LEDGER VIEW */
-        <div className="space-y-6">
-          {/* Summary KPIs - Strictly 3 columns per row across all screen sizes */}
-          {(() => {
-            const summary = getDepartmentLedgerSummary(activeDept);
-            return (
-              <div className="grid grid-cols-3 gap-2 sm:gap-4">
-                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
-                  <div className="flex justify-between items-start gap-1">
-                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
-                      DEPARTMENT<br className="sm:hidden" /> REVENUE
-                    </span>
-                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
-                      <DollarSign size={14} className="sm:w-4 sm:h-4" />
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-2xl font-black text-emerald-600 font-mono tracking-tight my-0.5">
-                    SLE {summary.totalIncome.toLocaleString()}
-                  </div>
-                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Offerings & Grants</p>
+          )}
+
+          {/* SECTION 2: DEPARTMENT INCOME & EXPENSE LEDGER */}
+          {(financeSectionFilter === 'all' || financeSectionFilter === 'ledger') && (
+            <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                    Treasury Ledger
+                  </span>
+                  <h4 className="text-lg sm:text-xl font-black text-slate-900 mt-1 flex items-center gap-2">
+                    <Landmark size={18} className="text-emerald-600" />
+                    Department Income & Expense Ledger ({deptLedgerRecords.length} Entries)
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5 max-w-xl">
+                    Track and record ministry offerings, event collections, equipment repairs, and physical vendor receipts.
+                  </p>
                 </div>
 
-                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
-                  <div className="flex justify-between items-start gap-1">
-                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
-                      DEPARTMENT<br className="sm:hidden" /> EXPENSES
-                    </span>
-                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-rose-50 text-rose-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
-                      <ShoppingCart size={14} className="sm:w-4 sm:h-4" />
-                    </span>
-                  </div>
-                  <div className="text-sm sm:text-2xl font-black text-rose-600 font-mono tracking-tight my-0.5">
-                    SLE {summary.totalExpenses.toLocaleString()}
-                  </div>
-                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Supplies & Repairs</p>
+                <div className="grid grid-cols-4 gap-1.5 sm:flex sm:items-center sm:gap-2 w-full sm:w-auto shrink-0 mt-2 sm:mt-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeptRecordType('income');
+                      setDeptRecordCategory('Ministry Offering & Grants');
+                      setShowDeptRecordModal(true);
+                    }}
+                    className="px-2 sm:px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all whitespace-nowrap"
+                  >
+                    <Plus size={14} className="shrink-0" />
+                    <span className="hidden sm:inline">Record </span>Income
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeptRecordType('expense');
+                      setDeptRecordCategory('Equipment Maintenance & Supplies');
+                      setShowDeptRecordModal(true);
+                    }}
+                    className="px-2 sm:px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all whitespace-nowrap"
+                  >
+                    <Plus size={14} className="shrink-0" />
+                    <span className="hidden sm:inline">Record </span>Expense
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScannerContext('ledger');
+                      setShowDocumentScanner(true);
+                    }}
+                    className="px-2 sm:px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all whitespace-nowrap"
+                    title="Scan Receipt Photo"
+                  >
+                    <Camera size={14} className="shrink-0" />
+                    <span className="hidden sm:inline">Scan </span>Receipt
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowReportGeneratorModal(true)}
+                    className="px-2 sm:px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all whitespace-nowrap"
+                    title="Generate PDF Audit Report"
+                  >
+                    <Printer size={14} className="shrink-0" />
+                    <span className="hidden sm:inline">Audit </span>Report
+                  </button>
                 </div>
-
-                <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
-                  <div className="flex justify-between items-start gap-1">
-                    <span className="text-[9px] sm:text-xs font-black uppercase text-slate-500 tracking-tight leading-tight">
-                      NET OPERATING<br className="sm:hidden" /> BALANCE
-                    </span>
-                    <span className="w-6 h-6 sm:w-8 sm:h-8 bg-indigo-50 text-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
-                      <Landmark size={14} className="sm:w-4 sm:h-4" />
-                    </span>
-                  </div>
-                  <div className={`text-sm sm:text-2xl font-black font-mono tracking-tight my-0.5 ${summary.netBalance >= 0 ? 'text-indigo-700' : 'text-rose-600'}`}>
-                    SLE {summary.netBalance.toLocaleString()}
-                  </div>
-                  <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Treasury Liquidity</p>
-                </div>
               </div>
-            );
-          })()}
-
-          {/* Department Ledger Header & Action Bar */}
-          <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
-                  Treasury Ledger
-                </span>
-                <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">{activeDept} Financial Operations</h3>
-                <p className="text-xs text-slate-500 mt-0.5 max-w-xl">
-                  Track and record ministry offerings, event collections, equipment repairs, and physical vendor receipts.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeptRecordType('income');
-                    setDeptRecordCategory('Ministry Offering & Grants');
-                    setShowDeptRecordModal(true);
-                  }}
-                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                >
-                  <Plus size={14} /> Record Income
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeptRecordType('expense');
-                    setDeptRecordCategory('Equipment Maintenance & Supplies');
-                    setShowDeptRecordModal(true);
-                  }}
-                  className="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                >
-                  <Plus size={14} /> Record Expense
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScannerContext('ledger');
-                    setShowDocumentScanner(true);
-                  }}
-                  className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                >
-                  <Camera size={14} /> Scan Receipt
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowReportGeneratorModal(true)}
-                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                >
-                  <Printer size={14} /> Audit Report (PDF)
-                </button>
-              </div>
-            </div>
 
             {/* Department Ledger Records List */}
             {deptLedgerRecords.length === 0 ? (
@@ -4000,8 +4145,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               </div>
             )}
           </div>
+          )}
         </div>
-      ) : (
+      </div>
+      ) : leaderConsoleSubTab === 'roster' ? (
         /* MODULE 3: ROSTER & ANNOUNCEMENTS VIEW */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Department Roster and Duty Assignments */}
@@ -4068,6 +4215,24 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                         </div>
 
                         <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                          <button
+                            type="button"
+                            onClick={() => openViewWelfareCard(member)}
+                            className="p-1.5 bg-white border border-purple-200 text-purple-700 hover:bg-purple-50 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            title="View Member Digital Welfare Passbook"
+                          >
+                            <CreditCard size={14} />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openRecordContribForMember(member)}
+                            className="p-1.5 bg-white border border-purple-200 text-purple-700 hover:bg-purple-50 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            title="Log Welfare, Dues or Task Contribution"
+                          >
+                            <Plus size={14} />
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => setViewingRosterMember(member)}
@@ -4177,7 +4342,723 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
             </div>
           </div>
         </div>
-      )}
+      ) : leaderConsoleSubTab === 'welfare' ? (
+        /* MODULE 4: WELFARE, DUES & MEMBER PASSBOOKS VIEW */
+        <div className="space-y-6">
+          {/* Top Welfare Header KPI Summary */}
+          {(() => {
+            const summary = getDeptWelfareSummary(activeDept);
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-purple-700 tracking-tight leading-tight">
+                        WELFARE DRIVES
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-purple-50 text-purple-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <Heart size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-2xl font-black text-purple-900 font-mono tracking-tight my-0.5">
+                      SLE {summary.totalWelfare.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">{summary.activeCampaignsCount} Active Drives</p>
+                  </div>
+
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-emerald-700 tracking-tight leading-tight">
+                        MONTHLY DUES
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-emerald-50 text-emerald-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <Landmark size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-2xl font-black text-emerald-900 font-mono tracking-tight my-0.5">
+                      SLE {summary.totalMonthlyDues.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Regular Dues Fund</p>
+                  </div>
+
+                  <div className="bg-white p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1 flex flex-col justify-between">
+                    <div className="flex justify-between items-start gap-1">
+                      <span className="text-[9px] sm:text-xs font-black uppercase text-blue-700 tracking-tight leading-tight">
+                        PLEDGES & TASKS
+                      </span>
+                      <span className="w-6 h-6 sm:w-8 sm:h-8 bg-blue-50 text-blue-600 rounded-lg sm:rounded-xl flex items-center justify-center font-black shrink-0">
+                        <Trophy size={14} className="sm:w-4 sm:h-4" />
+                      </span>
+                    </div>
+                    <div className="text-sm sm:text-2xl font-black text-blue-900 font-mono tracking-tight my-0.5">
+                      SLE {summary.totalSpecialSupport.toLocaleString()}
+                    </div>
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 line-clamp-1">Equipment & Pledges</p>
+                  </div>
+                </div>
+
+                {/* Sub-Tab Navigation Bar */}
+                <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveWelfareTab('drives');
+                        setSelectedCampaignDriveId('');
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer transition-all flex items-center justify-center gap-1.5 truncate ${
+                        activeWelfareTab === 'drives' ? 'bg-purple-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Heart size={14} className="shrink-0" />
+                      <span className="truncate">Welfare Drives ({welfareCampaigns.length})</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveWelfareTab('monthly_dues')}
+                      className={`px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer transition-all flex items-center justify-center gap-1.5 truncate ${
+                        activeWelfareTab === 'monthly_dues' ? 'bg-emerald-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Landmark size={14} className="shrink-0" />
+                      <span className="truncate">Monthly Dues</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveWelfareTab('cards')}
+                      className={`px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer transition-all flex items-center justify-center gap-1.5 truncate ${
+                        activeWelfareTab === 'cards' ? 'bg-indigo-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <CreditCard size={14} className="shrink-0" />
+                      <span className="truncate">Passbook Cards</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveWelfareTab('ledger')}
+                      className={`px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer transition-all flex items-center justify-center gap-1.5 truncate ${
+                        activeWelfareTab === 'ledger' ? 'bg-slate-900 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <ClipboardList size={14} className="shrink-0" />
+                      <span className="truncate">All Ledgers</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCampBeneficiaryId('');
+                        setCampBeneficiaryName('');
+                        setCampReason('marriage');
+                        setCampTitle('');
+                        setCampDesc('');
+                        setCampExpectedPerMember(200);
+                        setCampTargetTotal(2000);
+                        setCampDeadline('2026-11-28');
+                        setShowLaunchCampaignModal(true);
+                      }}
+                      className="px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-950 font-extrabold rounded-xl text-xs flex items-center gap-1 cursor-pointer transition-all"
+                    >
+                      <Plus size={14} /> Launch Member Drive
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContribCampaignId('');
+                        setContribMemberId('');
+                        setContribMemberName('');
+                        setContribCategory('welfare');
+                        setContribWelfareReason('marriage');
+                        setContribSpecialPurpose('');
+                        setContribMonthYear('2026-11');
+                        setContribAmount('');
+                        setContribPaymentMethod('mobile_money');
+                        setContribRef('');
+                        setContribNotes('');
+                        setShowRecordContribModal(true);
+                      }}
+                      className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
+                    >
+                      <Plus size={14} /> Log Payment
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* TAB 1: DEDICATED WELFARE CAMPAIGN DRIVES & MEMBER LEDGERS */}
+          {activeWelfareTab === 'drives' && (
+            <div className="space-y-6">
+              {/* Drives Header */}
+              <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-lg flex items-center gap-2">
+                    <Heart size={20} className="text-purple-600" />
+                    Dedicated Member Welfare Support Drives
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
+                    Dedicated ledgers for specific member needs (marriage, bereavement, medical, naming) specifying target per member & deadline.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowLaunchCampaignModal(true)}
+                  className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-xs shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all self-start sm:self-auto"
+                >
+                  <Plus size={15} /> Launch Member Welfare Drive
+                </button>
+              </div>
+
+              {/* List of Dedicated Welfare Campaign Drives */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {welfareCampaigns.map(camp => {
+                  const campContribs = memberContributions.filter(c => c.campaign_id === camp.id || (c.welfare_reason === camp.reason && c.category === 'welfare'));
+                  const totalRaised = campContribs.reduce((s, c) => s + Number(c.amount), 0);
+                  const progressPct = Math.min(100, Math.round((totalRaised / (camp.target_total_amount || 1)) * 100));
+                  const isSelected = selectedCampaignDriveId === camp.id;
+
+                  return (
+                    <div 
+                      key={camp.id} 
+                      className={`p-5 rounded-3xl border transition-all space-y-4 ${
+                        isSelected 
+                          ? 'bg-purple-50/70 border-purple-400 shadow-md ring-2 ring-purple-500/20' 
+                          : 'bg-white border-slate-200 shadow-xs hover:border-purple-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-900">
+                              {getWelfareReasonLabel(camp.reason)}
+                            </span>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                              Deadline: {camp.deadline}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-slate-900 text-base">{camp.title}</h4>
+                          <p className="text-xs text-slate-600 mt-0.5">Beneficiary: <strong className="text-purple-900 font-bold">{camp.beneficiary_member_name}</strong></p>
+                        </div>
+                      </div>
+
+                      {camp.description && (
+                        <p className="text-xs text-slate-500 italic bg-slate-50 p-2.5 rounded-xl border border-slate-200/70">
+                          "{camp.description}"
+                        </p>
+                      )}
+
+                      {/* Progress Bar & Target Financials */}
+                      <div className="space-y-1.5 p-3 bg-slate-50 rounded-2xl border border-slate-200/80">
+                        <div className="flex justify-between items-center text-xs font-extrabold">
+                          <span className="text-slate-600">Progress: <strong className="text-purple-900 font-mono">SLE {totalRaised.toLocaleString()}</strong> raised</span>
+                          <span className="text-slate-400 font-mono">Goal: SLE {camp.target_total_amount.toLocaleString()} ({progressPct}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                          <div className="bg-purple-600 h-full transition-all duration-500 rounded-full" style={{ width: `${progressPct}%` }}></div>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-500 pt-0.5">
+                          <span>Target Per Member: <strong className="text-slate-800 font-mono font-bold">SLE {camp.expected_amount_per_member.toLocaleString()}</strong></span>
+                          <span>{campContribs.length} Donors Participated</span>
+                        </div>
+                      </div>
+
+                      {/* Card Actions */}
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCampaignDriveId(isSelected ? '' : camp.id)}
+                          className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                            isSelected ? 'bg-purple-900 text-white shadow-xs' : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+                          }`}
+                        >
+                          <ClipboardList size={14} /> {isSelected ? 'Hide Drive Ledger' : 'View Member Drive Ledger'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const pendingList = deptRoster.filter(m => {
+                              const paidSum = campContribs.filter(c => c.member_id === m.id || c.member_name.toLowerCase() === m.name.toLowerCase()).reduce((s, c) => s + Number(c.amount), 0);
+                              return paidSum < camp.expected_amount_per_member;
+                            });
+                            const count = sendDriveReminderToPendingMembers(activeDept, camp, pendingList, profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader');
+                            setProposalSuccessToast(`🔔 Sent in-app reminders to ${count} pending member(s) for "${camp.title}"`);
+                            setTimeout(() => setProposalSuccessToast(null), 4000);
+                          }}
+                          className="py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all"
+                          title="Send In-App Notification Reminder to all pending members"
+                        >
+                          <Bell size={14} /> Remind Pending
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContribCampaignId(camp.id);
+                            setContribCategory('welfare');
+                            setContribWelfareReason(camp.reason);
+                            setContribAmount(camp.expected_amount_per_member);
+                            setContribNotes(`Contribution towards ${camp.title}`);
+                            setShowRecordContribModal(true);
+                          }}
+                          className="py-2 px-3 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer shadow-xs transition-all"
+                        >
+                          <Plus size={14} /> Record Payment
+                        </button>
+                      </div>
+
+                      {/* Dedicated Member Assessment Ledger (Expanded when selected) */}
+                      {isSelected && (
+                        <div className="pt-4 border-t border-purple-200 space-y-3 animate-in fade-in">
+                          <div className="flex items-center justify-between">
+                            <h5 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                              <Users size={14} className="text-purple-600" />
+                              Dedicated Member Ledger for {camp.beneficiary_member_name}
+                            </h5>
+                            <span className="text-[10px] text-purple-700 font-bold bg-purple-100 px-2 py-0.5 rounded-full">
+                              Expected: SLE {camp.expected_amount_per_member} / member
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {deptRoster.map(m => {
+                              const paidList = campContribs.filter(c => c.member_id === m.id || c.member_name.toLowerCase() === m.name.toLowerCase());
+                              const paidSum = paidList.reduce((s, c) => s + Number(c.amount), 0);
+                              const isFull = paidSum >= camp.expected_amount_per_member;
+                              const isPartial = paidSum > 0 && paidSum < camp.expected_amount_per_member;
+
+                              return (
+                                <div key={m.id} className="p-3 bg-white rounded-2xl border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs shadow-2xs">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-full bg-slate-100 font-bold text-slate-700 flex items-center justify-center shrink-0 text-xs">
+                                      {m.name[0]}
+                                    </div>
+                                    <div>
+                                      <span className="font-extrabold text-slate-900">{m.name}</span>
+                                      <span className="text-[10px] text-slate-400 block">{m.role}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                                      isFull ? 'bg-emerald-100 text-emerald-800' :
+                                      isPartial ? 'bg-amber-100 text-amber-800' :
+                                      'bg-slate-100 text-slate-500'
+                                    }`}>
+                                      {isFull ? `Paid SLE ${paidSum.toLocaleString()} ✓` :
+                                       isPartial ? `Partial SLE ${paidSum.toLocaleString()} / ${camp.expected_amount_per_member}` :
+                                       `Pending SLE 0 / ${camp.expected_amount_per_member}`}
+                                    </span>
+
+                                    {!isFull && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          sendInAppNotification({
+                                            department_name: activeDept,
+                                            recipient_member_id: m.id,
+                                            recipient_member_name: m.name,
+                                            type: 'welfare_reminder',
+                                            title: `🔔 Contribution Reminder: ${camp.title}`,
+                                            message: `Friendly reminder for ${m.name}: Target contribution is SLE ${camp.expected_amount_per_member.toLocaleString()} towards ${camp.beneficiary_member_name}'s welfare drive. Deadline: ${camp.deadline}.`,
+                                            campaign_id: camp.id,
+                                            expected_amount: camp.expected_amount_per_member,
+                                            deadline: camp.deadline,
+                                            sent_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+                                          });
+                                          setProposalSuccessToast(`🔔 Sent in-app reminder to ${m.name}`);
+                                          setTimeout(() => setProposalSuccessToast(null), 3000);
+                                        }}
+                                        className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-lg text-[10px] border border-amber-200 cursor-pointer flex items-center gap-1"
+                                        title="Send In-App Reminder to this member"
+                                      >
+                                        <Bell size={11} /> Remind
+                                      </button>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setContribCampaignId(camp.id);
+                                        setContribMemberId(m.id);
+                                        setContribMemberName(m.name);
+                                        setContribCategory('welfare');
+                                        setContribWelfareReason(camp.reason);
+                                        setContribAmount(camp.expected_amount_per_member - paidSum > 0 ? camp.expected_amount_per_member - paidSum : camp.expected_amount_per_member);
+                                        setShowRecordContribModal(true);
+                                      }}
+                                      className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold rounded-lg text-[10px] border border-purple-200 cursor-pointer"
+                                    >
+                                      + Log
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: MONTHLY MEMBERSHIP DUES LEDGER */}
+          {activeWelfareTab === 'monthly_dues' && (
+            <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                    <Landmark size={18} className="text-emerald-600" />
+                    Monthly Membership Dues Ledger
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Track regular monthly dues payments per billing cycle for all department members.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pendingMembers = deptRoster.filter(m => {
+                        const paidSum = memberContributions
+                          .filter(c => c.category === 'monthly_dues' && (c.member_id === m.id || c.member_name.toLowerCase() === m.name.toLowerCase()))
+                          .reduce((s, c) => s + Number(c.amount), 0);
+                        return paidSum <= 0;
+                      });
+                      const count = sendMonthlyDuesReminderToPendingMembers(
+                        activeDept,
+                        pendingMembers,
+                        'November 2026',
+                        200,
+                        profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+                      );
+                      setProposalSuccessToast(`🔔 Sent in-app monthly dues reminder to ${count} pending member(s)!`);
+                      setTimeout(() => setProposalSuccessToast(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                    title="Send in-app dues reminder to all pending members"
+                  >
+                    <Bell size={13} /> Remind Pending
+                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-500">Cycle:</span>
+                    <select
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-xs outline-none cursor-pointer"
+                      defaultValue="2026-11"
+                    >
+                      <option value="2026-11">November 2026</option>
+                      <option value="2026-10">October 2026</option>
+                      <option value="2026-09">September 2026</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {deptRoster.map(m => {
+                  const duesContribs = memberContributions.filter(c => c.category === 'monthly_dues' && (c.member_id === m.id || c.member_name.toLowerCase() === m.name.toLowerCase()));
+                  const totalPaid = duesContribs.reduce((s, c) => s + Number(c.amount), 0);
+                  const isPaid = totalPaid > 0;
+
+                  return (
+                    <div key={m.id} className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                          {m.name[0]}
+                        </div>
+                        <div>
+                          <h5 className="font-extrabold text-slate-900">{m.name}</h5>
+                          <span className="text-[10px] text-slate-400">{m.role}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                            isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {isPaid ? `Paid SLE ${totalPaid}` : 'Dues Pending'}
+                          </span>
+                        </div>
+
+                        {!isPaid && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              sendInAppNotification({
+                                department_name: activeDept,
+                                recipient_member_id: m.id,
+                                recipient_member_name: m.name,
+                                type: 'dues_reminder',
+                                title: `📅 Monthly Dues Reminder (November 2026)`,
+                                message: `Friendly reminder for ${m.name}: Regular monthly membership dues of SLE 200 for November 2026 are currently due.`,
+                                expected_amount: 200,
+                                sent_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+                              });
+                              setProposalSuccessToast(`🔔 Sent in-app monthly dues reminder to ${m.name}`);
+                              setTimeout(() => setProposalSuccessToast(null), 3000);
+                            }}
+                            className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl font-extrabold text-[11px] cursor-pointer"
+                            title="Send In-App Dues Reminder"
+                          >
+                            <Bell size={13} />
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContribMemberId(m.id);
+                            setContribMemberName(m.name);
+                            setContribCategory('monthly_dues');
+                            setContribMonthYear('2026-11');
+                            setContribAmount(200);
+                            setShowRecordContribModal(true);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-[11px] shadow-2xs cursor-pointer"
+                        >
+                          + Log Dues
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: MEMBER DIGITAL WELFARE PASSBOOK CARDS */}
+          {activeWelfareTab === 'cards' && (
+            <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                    <CreditCard size={18} className="text-indigo-600" />
+                    Member Digital Welfare Cards ({deptRoster.length})
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Official welfare passbooks for all assigned ministry members.
+                  </p>
+                </div>
+
+                <div className="relative max-w-xs w-full">
+                  <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search member name or card #..."
+                    value={welfareSearchQuery}
+                    onChange={(e) => setWelfareSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-purple-500 font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {deptRoster
+                  .filter(m => !welfareSearchQuery.trim() || m.name.toLowerCase().includes(welfareSearchQuery.toLowerCase()))
+                  .map(member => {
+                    const card = getMemberWelfareCard(member.id, member.name, activeDept);
+                    return (
+                      <div key={member.id} className="p-4 bg-gradient-to-br from-slate-50 to-purple-50/30 rounded-2xl border border-slate-200 space-y-3 shadow-xs hover:border-purple-300 transition-all">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-10 h-10 rounded-2xl bg-purple-600 text-white font-black flex items-center justify-center text-sm shadow-xs">
+                              {member.name ? member.name[0].toUpperCase() : 'M'}
+                            </div>
+                            <div>
+                              <h4 className="font-extrabold text-slate-900 text-sm leading-tight">{member.name}</h4>
+                              <p className="text-[10px] text-purple-700 font-bold mt-0.5">{card.card_number}</p>
+                            </div>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                            card.status === 'Good Standing' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {card.status}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-1.5 p-2 bg-white rounded-xl border border-slate-200/80 text-[10px]">
+                          <div>
+                            <span className="text-slate-400 font-medium block">Welfare</span>
+                            <strong className="font-mono text-purple-900">SLE {card.total_welfare_paid.toLocaleString()}</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 font-medium block">Dues</span>
+                            <strong className="font-mono text-emerald-900">SLE {card.total_dues_paid.toLocaleString()}</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 font-medium block">Support</span>
+                            <strong className="font-mono text-blue-900">SLE {card.total_support_paid.toLocaleString()}</strong>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => openViewWelfareCard(member)}
+                            className="flex-1 py-1.5 px-2 bg-white border border-purple-200 hover:bg-purple-50 text-purple-800 font-extrabold rounded-xl text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
+                          >
+                            <CreditCard size={13} /> View Passbook
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openRecordContribForMember(member)}
+                            className="py-1.5 px-3 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs"
+                          >
+                            <Plus size={13} /> Log
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: ALL ITEMIZED CONTRIBUTIONS LEDGER (MOBILE & TABLET RESPONSIVE) */}
+          {activeWelfareTab === 'ledger' && (
+            <div className="bg-white p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                    <ClipboardList size={18} className="text-purple-600" />
+                    Itemized Member Contribution Ledger ({memberContributions.length})
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Complete breakdown of all member welfare gifts, monthly dues, and special support entries.
+                  </p>
+                </div>
+
+                {/* Filter Switcher */}
+                <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                  {['all', 'welfare', 'monthly_dues', 'special_support'].map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setWelfareFilterCategory(cat)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer transition-all capitalize ${
+                        welfareFilterCategory === cat ? 'bg-white text-purple-900 shadow-xs font-black' : 'text-slate-600'
+                      }`}
+                    >
+                      {cat === 'all' ? 'All Types' : cat.replace('_', ' ')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {memberContributions.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                  No member contribution records found for {activeDept}. Click "+ Log Member Contribution" to record welfare or monthly dues!
+                </div>
+              ) : (
+                <>
+                  {/* MOBILE & TABLET RESPONSIVE CARDS VIEW (visible on small/medium screens) */}
+                  <div className="block md:hidden space-y-3">
+                    {memberContributions
+                      .filter(c => welfareFilterCategory === 'all' || c.category === welfareFilterCategory)
+                      .map(contrib => (
+                        <div key={contrib.id} className="p-4 bg-slate-50/90 rounded-2xl border border-slate-200 space-y-2 text-xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h5 className="font-extrabold text-slate-900 text-sm">{contrib.member_name}</h5>
+                              <span className="font-mono text-[10px] text-purple-700 font-bold block">{contrib.welfare_card_number || 'N/A'}</span>
+                            </div>
+                            <span className="font-mono font-black text-sm text-purple-900">
+                              SLE {contrib.amount.toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getCategoryBadgeColor(contrib.category)}`}>
+                              {contrib.category.replace('_', ' ')}
+                            </span>
+                            <span className="text-[11px] text-slate-700 font-medium">
+                              {contrib.category === 'welfare' ? getWelfareReasonLabel(contrib.welfare_reason) :
+                               contrib.category === 'monthly_dues' ? `Period: ${contrib.period_month_year || 'Current Month'}` :
+                               contrib.special_support_purpose || 'Task Support'}
+                            </span>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/60 flex justify-between items-center text-[10px] text-slate-500 font-mono">
+                            <span>{new Date(contrib.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} • {contrib.payment_method.toUpperCase()}</span>
+                            <span>By: {contrib.recorded_by}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+
+                  {/* DESKTOP VIEW TABLE (hidden on mobile, visible on md+) */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 bg-slate-50/50">
+                          <th className="p-3">Date</th>
+                          <th className="p-3">Member Name</th>
+                          <th className="p-3">Welfare Card #</th>
+                          <th className="p-3">Category & Reason</th>
+                          <th className="p-3">Method & Ref</th>
+                          <th className="p-3 text-right">Amount (SLE)</th>
+                          <th className="p-3">Recorded By</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {memberContributions
+                          .filter(c => welfareFilterCategory === 'all' || c.category === welfareFilterCategory)
+                          .map(contrib => (
+                            <tr key={contrib.id} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="p-3 font-mono text-[11px] text-slate-500">
+                                {new Date(contrib.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </td>
+                              <td className="p-3 font-bold text-slate-900">
+                                {contrib.member_name}
+                              </td>
+                              <td className="p-3 font-mono text-[11px] text-purple-700 font-bold">
+                                {contrib.welfare_card_number || 'N/A'}
+                              </td>
+                              <td className="p-3">
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${getCategoryBadgeColor(contrib.category)}`}>
+                                  {contrib.category.replace('_', ' ')}
+                                </span>
+                                <div className="text-[11px] text-slate-700 font-medium mt-0.5">
+                                  {contrib.category === 'welfare' ? getWelfareReasonLabel(contrib.welfare_reason) :
+                                   contrib.category === 'monthly_dues' ? `Period: ${contrib.period_month_year || 'Current Month'}` :
+                                   contrib.special_support_purpose || 'Task Support'}
+                                </div>
+                              </td>
+                              <td className="p-3 font-mono text-[11px] text-slate-600">
+                                <span className="uppercase font-bold">{contrib.payment_method}</span>
+                                {contrib.transaction_ref && <span className="text-slate-400 block text-[10px]">Ref: {contrib.transaction_ref}</span>}
+                              </td>
+                              <td className="p-3 text-right font-mono font-black text-sm text-purple-900">
+                                SLE {contrib.amount.toLocaleString()}
+                              </td>
+                              <td className="p-3 text-slate-500 text-[11px]">
+                                {contrib.recorded_by}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {/* --- PROPOSAL CREATOR & EDITOR MODAL --- */}
       {showProposalModal && (
@@ -5661,11 +6542,25 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6">
             <div className="flex justify-between items-start pb-4 border-b border-slate-100">
               <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                  New Team Appointment
-                </span>
-                <h3 className="text-xl font-black text-slate-900 mt-1">Appoint Member to {activeDept}</h3>
-                <p className="text-xs text-slate-500">Add a new church worker or leader to the active department roster.</p>
+                {(() => {
+                  const lower = (activeDept || '').toLowerCase();
+                  const isSocial = lower.includes('youth') || lower.includes('women') || lower.includes('men') || lower.includes('children') || lower.includes('fellowship') || lower.includes('social');
+                  return (
+                    <>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                        {isSocial ? '👥 Social Fellowship Member' : '🛠️ Service Department Volunteer'}
+                      </span>
+                      <h3 className="text-xl font-black text-slate-900 mt-1">
+                        {isSocial ? `Add Member to ${activeDept}` : `Add Volunteer to ${activeDept}`}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {isSocial
+                          ? 'Add a new member or leader to this social fellowship roster.'
+                          : 'Register a new volunteer or team member to this service department roster.'}
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
               <button onClick={() => setShowAddRosterModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
                 <X size={20} />
@@ -5834,6 +6729,595 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl shadow-sm cursor-pointer"
               >
                 Confirm Removal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- LAUNCH MEMBER WELFARE CAMPAIGN DRIVE MODAL --- */}
+      {showLaunchCampaignModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-900">
+                  New Member Drive Setup
+                </span>
+                <h3 className="text-xl font-black text-slate-900 mt-1">Launch Member Welfare Drive</h3>
+                <p className="text-xs text-slate-500">Create a dedicated welfare assessment drive for a member in need.</p>
+              </div>
+              <button onClick={() => setShowLaunchCampaignModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveWelfareCampaign} className="space-y-4 text-xs">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Select Beneficiary Member *</label>
+                <select
+                  required
+                  value={campBeneficiaryId}
+                  onChange={e => {
+                    const mId = e.target.value;
+                    setCampBeneficiaryId(mId);
+                    const found = deptRoster.find(r => r.id === mId);
+                    if (found) {
+                      setCampBeneficiaryName(found.name);
+                      setCampTitle(`${found.name}'s Welfare Support Drive`);
+                    }
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Choose Member from Roster --</option>
+                  {deptRoster.map(m => (
+                    <option key={m.id} value={m.id}>
+                      👤 {m.name} ({m.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {!campBeneficiaryId && (
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Or Type Beneficiary Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Bro. David Koroma"
+                    value={campBeneficiaryName}
+                    onChange={e => {
+                      setCampBeneficiaryName(e.target.value);
+                      if (!campTitle || campTitle.includes('Welfare Support Drive')) {
+                        setCampTitle(`${e.target.value}'s Welfare Support Drive`);
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Support Category / Event *</label>
+                  <select
+                    value={campReason}
+                    onChange={e => setCampReason(e.target.value as WelfareReason)}
+                    className="w-full p-2.5 bg-purple-50 border border-purple-200 text-purple-950 font-bold rounded-xl outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="marriage">💍 Marriage / Wedding</option>
+                    <option value="burial_bereavement">🕊️ Burial & Bereavement</option>
+                    <option value="sickness_medical">🏥 Sickness & Medical Relief</option>
+                    <option value="naming_ceremony">👶 Child Naming Ceremony</option>
+                    <option value="emergency_hardship">🚨 Emergency Hardship Support</option>
+                    <option value="general_welfare">🤝 General Welfare Support</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Target Contribution / Member (SLE) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="200"
+                    value={campExpectedPerMember}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCampExpectedPerMember(val);
+                      if (val && Number(val) > 0) {
+                        setCampTargetTotal(Number(val) * Math.max(1, deptRoster.length));
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Drive Title *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. David Koroma Wedding Welfare Drive"
+                  value={campTitle}
+                  onChange={e => setCampTitle(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Total Target Goal (SLE) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="2000"
+                    value={campTargetTotal}
+                    onChange={e => setCampTargetTotal(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Contribution Deadline *</label>
+                  <input
+                    type="date"
+                    required
+                    value={campDeadline}
+                    onChange={e => setCampDeadline(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Drive Description / Notes (Optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="Details regarding the support drive..."
+                  value={campDesc}
+                  onChange={e => setCampDesc(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowLaunchCampaignModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Heart size={16} /> Launch Drive
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- LOG MEMBER CONTRIBUTION MODAL --- */}
+      {showRecordContribModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-900">
+                  Treasury Contribution Entry
+                </span>
+                <h3 className="text-xl font-black text-slate-900 mt-1">Log Contribution for {activeDept}</h3>
+                <p className="text-xs text-slate-500">Record member welfare funds, monthly dues, or project pledges.</p>
+              </div>
+              <button onClick={() => setShowRecordContribModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMemberContribution} className="space-y-4 text-xs">
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Select Member from Roster *</label>
+                <select
+                  required
+                  value={contribMemberId}
+                  onChange={e => {
+                    const mId = e.target.value;
+                    setContribMemberId(mId);
+                    const found = deptRoster.find(r => r.id === mId);
+                    if (found) setContribMemberName(found.name);
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Choose Roster Member --</option>
+                  {deptRoster.map(m => (
+                    <option key={m.id} value={m.id}>
+                      👤 {m.name} ({m.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {!contribMemberId && (
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Or Type Member Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. David Koroma"
+                    value={contribMemberName}
+                    onChange={e => setContribMemberName(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Contribution Category *</label>
+                  <select
+                    value={contribCategory}
+                    onChange={e => setContribCategory(e.target.value as any)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="welfare">🤝 Welfare Contribution</option>
+                    <option value="monthly_dues">📅 Monthly Membership Dues</option>
+                    <option value="special_support">🎯 Special Support / Pledge</option>
+                  </select>
+                </div>
+
+                {contribCategory === 'welfare' && (
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Welfare Reason / Event *</label>
+                    <select
+                      value={contribWelfareReason}
+                      onChange={e => setContribWelfareReason(e.target.value as any)}
+                      className="w-full p-2.5 bg-purple-50 border border-purple-200 text-purple-950 font-bold rounded-xl outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="marriage">💍 Wedding & Marriage</option>
+                      <option value="burial_bereavement">🕊️ Burial & Bereavement</option>
+                      <option value="sickness_medical">🏥 Sickness & Medical Relief</option>
+                      <option value="naming_ceremony">👶 Child Naming Ceremony</option>
+                      <option value="emergency_hardship">🚨 Emergency Hardship Relief</option>
+                      <option value="general_welfare">🤝 General Welfare Fund</option>
+                    </select>
+                  </div>
+                )}
+
+                {contribCategory === 'monthly_dues' && (
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Period (Month & Year) *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 2026-11 (November 2026)"
+                      value={contribMonthYear}
+                      onChange={e => setContribMonthYear(e.target.value)}
+                      className="w-full p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-emerald-500 text-emerald-950"
+                    />
+                  </div>
+                )}
+
+                {contribCategory === 'special_support' && (
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Pledge / Task Purpose *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Choir Robes / Audio Switcher"
+                      value={contribSpecialPurpose}
+                      onChange={e => setContribSpecialPurpose(e.target.value)}
+                      className="w-full p-2.5 bg-blue-50 border border-blue-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-blue-500 text-blue-950"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Amount (SLE) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="e.g. 350"
+                    value={contribAmount}
+                    onChange={e => setContribAmount(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Payment Channel *</label>
+                  <select
+                    value={contribPaymentMethod}
+                    onChange={e => setContribPaymentMethod(e.target.value as any)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="mobile_money">📱 Mobile Money (Afrimoney/Orange)</option>
+                    <option value="cash">💵 Cash Handover</option>
+                    <option value="bank_transfer">🏦 Bank Wire Transfer</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Transaction Ref / Receipt # (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. MM-881299"
+                  value={contribRef}
+                  onChange={e => setContribRef(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium font-mono outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">Additional Notes</label>
+                <input
+                  type="text"
+                  placeholder="Optional details or instructions..."
+                  value={contribNotes}
+                  onChange={e => setContribNotes(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowRecordContribModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check size={16} /> Save Contribution
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- DIGITAL MEMBER WELFARE PASSBOOK CARD MODAL --- */}
+      {showWelfareCardModal && selectedWelfareCard && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[110] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6 relative overflow-hidden">
+            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <CreditCard size={22} className="text-purple-600" />
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">Member Digital Welfare Passbook</h3>
+                  <p className="text-xs text-slate-500">{selectedWelfareCard.department_name}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowWelfareCardModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Realistic Welfare Passbook Digital Card */}
+            <div className="bg-gradient-to-br from-purple-900 via-slate-900 to-indigo-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden border border-purple-500/30 space-y-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-purple-300 block">
+                    FAITHCONNECT • GRACE CATHEDRAL
+                  </span>
+                  <h4 className="font-extrabold text-sm text-white mt-0.5">{selectedWelfareCard.department_name} Passbook</h4>
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                  {selectedWelfareCard.status}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-4 py-2">
+                <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white font-black flex items-center justify-center text-2xl shadow-inner">
+                  {selectedWelfareCard.member_name[0].toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-white tracking-tight">{selectedWelfareCard.member_name}</h3>
+                  <div className="text-xs font-mono font-bold text-purple-300 mt-0.5">
+                    Card ID: {selectedWelfareCard.card_number}
+                  </div>
+                  <p className="text-[10px] text-slate-300 mt-0.5">Issued: {selectedWelfareCard.issued_date}</p>
+                </div>
+              </div>
+
+              {/* Passbook Financial Counters */}
+              <div className="grid grid-cols-3 gap-2 p-3 bg-white/10 rounded-2xl border border-white/15 text-center text-xs backdrop-blur-md">
+                <div>
+                  <span className="text-[9px] font-bold text-purple-200 uppercase block">Welfare Fund</span>
+                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_welfare_paid.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold text-emerald-200 uppercase block">Monthly Dues</span>
+                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_dues_paid.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold text-blue-200 uppercase block">Task Support</span>
+                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_support_paid.toLocaleString()}</strong>
+                </div>
+              </div>
+
+              {/* Barcode Verification Stamp */}
+              <div className="pt-2 flex items-center justify-between border-t border-white/10 text-[10px] font-mono text-slate-400">
+                <span>OFFICIAL TREASURY SEAL</span>
+                <span className="text-purple-300 font-bold">VERIFIED 2026 ✓</span>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handlePrintWelfareCard}
+                className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Printer size={15} /> Print Welfare Card
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWelfareCardModal(false);
+                    openRecordContribForMember({ id: selectedWelfareCard.member_id, name: selectedWelfareCard.member_name });
+                  }}
+                  className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Plus size={15} /> Log Contribution
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowWelfareCardModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl text-xs cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- IN-APP CONTRIBUTION REMINDERS & NOTIFICATIONS MODAL --- */}
+      {showInAppNotifModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[120] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl border border-slate-200 space-y-5 max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 bg-purple-100 text-purple-700 rounded-2xl flex items-center justify-center font-bold shrink-0">
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-black text-slate-900">In-App Reminders & Notifications</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-100 text-purple-800">
+                      {activeDept}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">System dispatch log for member contribution notifications.</p>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setShowInAppNotifModal(false)} 
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Quick Actions Header */}
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-purple-50/70 rounded-2xl border border-purple-100 text-xs shrink-0">
+              <div className="flex items-center gap-2 text-purple-900 font-bold">
+                <span>Total Dispatched: <strong>{deptNotifications.length}</strong></span>
+                <span>•</span>
+                <span className="text-rose-700 font-extrabold">Unread: {deptNotifications.filter(n => !n.is_read).length}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  markAllDeptNotificationsAsRead(activeDept);
+                  setDeptNotifications(getDepartmentNotifications(activeDept));
+                  setProposalSuccessToast('All in-app reminders marked as read');
+                  setTimeout(() => setProposalSuccessToast(null), 3000);
+                }}
+                className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-[11px] shadow-2xs cursor-pointer transition-all"
+              >
+                ✓ Mark All Read
+              </button>
+            </div>
+
+            {/* List of In-App Reminders */}
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1 text-xs">
+              {deptNotifications.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                  No in-app reminders dispatched yet for {activeDept}. Click "Remind Pending" on any welfare drive or monthly dues tab to send instant reminders!
+                </div>
+              ) : (
+                deptNotifications.map(notif => (
+                  <div 
+                    key={notif.id} 
+                    className={`p-4 rounded-2xl border transition-all space-y-2 relative ${
+                      notif.is_read ? 'bg-slate-50/70 border-slate-200 opacity-80' : 'bg-purple-50/50 border-purple-300 shadow-xs'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                            notif.type === 'welfare_reminder' ? 'bg-purple-200 text-purple-900' :
+                            notif.type === 'dues_reminder' ? 'bg-emerald-200 text-emerald-900' :
+                            'bg-indigo-200 text-indigo-900'
+                          }`}>
+                            {notif.type.replace('_', ' ')}
+                          </span>
+                          <span className="font-extrabold text-slate-900 text-xs">{notif.title}</span>
+                        </div>
+                        <p className="text-[11px] text-purple-900 font-semibold">
+                          Recipient: <strong className="text-slate-900">{notif.recipient_member_name || 'All Members'}</strong>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            deleteNotification(notif.id);
+                            setDeptNotifications(getDepartmentNotifications(activeDept));
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer transition-colors"
+                          title="Delete Reminder Log"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-slate-700 leading-relaxed text-[11px] bg-white p-2.5 rounded-xl border border-slate-200/80">
+                      "{notif.message}"
+                    </p>
+
+                    <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400 font-mono">
+                      <span>Sent by: {notif.sent_by} • {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!notif.is_read) {
+                            markNotificationAsRead(notif.id);
+                            setDeptNotifications(getDepartmentNotifications(activeDept));
+                          }
+                        }}
+                        className={`font-extrabold cursor-pointer ${notif.is_read ? 'text-emerald-700' : 'text-purple-700 hover:underline'}`}
+                      >
+                        {notif.is_read ? 'Read ✓' : 'Mark Read'}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between shrink-0 text-xs">
+              <span className="text-[11px] text-slate-400 font-medium">Auto-synced with member passbooks</span>
+              <button
+                type="button"
+                onClick={() => setShowInAppNotifModal(false)}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl shadow-xs cursor-pointer"
+              >
+                Done
               </button>
             </div>
           </div>
@@ -8034,16 +9518,9 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
       }
 
       // Keep the linked church membership identity aligned with the account profile.
-      await syncLinkedMemberProfile(profile.id, {
+      await syncLinkedMemberIdentity(profile.id, {
         first_name: updatedProfileData.first_name,
-        last_name: updatedProfileData.last_name,
-        phone: updatedProfileData.phone,
-        date_of_birth: updatedProfileData.date_of_birth ?? null,
-        marital_status: updatedProfileData.marital_status,
-        marriage_date: updatedProfileData.marriage_date ?? null,
-        is_baptized: Boolean(updatedProfileData.baptism_date),
-        baptism_date: updatedProfileData.baptism_date || null,
-        baptized_by: updatedProfileData.baptized_by || null
+        last_name: updatedProfileData.last_name
       });
 
       // Keep the signed-in profile, header, and other profile consumers in sync.

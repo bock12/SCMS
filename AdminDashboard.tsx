@@ -17,7 +17,7 @@ import {
   Clock, AlertCircle, ChevronDown, ChevronRight, ChevronLeft, Video, Calendar as CalendarIcon, Play, Key, RefreshCw, ArrowLeft, Settings, Square, Send, MessageSquare, Eye,
   DollarSign, Heart, Sparkles, ShieldCheck, Download, CheckCircle2, Layers, Church,
   UserPlus, UserMinus, UserCheck, Filter, Edit, Copy, FileText, LayoutGrid, List, Phone, Mail, Shield, Upload,
-  Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette
+  Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette, Award
 } from 'lucide-react';
 
 const PermissionRestrictedCard = ({ requiredPermission, profile }: { requiredPermission: string; profile: Profile | null }) => {
@@ -2111,6 +2111,16 @@ const MinistriesAdminTab = () => {
   // Edit Ministry Form state inside modal
   const [editRoleInput, setEditRoleInput] = useState('');
 
+  // Department Detail Modal Sub-tab state
+  const [detailModalTab, setDetailModalTab] = useState<'members' | 'leadership' | 'settings'>('members');
+
+  // Department Roster management state inside modal
+  const [deptRoster, setDeptRoster] = useState<any[]>([]);
+  const [selectedRosterMemberId, setSelectedRosterMemberId] = useState('');
+  const [addMemberDutyInput, setAddMemberDutyInput] = useState('');
+  const [editingRosterItem, setEditingRosterItem] = useState<any | null>(null);
+  const [editRosterDutyInput, setEditRosterDutyInput] = useState('');
+
   const fetchMinistriesAndProfiles = async () => {
     const [minRes, profRes] = await Promise.all([
       supabase.from('ministries').select('*'),
@@ -2123,6 +2133,62 @@ const MinistriesAdminTab = () => {
   useEffect(() => {
     fetchMinistriesAndProfiles();
   }, []);
+
+  const loadDeptRoster = (minName: string) => {
+    try {
+      const raw = localStorage.getItem(`fc_dept_roster_${minName}`);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+
+    const matching = profiles.filter(p => 
+      p.department_name?.toLowerCase() === minName.toLowerCase() || 
+      p.assigned_department?.toLowerCase() === minName.toLowerCase()
+    );
+
+    if (matching.length > 0) {
+      return matching.map(p => ({
+        id: p.id,
+        name: `${p.first_name} ${p.last_name}`,
+        duty: 'Active Team Member',
+        email: p.email,
+        phone: p.phone,
+        avatar_url: p.avatar_url,
+        role: p.primary_role
+      }));
+    }
+
+    return [
+      { id: 'usr-admin-1', name: 'David Miller', duty: 'Department Oversight & Mentor', email: 'admin@faithconnect.church', phone: '+1 (555) 234-5678', avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80', role: 'super_admin' },
+      { id: 'usr-leader-1', name: 'Hannah Adams', duty: 'Service Coordinator', email: 'worship@faithconnect.church', phone: '+1 (555) 567-8901', avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=200&q=80', role: 'leader' },
+      { id: 'usr-member-1', name: 'Grace Campbell', duty: 'Active Servant', email: 'member@faithconnect.church', phone: '+1 (555) 678-9012', avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80', role: 'member' }
+    ];
+  };
+
+  const handleOpenDepartmentDetail = (m: Ministry) => {
+    setShowInlineCategoryAdd(false);
+    setInlineCategoryInput('');
+    setDetailModalTab('members');
+    setEditingMinistry(m);
+    const loadedRoster = loadDeptRoster(m.name);
+    setDeptRoster(loadedRoster);
+    setSelectedRosterMemberId('');
+    setAddMemberDutyInput('');
+  };
+
+  const saveDeptRoster = (updatedRoster: any[]) => {
+    if (!editingMinistry) return;
+    setDeptRoster(updatedRoster);
+    try {
+      localStorage.setItem(`fc_dept_roster_${editingMinistry.name}`, JSON.stringify(updatedRoster));
+    } catch (e) {
+      console.error("Failed to save department roster:", e);
+    }
+    const updatedCount = updatedRoster.length;
+    const updatedMin = { ...editingMinistry, member_count: updatedCount };
+    setEditingMinistry(updatedMin);
+    setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
+    supabase.from('ministries').update({ member_count: updatedCount }).eq('id', editingMinistry.id);
+  };
 
   const defaultCategories = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
   // Combine default categories with custom categories uniquely
@@ -2309,42 +2375,45 @@ const MinistriesAdminTab = () => {
         </div>
       </div>
 
-      {/* Ministry Type Segmented Filter Tabs */}
-      <div className="flex flex-wrap items-center gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
+      {/* Ministry Type Segmented Filter Tabs - Single Row Layout */}
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
         <button
+          type="button"
           onClick={() => setSelectedType('All')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'All'
               ? 'bg-white text-slate-900 shadow-sm font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Building2 size={14} className={selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'} />
-          <span>All Ministry Types ({ministries.length})</span>
+          <Building2 size={14} className={`shrink-0 ${selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'}`} />
+          <span className="truncate">All Types ({ministries.length})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setSelectedType('social_fellowship')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'social_fellowship'
               ? 'bg-amber-600 text-white shadow-md shadow-amber-100 font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Users size={14} className={selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'} />
-          <span>👥 Social Fellowships ({socialCount})</span>
+          <Users size={14} className={`shrink-0 ${selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'}`} />
+          <span className="truncate">👥 Social Fellowships ({socialCount})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setSelectedType('service_department')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
             selectedType === 'service_department'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
           }`}
         >
-          <Building2 size={14} className={selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'} />
-          <span>🛠️ Service Departments ({serviceCount})</span>
+          <Building2 size={14} className={`shrink-0 ${selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'}`} />
+          <span className="truncate">🛠️ Service Departments ({serviceCount})</span>
         </button>
       </div>
 
@@ -2452,14 +2521,10 @@ const MinistriesAdminTab = () => {
               <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                 <button 
                   type="button"
-                  onClick={() => {
-                    setShowInlineCategoryAdd(false);
-                    setInlineCategoryInput('');
-                    setEditingMinistry(m);
-                  }}
+                  onClick={() => handleOpenDepartmentDetail(m)}
                   className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Edit size={14} />
+                  <Eye size={14} />
                   <span>View & Manage Department</span>
                 </button>
               </div>
@@ -2746,321 +2811,569 @@ const MinistriesAdminTab = () => {
         </div>
       )}
 
-      {/* --- DEPARTMENT DETAILS & EDIT MODAL --- */}
+      {/* --- DEPARTMENT DETAILS, MEMBERS & LEADERSHIP DIALOG --- */}
       {editingMinistry && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 pt-16 sm:pt-20 pb-10 z-[100] overflow-y-auto">
-          <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 max-w-2xl w-full p-5 sm:p-8 shadow-2xl space-y-6 my-auto">
-            {/* Modal Header */}
-            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 pt-12 sm:pt-16 pb-10 z-[100] overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 max-w-3xl w-full p-5 sm:p-8 shadow-2xl space-y-6 my-auto relative">
+            
+            {/* Top-Right Close Button */}
+            <button 
+              type="button"
+              onClick={() => setEditingMinistry(null)}
+              aria-label="Close dialog"
+              title="Close Department Detail"
+              className="absolute top-4 right-4 sm:top-6 sm:right-6 w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900 flex items-center justify-center transition-all cursor-pointer z-30 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <X size={20} />
+            </button>
+
+            {/* Dialog Header */}
+            <div className="pb-4 border-b border-slate-100 pr-10 sm:pr-12">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-md shadow-indigo-100 shrink-0">
                   <Building2 size={24} />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1 ${
+                      editingMinistry.type === 'social_fellowship'
+                        ? 'bg-amber-100 text-amber-900 border-amber-300'
+                        : 'bg-indigo-100 text-indigo-900 border-indigo-200'
+                    }`}>
+                      {editingMinistry.type === 'social_fellowship' ? '👥 Social Fellowship' : '🛠️ Service Department'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-slate-100 text-slate-700 border border-slate-200">
                       {editingMinistry.category}
                     </span>
                     <span className="text-xs text-slate-400 font-bold">• Grace Cathedral</span>
                   </div>
-                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">{editingMinistry.name}</h3>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight mt-0.5">{editingMinistry.name}</h3>
                 </div>
               </div>
+            </div>
 
-              <button 
+            {/* Sub-tab Navigation Bar */}
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200">
+              <button
                 type="button"
-                onClick={() => setEditingMinistry(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer"
+                onClick={() => setDetailModalTab('members')}
+                className={`py-2 px-2 sm:px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                  detailModalTab === 'members'
+                    ? 'bg-white text-indigo-950 shadow-sm font-black'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
               >
-                <X size={20} />
+                <Users size={15} className={detailModalTab === 'members' ? 'text-indigo-600' : 'text-slate-400'} />
+                <span className="truncate">👥 Department Members ({deptRoster.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDetailModalTab('leadership')}
+                className={`py-2 px-2 sm:px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                  detailModalTab === 'leadership'
+                    ? 'bg-white text-indigo-950 shadow-sm font-black'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
+              >
+                <ShieldCheck size={15} className={detailModalTab === 'leadership' ? 'text-indigo-600' : 'text-slate-400'} />
+                <span className="truncate">👑 Leadership Structure</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDetailModalTab('settings')}
+                className={`py-2 px-2 sm:px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 truncate ${
+                  detailModalTab === 'settings'
+                    ? 'bg-white text-indigo-950 shadow-sm font-black'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
+              >
+                <Settings size={15} className={detailModalTab === 'settings' ? 'text-indigo-600' : 'text-slate-400'} />
+                <span className="truncate">📌 Department Settings</span>
               </button>
             </div>
 
-            <form onSubmit={handleSaveMinistryEdit} className="space-y-6 text-xs">
-              {/* Department Name & Category */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
-                    Department Title *
+            {/* TAB 1: MEMBERS & ROSTER */}
+            {detailModalTab === 'members' && (
+              <div className="space-y-5 animate-in fade-in duration-150">
+                {/* Add Member Box */}
+                <div className="p-4 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-indigo-950 flex items-center gap-1.5">
+                      <UserPlus size={16} className="text-indigo-600" />
+                      Add Member to {editingMinistry.name} Roster
+                    </span>
+                    <span className="text-[10px] text-indigo-700 font-bold">Pick from Congregation Roster</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                        Select Member from Church Directory *
+                      </label>
+                      <select
+                        value={selectedRosterMemberId}
+                        onChange={(e) => setSelectedRosterMemberId(e.target.value)}
+                        className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="">-- Choose Member --</option>
+                        {profiles.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.first_name} {p.last_name} ({p.primary_role.replace('_', ' ')})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                        Assigned Position / Service Duty *
+                      </label>
+                      <input 
+                        type="text"
+                        placeholder="e.g. Soprano Section Lead, Sound Engineer"
+                        value={addMemberDutyInput}
+                        onChange={(e) => setAddMemberDutyInput(e.target.value)}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedRosterMemberId) return;
+                        const chosen = profiles.find(p => p.id === selectedRosterMemberId);
+                        if (!chosen) return;
+
+                        const exists = deptRoster.some(m => m.id === chosen.id);
+                        if (exists) {
+                          alert(`${chosen.first_name} ${chosen.last_name} is already on this department's roster.`);
+                          return;
+                        }
+
+                        const newItem = {
+                          id: chosen.id,
+                          name: `${chosen.first_name} ${chosen.last_name}`,
+                          duty: addMemberDutyInput.trim() || 'Department Member',
+                          email: chosen.email,
+                          phone: chosen.phone,
+                          avatar_url: chosen.avatar_url,
+                          role: chosen.primary_role
+                        };
+
+                        saveDeptRoster([...deptRoster, newItem]);
+                        setSelectedRosterMemberId('');
+                        setAddMemberDutyInput('');
+                      }}
+                      disabled={!selectedRosterMemberId}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+                    >
+                      <UserPlus size={14} />
+                      <span>Add Member to Roster</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Member Roster List */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                      Department Servants & Volunteers ({deptRoster.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-semibold">Active Roster</span>
+                  </div>
+
+                  {deptRoster.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-slate-400 space-y-1">
+                      <Users size={32} className="mx-auto text-slate-300" />
+                      <p className="font-bold text-xs">No members added to this department roster yet.</p>
+                      <p className="text-[10px]">Use the selection panel above to assign church members to this team.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
+                      {deptRoster.map((mem) => (
+                        <div key={mem.id} className="p-3 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 transition-all flex items-center justify-between gap-3 shadow-2xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-10 h-10 rounded-full overflow-hidden bg-indigo-100 border border-indigo-200 shrink-0">
+                              <img src={mem.avatar_url || `https://picsum.photos/seed/${mem.id}/100/100`} alt="" className="w-full h-full object-cover" />
+                            </div>
+                            <div className="min-w-0">
+                              <h5 className="font-bold text-slate-900 text-xs truncate">{mem.name}</h5>
+                              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-extrabold block w-fit truncate mt-0.5">
+                                • {mem.duty}
+                              </span>
+                              <p className="text-[10px] text-slate-400 truncate mt-0.5">{mem.email || mem.phone || 'Congregant'}</p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = deptRoster.filter(m => m.id !== mem.id);
+                              saveDeptRoster(updated);
+                            }}
+                            title="Remove member from department"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer shrink-0 transition-colors"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: LEADERSHIP STRUCTURE */}
+            {detailModalTab === 'leadership' && (
+              <div className="space-y-5 animate-in fade-in duration-150">
+                {/* Primary Leader Panel */}
+                <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-amber-950 flex items-center gap-1.5">
+                      <Award size={18} className="text-amber-600" />
+                      Primary Department Head / Leader
+                    </span>
+                    <span className="text-[10px] text-amber-800 font-bold">Main Supervisor</span>
+                  </div>
+
+                  {(() => {
+                    const lProfile = profiles.find(p => p.id === editingMinistry.leader_id || `${p.first_name} ${p.last_name}` === editingMinistry.leader_name);
+                    return (
+                      <div className="p-3 bg-white rounded-xl border border-amber-200 flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-full overflow-hidden bg-amber-100 border-2 border-amber-300 shrink-0">
+                          <img src={lProfile?.avatar_url || `https://picsum.photos/seed/${editingMinistry.id}/100/100`} alt="" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-extrabold text-slate-900 text-sm">{editingMinistry.leader_name}</h4>
+                          <p className="text-[10px] text-amber-800 font-semibold">{editingMinistry.meeting_time}</p>
+                          <p className="text-[10px] text-slate-400">{lProfile?.email || 'Appointed Head'}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="space-y-1.5 pt-1">
+                    <label className="text-[10px] font-bold text-amber-900 block">Reassign Primary Leader from Roster:</label>
+                    <select 
+                      value={editingMinistry.leader_id || ''}
+                      onChange={(e) => {
+                        const chosen = profiles.find(p => p.id === e.target.value);
+                        setEditingMinistry({
+                          ...editingMinistry,
+                          leader_id: e.target.value,
+                          leader_name: chosen ? `${chosen.first_name} ${chosen.last_name}` : editingMinistry.leader_name
+                        });
+                      }}
+                      className="w-full p-2.5 bg-white border border-amber-200 rounded-xl font-bold text-xs text-slate-900 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                    >
+                      <option value="">-- Select Leader from Congregation --</option>
+                      {profiles.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.first_name} {p.last_name} ({p.primary_role.replace('_', ' ')})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Governance Roles & Appointed Leaders */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck size={16} className="text-indigo-600" />
+                      Department Governance Roles & Appointed Officers
+                    </span>
+                    <Link 
+                      to="/portal/admin?tab=roles"
+                      className="text-xs text-indigo-600 hover:underline font-extrabold"
+                    >
+                      Manage Governance Roles &rarr;
+                    </Link>
+                  </div>
+
+                  {(() => {
+                    const allCustomRoles = getCustomRoles();
+                    const allAssignments = getRoleAssignments();
+                    const deptRoles = allCustomRoles.filter(r => 
+                      (r.ministry_name && r.ministry_name.toLowerCase().includes(editingMinistry.name.toLowerCase())) || 
+                      (r.ministry_name && editingMinistry.name.toLowerCase().includes(r.ministry_name.toLowerCase())) ||
+                      r.category.toLowerCase() === editingMinistry.category.toLowerCase()
+                    );
+
+                    if (deptRoles.length === 0) {
+                      return (
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-1">
+                          <ShieldAlert size={24} className="mx-auto text-slate-300" />
+                          <p className="text-xs font-bold text-slate-600">No custom governance roles linked to {editingMinistry.name} yet.</p>
+                          <p className="text-[10px] text-slate-400">You can define custom roles with specific administrative permissions in the Roles & Governance tab.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2.5">
+                        {deptRoles.map((r) => {
+                          const assigned = allAssignments.filter(a => a.role_id === r.id);
+                          return (
+                            <div key={r.id} className="p-3 bg-white rounded-2xl border border-slate-200 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-extrabold text-[10px] rounded border border-indigo-100">
+                                    {r.category}
+                                  </span>
+                                  <h5 className="font-extrabold text-slate-900 text-xs">{r.name}</h5>
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-400">
+                                  {assigned.length} Appointed
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-500 leading-relaxed">{r.description}</p>
+
+                              {assigned.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-100">
+                                  {assigned.map(a => (
+                                    <span key={a.id} className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                                      <CheckCircle2 size={12} className="text-emerald-600" />
+                                      {a.member_name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: DEPARTMENT SETTINGS */}
+            {detailModalTab === 'settings' && (
+              <form onSubmit={handleSaveMinistryEdit} className="space-y-5 text-xs animate-in fade-in duration-150">
+                {/* Title & Category */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
+                      Department Title *
+                    </label>
+                    <input 
+                      type="text" 
+                      required
+                      value={editingMinistry.name}
+                      onChange={(e) => setEditingMinistry({ ...editingMinistry, name: e.target.value })}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
+                      Category *
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <select 
+                        value={editingMinistry.category}
+                        onChange={(e) => setEditingMinistry({ ...editingMinistry, category: e.target.value })}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        {allCategories.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineCategoryAdd(prev => !prev)}
+                        title="Add Custom Category"
+                        className="px-3 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl border border-indigo-200 flex items-center justify-center gap-1 shrink-0 cursor-pointer transition-all text-xs"
+                      >
+                        <Plus size={15} />
+                        <span className="hidden sm:inline">New</span>
+                      </button>
+                    </div>
+
+                    {showInlineCategoryAdd && (
+                      <div className="mt-2.5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-2">
+                        <label className="text-[10px] font-extrabold uppercase text-indigo-900 tracking-wider block">
+                          Create Custom Category
+                        </label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            placeholder="e.g. Outreach, Missions"
+                            value={inlineCategoryInput}
+                            onChange={(e) => setInlineCategoryInput(e.target.value)}
+                            className="flex-1 p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveInlineCategory('edit')}
+                            className="px-3 py-2 bg-indigo-600 text-white font-bold rounded-lg text-xs"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Group Type */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
+                    Ministry Group Classification *
                   </label>
-                  <input 
-                    type="text" 
-                    required
-                    value={editingMinistry.name}
-                    onChange={(e) => setEditingMinistry({ ...editingMinistry, name: e.target.value })}
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingMinistry({ ...editingMinistry, type: 'social_fellowship' })}
+                      className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                        editingMinistry.type === 'social_fellowship'
+                          ? 'bg-amber-50 border-amber-400 text-amber-950 font-black shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                      }`}
+                    >
+                      <Users size={16} className={editingMinistry.type === 'social_fellowship' ? 'text-amber-600' : 'text-slate-400'} />
+                      <div>
+                        <span className="block text-xs font-bold">👥 Social Fellowship</span>
+                        <span className="block text-[9px] text-slate-400">Demographic groups</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingMinistry({ ...editingMinistry, type: 'service_department' })}
+                      className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                        (editingMinistry.type || 'service_department') === 'service_department'
+                          ? 'bg-indigo-50 border-indigo-400 text-indigo-950 font-black shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
+                      }`}
+                    >
+                      <Building2 size={16} className={(editingMinistry.type || 'service_department') === 'service_department' ? 'text-indigo-600' : 'text-slate-400'} />
+                      <div>
+                        <span className="block text-xs font-bold">🛠️ Service Department</span>
+                        <span className="block text-[9px] text-slate-400">Volunteer service teams</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Schedule & Description */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
+                      Meeting Schedule
+                    </label>
+                    <input 
+                      type="text" 
+                      value={editingMinistry.meeting_time}
+                      onChange={(e) => setEditingMinistry({ ...editingMinistry, meeting_time: e.target.value })}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
+                      Active Member Count Override
+                    </label>
+                    <input 
+                      type="number" 
+                      value={editingMinistry.member_count}
+                      onChange={(e) => setEditingMinistry({ ...editingMinistry, member_count: Number(e.target.value) })}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none"
+                    />
+                  </div>
                 </div>
 
                 <div>
                   <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
-                    Category *
+                    Department Objectives & Mission
                   </label>
-                  <div className="flex items-center gap-1.5">
-                    <select 
-                      value={editingMinistry.category}
-                      onChange={(e) => setEditingMinistry({ ...editingMinistry, category: e.target.value })}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                    >
-                      {allCategories.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                    <button
+                  <textarea 
+                    rows={2}
+                    value={editingMinistry.description}
+                    onChange={(e) => setEditingMinistry({ ...editingMinistry, description: e.target.value })}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* Responsibilities Editor */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-slate-900">Department Positions & Duties</span>
+                    <span className="text-[10px] font-bold text-slate-400">{(editingMinistry.roles_and_responsibilities || []).length} Defined</span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Add position e.g. Sound Engineer, Soloist"
+                      value={editRoleInput}
+                      onChange={(e) => setEditRoleInput(e.target.value)}
+                      className="flex-1 p-2 bg-white border border-slate-200 rounded-xl text-xs outline-none"
+                    />
+                    <button 
                       type="button"
-                      onClick={() => setShowInlineCategoryAdd(prev => !prev)}
-                      title="Add Custom Category"
-                      className="px-3 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl border border-indigo-200 flex items-center justify-center gap-1 shrink-0 cursor-pointer transition-all text-xs"
+                      onClick={handleAddRoleToEditing}
+                      className="px-3 py-2 bg-indigo-600 text-white font-bold rounded-xl text-xs"
                     >
-                      <Plus size={16} />
-                      <span className="hidden sm:inline">New</span>
+                      Add Position
                     </button>
                   </div>
 
-                  {/* Temporal Inline Category Input Field */}
-                  {showInlineCategoryAdd && (
-                    <div className="mt-2.5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-2 animate-in fade-in duration-150">
-                      <label className="text-[10px] font-extrabold uppercase text-indigo-900 tracking-wider block">
-                        Create & Select New Category
-                      </label>
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          placeholder="e.g. Senior Saints, Evangelism"
-                          value={inlineCategoryInput}
-                          onChange={(e) => setInlineCategoryInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleSaveInlineCategory('edit');
-                            }
-                          }}
-                          className="flex-1 p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleSaveInlineCategory('edit')}
-                          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs cursor-pointer shadow-xs whitespace-nowrap"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInlineCategoryInput('');
-                            setShowInlineCategoryAdd(false);
-                          }}
-                          className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold rounded-lg text-xs cursor-pointer"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Ministry Group Type Selection */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
-                <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                  Ministry Group Type *
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setEditingMinistry({ ...editingMinistry, type: 'social_fellowship' })}
-                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      editingMinistry.type === 'social_fellowship'
-                        ? 'bg-amber-50 border-amber-400 text-amber-950 font-black shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
-                    }`}
-                  >
-                    <Users size={18} className={editingMinistry.type === 'social_fellowship' ? 'text-amber-600' : 'text-slate-400'} />
-                    <div>
-                      <span className="block text-xs font-extrabold">👥 Social Fellowship</span>
-                      <span className="block text-[10px] text-slate-400 font-normal">Women's, Youth, Men's, Children's</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setEditingMinistry({ ...editingMinistry, type: 'service_department' })}
-                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      (editingMinistry.type || 'service_department') === 'service_department'
-                        ? 'bg-indigo-50 border-indigo-400 text-indigo-950 font-black shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 font-bold'
-                    }`}
-                  >
-                    <Building2 size={18} className={(editingMinistry.type || 'service_department') === 'service_department' ? 'text-indigo-600' : 'text-slate-400'} />
-                    <div>
-                      <span className="block text-xs font-extrabold">🛠️ Service Department</span>
-                      <span className="block text-[10px] text-slate-400 font-normal">Media, Choir, Ushers, Prayer, etc.</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Leader Reassignment */}
-              <div className="p-4 bg-indigo-50/60 border border-indigo-100 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-indigo-950 flex items-center gap-1.5">
-                    <UserCheck size={16} className="text-indigo-600" />
-                    Assign Department Leader
-                  </span>
-                  <span className="text-[10px] text-indigo-600 font-bold">Selected from Roster</span>
-                </div>
-
-                <select 
-                  value={editingMinistry.leader_id || ''}
-                  onChange={(e) => {
-                    const chosen = profiles.find(p => p.id === e.target.value);
-                    setEditingMinistry({
-                      ...editingMinistry,
-                      leader_id: e.target.value,
-                      leader_name: chosen ? `${chosen.first_name} ${chosen.last_name}` : editingMinistry.leader_name
-                    });
-                  }}
-                  className="w-full p-3 bg-white border border-indigo-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                >
-                  <option value="">-- Choose Leader from Congregation Roster --</option>
-                  {profiles.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.first_name} {p.last_name} ({p.primary_role.replace('_', ' ')}) - {p.email}
-                    </option>
-                  ))}
-                </select>
-
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                    Or Override Leader Name Manually:
-                  </label>
-                  <input 
-                    type="text" 
-                    value={editingMinistry.leader_name}
-                    onChange={(e) => setEditingMinistry({ ...editingMinistry, leader_name: e.target.value })}
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Schedule, Member Count, Description */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
-                    Meeting Schedule
-                  </label>
-                  <input 
-                    type="text" 
-                    value={editingMinistry.meeting_time}
-                    onChange={(e) => setEditingMinistry({ ...editingMinistry, meeting_time: e.target.value })}
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
-                    Active Member Count
-                  </label>
-                  <input 
-                    type="number" 
-                    value={editingMinistry.member_count}
-                    onChange={(e) => setEditingMinistry({ ...editingMinistry, member_count: Number(e.target.value) })}
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block mb-1">
-                  Department Objectives & Mission
-                </label>
-                <textarea 
-                  rows={2}
-                  value={editingMinistry.description}
-                  onChange={(e) => setEditingMinistry({ ...editingMinistry, description: e.target.value })}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              {/* Roles & Responsibilities Section */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <CheckCircle2 size={16} className="text-emerald-600" />
-                    Roles & Responsibilities Editor
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {(editingMinistry.roles_and_responsibilities || []).length} Defined Positions
-                  </span>
-                </div>
-
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="Add new position or responsibility..."
-                    value={editRoleInput}
-                    onChange={(e) => setEditRoleInput(e.target.value)}
-                    className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button 
-                    type="button"
-                    onClick={handleAddRoleToEditing}
-                    className="px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 cursor-pointer"
-                  >
-                    Add Position
-                  </button>
-                </div>
-
-                <div className="space-y-2 pt-1 max-h-40 overflow-y-auto">
-                  {(editingMinistry.roles_and_responsibilities || []).length === 0 ? (
-                    <p className="text-slate-400 italic text-[11px] py-2">No custom positions defined yet.</p>
-                  ) : (
-                    (editingMinistry.roles_and_responsibilities || []).map((role, idx) => (
-                      <div key={idx} className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center justify-between">
-                        <span className="font-bold text-slate-800 text-xs">• {role}</span>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {(editingMinistry.roles_and_responsibilities || []).map((role, idx) => (
+                      <span key={idx} className="px-2.5 py-1 bg-white border border-slate-200 text-slate-800 text-[10px] font-bold rounded-lg flex items-center gap-1">
+                        • {role}
                         <button 
                           type="button" 
                           onClick={() => handleRemoveRoleFromEditing(idx)}
-                          className="text-slate-400 hover:text-rose-600 cursor-pointer p-1"
-                          title="Remove role"
+                          className="text-slate-400 hover:text-rose-600 cursor-pointer ml-1"
                         >
-                          <Trash2 size={14} />
+                          <X size={12} />
                         </button>
-                      </div>
-                    ))
-                  )}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {/* Modal Footer Controls */}
-              <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteMinistry(editingMinistry.id)}
-                  className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Trash2 size={14} />
-                  <span>Delete Department</span>
-                </button>
-
-                <div className="flex items-center justify-end gap-2.5">
+                {/* Save / Delete Controls */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                   <button
                     type="button"
-                    onClick={() => setEditingMinistry(null)}
-                    className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors cursor-pointer"
+                    onClick={() => handleDeleteMinistry(editingMinistry.id)}
+                    className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
-                    Cancel
+                    <Trash2 size={14} />
+                    <span>Delete Department</span>
                   </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl shadow-md shadow-indigo-100 transition-all cursor-pointer"
-                  >
-                    Save Changes
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingMinistry(null)}
+                      className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 cursor-pointer"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </form>
+              </form>
+            )}
+
           </div>
         </div>
       )}

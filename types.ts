@@ -532,6 +532,59 @@ export interface DepartmentFinancialStanding {
   pending_receipts_count: number;
 }
 
+export type ContributionCategory = 'welfare' | 'monthly_dues' | 'special_support';
+
+export type WelfareReason = 'marriage' | 'burial_bereavement' | 'sickness_medical' | 'naming_ceremony' | 'emergency_hardship' | 'general_welfare';
+
+export interface WelfareCampaignDrive {
+  id: string;
+  department_name: string;
+  beneficiary_member_id?: string;
+  beneficiary_member_name: string;
+  reason: WelfareReason;
+  title: string;
+  description?: string;
+  expected_amount_per_member: number;
+  target_total_amount: number;
+  deadline: string;
+  status: 'active' | 'completed' | 'closed';
+  created_at: string;
+  created_by: string;
+}
+
+export interface MemberContribution {
+  id: string;
+  department_name: string;
+  campaign_id?: string; // Optional link to dedicated WelfareCampaignDrive
+  member_id: string;
+  member_name: string;
+  welfare_card_number?: string;
+  category: ContributionCategory;
+  welfare_reason?: WelfareReason;
+  special_support_purpose?: string;
+  period_month_year?: string;
+  amount: number;
+  currency: string;
+  date: string;
+  payment_method: 'cash' | 'mobile_money' | 'bank_transfer' | 'card';
+  transaction_ref?: string;
+  recorded_by: string;
+  notes?: string;
+}
+
+export interface MemberWelfareCard {
+  card_number: string;
+  member_id: string;
+  member_name: string;
+  department_name: string;
+  issued_date: string;
+  status: 'Good Standing' | 'Dues Pending' | 'Exempted';
+  total_welfare_paid: number;
+  total_dues_paid: number;
+  total_support_paid: number;
+  last_contribution_date?: string;
+}
+
 export interface DepartmentLedgerRecord {
   id: string;
   department_name: string;
@@ -546,6 +599,12 @@ export interface DepartmentLedgerRecord {
   vendor_name?: string;
   payment_method?: string;
   notes?: string;
+  // Member Welfare & Contribution extensions
+  member_id?: string;
+  member_name?: string;
+  contribution_category?: ContributionCategory;
+  welfare_reason?: WelfareReason;
+  welfare_card_number?: string;
 }
 
 export type PermissionKey = 
