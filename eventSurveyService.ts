@@ -132,3 +132,55 @@ export async function getEventSurveyResponseCount(surveyId: string): Promise<num
   if (error) throw error;
   return count || 0;
 }
+
+
+export interface EventSurveyReportRow {
+  response: EventSurveyResponse;
+  member_name: string;
+  answers: Array<{
+    question_id: string;
+    question_text: string;
+    answer_value: EventSurveyAnswer['answer_value'];
+  }>;
+}
+
+export async function getEventSurveyResponseReport(surveyId: string): Promise<EventSurveyReportRow[]> {
+  const [questionsResult, responsesResult] = await Promise.all([
+    supabase.from('event_survey_questions').select('*').eq('survey_id', surveyId).order('sort_order', { ascending: true }),
+    supabase.from('event_survey_responses').select('*').eq('survey_id', surveyId).order('submitted_at', { ascending: false })
+  ]);
+  if (questionsResult.error) throw questionsResult.error;
+  if (responsesResult.error) throw responsesResult.error;
+
+  const questions = (questionsResult.data || []) as EventSurveyQuestion[];
+  const responses = (responsesResult.data || []) as EventSurveyResponse[];
+  if (!responses.length) return [];
+
+  const responseIds = responses.map(response => response.id);
+  const memberIds = [...new Set(responses.map(response => response.member_id))];
+  const [answersResult, membersResult] = await Promise.all([
+    supabase.from('event_survey_answers').select('*').in('response_id', responseIds),
+    supabase.from('members').select('*').in('id', memberIds)
+  ]);
+  if (answersResult.error) throw answersResult.error;
+  if (membersResult.error) throw membersResult.error;
+
+  const answers = (answersResult.data || []) as EventSurveyAnswer[];
+  const members = new Map(((membersResult.data || []) as Array<{ id: string; first_name: string; last_name: string }>).map(member => [member.id, member]));
+  const questionText = new Map(questions.map(question => [question.id, question.question_text]));
+
+  return responses.map(response => ({
+    response,
+    member_name: (() => {
+      const member = members.get(response.member_id);
+      return member ? `${member.first_name} ${member.last_name}`.trim() : 'Member record unavailable';
+    })(),
+    answers: answers
+      .filter(answer => answer.response_id === response.id)
+      .map(answer => ({
+        question_id: answer.question_id,
+        question_text: questionText.get(answer.question_id) || 'Question no longer available',
+        answer_value: answer.answer_value
+      }))
+  }));
+}
