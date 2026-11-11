@@ -1244,7 +1244,7 @@ Currency: SLE`;
         .from('event_registrations')
         .update({ 
           status, 
-          checked_in_at: status === 'checked_in' ? new Date().toISOString() : undefined 
+          checked_in_at: status === 'checked_in' ? new Date().toISOString() : null 
         })
         .eq('id', regId);
 
@@ -1402,7 +1402,7 @@ Currency: SLE`;
   // PDF Report Generator: Attendance Summary Statement
   const downloadAttendanceReportPDF = () => {
     const evtRegistrations = registrations.filter(r => r.event_id === event.id);
-    const presentCount = evtRegistrations.filter(r => r.status === 'checked_in').length;
+    const presentCount = evtRegistrations.filter(r => (r.status === 'checked_in' || r.status === 'attended')).length;
     const absentCount = evtRegistrations.filter(r => r.status === 'absent').length;
     const unconfirmedCount = evtRegistrations.length - (presentCount + absentCount);
     const attendanceRate = evtRegistrations.length > 0 ? Math.round((presentCount / evtRegistrations.length) * 100) : 100;
@@ -1486,7 +1486,7 @@ Currency: SLE`;
                   <td><strong>${idx + 1}</strong></td>
                   <td><strong>${r.member_name}</strong></td>
                   <td>${r.email} ${r.phone ? `• ${r.phone}` : ''}</td>
-                  <td>${new Date(r.created_at).toLocaleDateString()}</td>
+                  <td>${new Date(r.registered_at).toLocaleDateString()}</td>
                   <td>
                     <span class="${r.status === 'checked_in' ? 'badge-present' : r.status === 'absent' ? 'badge-absent' : 'badge-pending'}">
                       ${r.status === 'checked_in' ? 'PRESENT (CHECKED IN)' : r.status === 'absent' ? 'ABSENT' : 'REGISTERED (PENDING)'}
@@ -3083,7 +3083,7 @@ Currency: SLE`;
                     .filter(r => r.member_name.toLowerCase().includes(passFilter.toLowerCase()) || r.email.toLowerCase().includes(passFilter.toLowerCase()))
                     .map(reg => {
                       const passPayload = `EVENT:${event.id}:REG:${reg.id}`;
-                      const isCheckedIn = reg.status === 'checked_in';
+                      const isCheckedIn = reg.status === 'checked_in' || reg.status === 'attended';
                       const isAbsent = reg.status === 'absent';
 
                       return (
@@ -4375,7 +4375,7 @@ Currency: SLE`;
                     </div>
                   </div>
                   <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase ${
-                    reg.status === 'checked_in' ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'
+                    (reg.status === 'checked_in' || reg.status === 'attended') ? 'bg-emerald-100 text-emerald-800' : reg.status === 'absent' ? 'bg-rose-100 text-rose-800' : reg.status === 'waitlist' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
                   }`}>
                     {reg.status}
                   </span>
