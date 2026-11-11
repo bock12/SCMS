@@ -40,8 +40,9 @@ export async function addMinistryMember(
     .single();
 
   if (error) throw error;
-  if (!data) throw new Error('The ministry appointment was not saved.');
-  return data as MinistryMember;
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved) throw new Error('The ministry appointment was not saved.');
+  return saved as MinistryMember;
 }
 
 export async function updateMinistryMember(
