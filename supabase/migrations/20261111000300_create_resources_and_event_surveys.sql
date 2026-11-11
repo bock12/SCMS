@@ -100,7 +100,7 @@ CREATE POLICY "Resource managers manage resources"
   ));
 
 CREATE POLICY "Read published event surveys"
-  ON public.event_surveys FOR SELECT
+  ON public.event_surveys FOR SELECT TO authenticated
   USING (status = 'published');
 
 CREATE POLICY "Survey managers manage surveys"
@@ -115,7 +115,7 @@ CREATE POLICY "Survey managers manage surveys"
   ));
 
 CREATE POLICY "Read questions for published surveys"
-  ON public.event_survey_questions FOR SELECT
+  ON public.event_survey_questions FOR SELECT TO authenticated
   USING (EXISTS (
     SELECT 1 FROM public.event_surveys s
     WHERE s.id = survey_id AND s.status = 'published'
@@ -159,7 +159,7 @@ CREATE POLICY "Members submit own survey responses"
           WHERE er.event_id = s.event_id
             AND er.member_id = m.id
             AND (
-              (s.respondent_scope = 'registrants' AND er.status <> 'cancelled')
+              (s.respondent_scope = 'registrants' AND er.status IN ('confirmed', 'checked_in', 'attended', 'absent'))
               OR (s.respondent_scope = 'attendees' AND er.status IN ('checked_in', 'attended'))
             )
         )
