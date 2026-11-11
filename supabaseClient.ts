@@ -760,6 +760,12 @@ class LocalQueryBuilder {
     return this;
   }
 
+  in(field: string, values: any[]) {
+    const accepted = new Set(values);
+    this.filters.push(row => accepted.has(row[field]));
+    return this;
+  }
+
   ilike(field: string, pattern: string) {
     const cleanPattern = pattern.replace(/%/g, '').toLowerCase();
     this.filters.push(row => {
