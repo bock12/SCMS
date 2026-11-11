@@ -19,8 +19,9 @@ export async function saveChurchResource(
     : supabase.from('church_resources').insert({ ...payload, created_at: now }).select('*').single();
   const { data, error } = await query;
   if (error) throw error;
-  if (!data) throw new Error('The church resource could not be saved.');
-  return data as ChurchResource;
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved) throw new Error('The church resource could not be saved.');
+  return saved as ChurchResource;
 }
 
 export async function deleteChurchResource(resourceId: string): Promise<void> {
