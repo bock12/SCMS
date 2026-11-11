@@ -8296,39 +8296,82 @@ const CalendarPage = ({ profile }: { profile: Profile | null }) => {
     const userEmail = profile?.email || 'member@faithconnect.church';
     const userName = profile ? `${profile.first_name} ${profile.last_name}` : 'Grace Cathedral Member';
 
-    const existingReg = registrations.find(r => r.event_id === evt.id && (r.user_id === profile?.id || r.email === userEmail));
+    try {
+      const existingReg = registrations.find(r =>
+        r.event_id === evt.id && (r.user_id === profile?.id || r.email === userEmail)
+      );
 
-    if (existingReg) {
-      await supabase.from('event_registrations').delete().eq('id', existingReg.id);
-      if (existingReg.status === 'confirmed') {
-        const newCount = Math.max(0, (evt.registered_count || 1) - 1);
-        await supabase.from('events').update({ registered_count: newCount }).eq('id', evt.id);
-      }
-      setToastMessage(`Your RSVP for "${evt.title}" has been cancelled.`);
-    } else {
-      const isAtCapacity = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
-      const regStatus = isAtCapacity ? 'waitlist' : 'confirmed';
+      if (existingReg) {
+        const { error: deleteError } = await supabase
+          .from('event_registrations')
+          .delete()
+          .eq('id', existingReg.id);
+        if (deleteError) throw deleteError;
 
-      const newReg = {
-        event_id: evt.id,
-        user_id: profile?.id,
-        member_name: userName,
-        email: userEmail,
-        phone: profile?.phone || '',
-        registered_at: new Date().toISOString(),
-        status: regStatus as any
-      };
-      await supabase.from('event_registrations').insert(newReg);
-      if (!isAtCapacity) {
-        const newCount = (evt.registered_count || 0) + 1;
-        await supabase.from('events').update({ registered_count: newCount }).eq('id', evt.id);
-        setToastMessage(`🎉 Seat confirmed for "${evt.title}"! We look forward to worshipping with you.`);
+        if (existingReg.status === 'confirmed') {
+          const newCount = Math.max(0, (evt.registered_count || 1) - 1);
+          const { error: countError } = await supabase
+            .from('events')
+            .update({ registered_count: newCount })
+            .eq('id', evt.id);
+          if (countError) throw countError;
+        }
+        setToastMessage(`Your RSVP for "${evt.title}" has been cancelled.`);
       } else {
-        setToastMessage(`⏳ Event "${evt.title}" is currently at capacity. You have been added to the Waitlist!`);
+        const isAtCapacity = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
+        const regStatus: EventRegistration['status'] = isAtCapacity ? 'waitlist' : 'confirmed';
+
+        // Link the RSVP to the church membership record when this account has one.
+        // Account-only users can still register; member_id remains optional.
+        let memberId: string | undefined;
+        if (profile?.id) {
+          const { data: linkedMember, error: memberLookupError } = await supabase
+            .from('members')
+            .select('id')
+            .eq('profile_id', profile.id)
+            .maybeSingle();
+
+          if (memberLookupError) {
+            console.warn('Unable to resolve linked membership record for event RSVP:', memberLookupError);
+          } else {
+            memberId = linkedMember?.id;
+          }
+        }
+
+        const newReg: Omit<EventRegistration, 'id'> = {
+          event_id: evt.id,
+          user_id: profile?.id,
+          member_id: memberId,
+          member_name: userName,
+          email: userEmail,
+          phone: profile?.phone || '',
+          registered_at: new Date().toISOString(),
+          status: regStatus
+        };
+        const { error: registrationError } = await supabase
+          .from('event_registrations')
+          .insert(newReg);
+        if (registrationError) throw registrationError;
+
+        if (!isAtCapacity) {
+          const newCount = (evt.registered_count || 0) + 1;
+          const { error: countError } = await supabase
+            .from('events')
+            .update({ registered_count: newCount })
+            .eq('id', evt.id);
+          if (countError) throw countError;
+          setToastMessage(`🎉 Seat confirmed for "${evt.title}"! We look forward to worshipping with you.`);
+        } else {
+          setToastMessage(`⏳ Event "${evt.title}" is currently at capacity. You have been added to the Waitlist!`);
+        }
       }
+
+      await fetchEvents();
+    } catch (error: any) {
+      console.error('Event RSVP update failed:', error);
+      setToastMessage(error?.message || 'Unable to update your event registration. Please try again.');
     }
 
-    fetchEvents();
     setTimeout(() => setToastMessage(null), 4000);
   };
 
