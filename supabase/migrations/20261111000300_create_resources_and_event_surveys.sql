@@ -142,8 +142,28 @@ CREATE POLICY "Members read own survey responses"
 CREATE POLICY "Members submit own survey responses"
   ON public.event_survey_responses FOR INSERT TO authenticated
   WITH CHECK (EXISTS (
-    SELECT 1 FROM public.members m
-    WHERE m.id = member_id AND m.profile_id = auth.uid() AND m.status = 'active'
+    SELECT 1
+    FROM public.members m
+    JOIN public.event_surveys s ON s.id = event_survey_responses.survey_id
+    WHERE m.id = event_survey_responses.member_id
+      AND m.profile_id = auth.uid()
+      AND m.status = 'active'
+      AND s.status = 'published'
+      AND (s.opens_at IS NULL OR s.opens_at <= now())
+      AND (s.closes_at IS NULL OR s.closes_at > now())
+      AND (
+        s.respondent_scope = 'all_members'
+        OR EXISTS (
+          SELECT 1
+          FROM public.event_registrations er
+          WHERE er.event_id = s.event_id
+            AND er.member_id = m.id
+            AND (
+              (s.respondent_scope = 'registrants' AND er.status <> 'cancelled')
+              OR (s.respondent_scope = 'attendees' AND er.status IN ('checked_in', 'attended'))
+            )
+        )
+      )
   ));
 
 CREATE POLICY "Survey managers read all responses"
