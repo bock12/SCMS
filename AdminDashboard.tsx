@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
-import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile } from './types';
+import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, Member } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
@@ -11,6 +11,8 @@ import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNext
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
 import { syncLinkedMemberProfile } from './memberProfileSyncService';
+import { getMembers } from './memberService';
+import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember } from './ministryMemberService';
 import { 
   Users, Building2, Map, MapPin, Radio, Activity, Plus, Search, 
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
@@ -2116,78 +2118,180 @@ const MinistriesAdminTab = () => {
 
   // Department Roster management state inside modal
   const [deptRoster, setDeptRoster] = useState<any[]>([]);
+  const [churchMembers, setChurchMembers] = useState<Member[]>([]);
   const [selectedRosterMemberId, setSelectedRosterMemberId] = useState('');
   const [addMemberDutyInput, setAddMemberDutyInput] = useState('');
   const [editingRosterItem, setEditingRosterItem] = useState<any | null>(null);
   const [editRosterDutyInput, setEditRosterDutyInput] = useState('');
 
   const fetchMinistriesAndProfiles = async () => {
-    const [minRes, profRes] = await Promise.all([
+    const [minRes, profRes, memberResult] = await Promise.all([
       supabase.from('ministries').select('*'),
-      supabase.from('profiles').select('*').order('first_name', { ascending: true })
+      supabase.from('profiles').select('*').order('first_name', { ascending: true }),
+      getMembers().catch(error => {
+        console.error('Unable to load ministry membership directory:', error);
+        return [];
+      })
     ]);
     if (minRes.data) setMinistries(minRes.data as Ministry[]);
     if (profRes.data) setProfiles(profRes.data as Profile[]);
+    setChurchMembers(memberResult.filter(member => member.status === 'active'));
   };
 
   useEffect(() => {
     fetchMinistriesAndProfiles();
   }, []);
 
-  const loadDeptRoster = (minName: string) => {
-    try {
-      const raw = localStorage.getItem(`fc_dept_roster_${minName}`);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-
-    const matching = profiles.filter(p => 
-      p.department_name?.toLowerCase() === minName.toLowerCase() || 
-      p.assigned_department?.toLowerCase() === minName.toLowerCase()
-    );
-
-    if (matching.length > 0) {
-      return matching.map(p => ({
-        id: p.id,
-        name: `${p.first_name} ${p.last_name}`,
-        duty: 'Active Team Member',
-        email: p.email,
-        phone: p.phone,
-        avatar_url: p.avatar_url,
-        role: p.primary_role
+  const loadDeptRoster = async (ministry: Ministry) => {
+    const persistedRoster = await getMinistryRoster(ministry.id);
+    if (persistedRoster.length > 0) {
+      return persistedRoster.map(entry => ({
+        id: entry.id,
+        membership_assignment_id: entry.id,
+        member_id: entry.member_id,
+        name: `${entry.member.first_name} ${entry.member.last_name}`,
+        duty: entry.duty,
+        email: entry.member.email || '',
+        phone: entry.member.phone || '',
+        avatar_url: entry.member.avatar_url || '',
+        role: entry.role_title,
+        status: entry.status
       }));
     }
 
-    return [
-      { id: 'usr-admin-1', name: 'David Miller', duty: 'Department Oversight & Mentor', email: 'admin@faithconnect.church', phone: '+1 (555) 234-5678', avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80', role: 'super_admin' },
-      { id: 'usr-leader-1', name: 'Hannah Adams', duty: 'Service Coordinator', email: 'worship@faithconnect.church', phone: '+1 (555) 567-8901', avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=200&q=80', role: 'leader' },
-      { id: 'usr-member-1', name: 'Grace Campbell', duty: 'Active Servant', email: 'member@faithconnect.church', phone: '+1 (555) 678-9012', avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80', role: 'member' }
-    ];
+    // Read legacy browser rosters once as a compatibility fallback. New writes
+    // are stored against members and ministry IDs, never profile-only records.
+    try {
+      const raw = localStorage.getItem(`fc_dept_roster_${ministry.name}`);
+      if (raw) {
+        const legacyRoster = JSON.parse(raw);
+        if (Array.isArray(legacyRoster)) {
+          return legacyRoster.map((entry: any) => {
+            const member = churchMembers.find(item =>
+              item.profile_id === entry.id ||
+              (entry.email && item.email?.toLowerCase() === String(entry.email).toLowerCase()) ||
+              `${item.first_name} ${item.last_name}`.toLowerCase() === String(entry.name || '').toLowerCase()
+            );
+            if (!member) return null;
+            return {
+              id: member.id,
+              member_id: member.id,
+              name: `${member.first_name} ${member.last_name}`,
+              duty: entry.duty || 'Department Member',
+              email: member.email || '',
+              phone: member.phone || '',
+              avatar_url: member.avatar_url || '',
+              role: entry.role || 'Team Member',
+              status: entry.status || 'active'
+            };
+          }).filter(Boolean);
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to read legacy ministry roster:', error);
+    }
+
+    return churchMembers
+      .filter(member => {
+        const linkedProfile = profiles.find(profile => profile.id === member.profile_id);
+        return linkedProfile?.department_name?.toLowerCase() === ministry.name.toLowerCase() ||
+          linkedProfile?.assigned_department?.toLowerCase() === ministry.name.toLowerCase();
+      })
+      .map(member => {
+        const linkedProfile = profiles.find(profile => profile.id === member.profile_id);
+        return {
+          id: member.id,
+          member_id: member.id,
+          name: `${member.first_name} ${member.last_name}`,
+          duty: 'Active Team Member',
+          email: member.email || linkedProfile?.email || '',
+          phone: member.phone || linkedProfile?.phone || '',
+          avatar_url: member.avatar_url || linkedProfile?.avatar_url || '',
+          role: linkedProfile?.primary_role || 'member',
+          status: 'active'
+        };
+      });
   };
 
-  const handleOpenDepartmentDetail = (m: Ministry) => {
+  const handleOpenDepartmentDetail = async (m: Ministry) => {
     setShowInlineCategoryAdd(false);
     setInlineCategoryInput('');
     setDetailModalTab('members');
     setEditingMinistry(m);
-    const loadedRoster = loadDeptRoster(m.name);
-    setDeptRoster(loadedRoster);
+    setDeptRoster([]);
     setSelectedRosterMemberId('');
     setAddMemberDutyInput('');
+    try {
+      setDeptRoster(await loadDeptRoster(m));
+    } catch (error) {
+      console.error('Unable to load department membership roster:', error);
+      alert('Unable to load this ministry roster. Please try again.');
+    }
   };
 
-  const saveDeptRoster = (updatedRoster: any[]) => {
+  const saveDeptRoster = async (updatedRoster: any[]) => {
     if (!editingMinistry) return;
-    setDeptRoster(updatedRoster);
     try {
-      localStorage.setItem(`fc_dept_roster_${editingMinistry.name}`, JSON.stringify(updatedRoster));
-    } catch (e) {
-      console.error("Failed to save department roster:", e);
+      const currentAssignments = await getMinistryRoster(editingMinistry.id);
+      const updatedMemberIds = new Set(updatedRoster.map(item => item.member_id || item.id));
+      const currentByMemberId = new Map(currentAssignments.map(item => [item.member_id, item]));
+
+      for (const assignment of currentAssignments) {
+        if (!updatedMemberIds.has(assignment.member_id)) {
+          await removeMinistryMember(assignment.id);
+        }
+      }
+
+      for (const item of updatedRoster) {
+        const memberId = item.member_id || item.id;
+        if (!memberId) continue;
+        const existing = currentByMemberId.get(memberId);
+        const statusMap: Record<string, 'active' | 'on_leave' | 'in_training' | 'inactive'> = {
+          Active: 'active', 'On Leave': 'on_leave', 'In Training': 'in_training',
+          active: 'active', on_leave: 'on_leave', in_training: 'in_training', inactive: 'inactive'
+        };
+        const changes = {
+          role_title: item.role || 'Team Member',
+          duty: item.duty || 'Department Member',
+          status: statusMap[item.status] || 'active'
+        };
+        if (existing) {
+          await updateMinistryMember(existing.id, changes);
+        } else {
+          await addMinistryMember({
+            ministry_id: editingMinistry.id,
+            member_id: memberId,
+            ...changes
+          });
+        }
+      }
+
+      const savedRoster = await getMinistryRoster(editingMinistry.id);
+      const normalizedRoster = savedRoster.map(entry => ({
+        id: entry.id,
+        membership_assignment_id: entry.id,
+        member_id: entry.member_id,
+        name: `${entry.member.first_name} ${entry.member.last_name}`,
+        duty: entry.duty,
+        email: entry.member.email || '',
+        phone: entry.member.phone || '',
+        avatar_url: entry.member.avatar_url || '',
+        role: entry.role_title,
+        status: entry.status
+      }));
+      setDeptRoster(normalizedRoster);
+      const updatedCount = normalizedRoster.length;
+      const updatedMin = { ...editingMinistry, member_count: updatedCount };
+      setEditingMinistry(updatedMin);
+      setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
+      const { error } = await supabase.from('ministries')
+        .update({ member_count: updatedCount })
+        .eq('id', editingMinistry.id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Failed to save department membership roster:', error);
+      alert('The ministry roster could not be saved. Please try again.');
     }
-    const updatedCount = updatedRoster.length;
-    const updatedMin = { ...editingMinistry, member_count: updatedCount };
-    setEditingMinistry(updatedMin);
-    setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
-    supabase.from('ministries').update({ member_count: updatedCount }).eq('id', editingMinistry.id);
   };
 
   const defaultCategories = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
