@@ -577,6 +577,11 @@ function loadLocalDatabase() {
       if (!parsed.events || parsed.events.length === 0) parsed.events = initialEvents;
       if (!parsed.event_registrations || parsed.event_registrations.length === 0) parsed.event_registrations = initialEventRegistrations;
       if (!Array.isArray(parsed.ministry_members)) parsed.ministry_members = [];
+      if (!Array.isArray(parsed.church_resources)) parsed.church_resources = [];
+      if (!Array.isArray(parsed.event_surveys)) parsed.event_surveys = [];
+      if (!Array.isArray(parsed.event_survey_questions)) parsed.event_survey_questions = [];
+      if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
+      if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
       return parsed;
     }
   } catch (e) {
@@ -593,6 +598,11 @@ function loadLocalDatabase() {
     stream_chat_messages: initialMessages,
     ministries: initialMinistries,
     ministry_members: [],
+    church_resources: [],
+    event_surveys: [],
+    event_survey_questions: [],
+    event_survey_responses: [],
+    event_survey_answers: [],
     financial_records: initialFinancials,
     prayer_requests: initialPrayers,
     events: initialEvents,
