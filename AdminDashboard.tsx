@@ -3022,11 +3022,14 @@ const MinistriesAdminTab = () => {
                         className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                       >
                         <option value="">-- Choose Member --</option>
-                        {profiles.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.first_name} {p.last_name} ({p.primary_role.replace('_', ' ')})
-                          </option>
-                        ))}
+                        {churchMembers.map(member => {
+                          const linkedProfile = profiles.find(profile => profile.id === member.profile_id);
+                          return (
+                            <option key={member.id} value={member.id}>
+                              {member.first_name} {member.last_name}{linkedProfile ? ` (${linkedProfile.primary_role.replace('_', ' ')})` : ' (No login account)'}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
@@ -3049,23 +3052,26 @@ const MinistriesAdminTab = () => {
                       type="button"
                       onClick={() => {
                         if (!selectedRosterMemberId) return;
-                        const chosen = profiles.find(p => p.id === selectedRosterMemberId);
+                        const chosen = churchMembers.find(member => member.id === selectedRosterMemberId);
                         if (!chosen) return;
 
-                        const exists = deptRoster.some(m => m.id === chosen.id);
+                        const exists = deptRoster.some(item => item.member_id === chosen.id);
                         if (exists) {
                           alert(`${chosen.first_name} ${chosen.last_name} is already on this department's roster.`);
                           return;
                         }
 
+                        const linkedProfile = profiles.find(profile => profile.id === chosen.profile_id);
                         const newItem = {
                           id: chosen.id,
+                          member_id: chosen.id,
                           name: `${chosen.first_name} ${chosen.last_name}`,
                           duty: addMemberDutyInput.trim() || 'Department Member',
-                          email: chosen.email,
-                          phone: chosen.phone,
-                          avatar_url: chosen.avatar_url,
-                          role: chosen.primary_role
+                          email: chosen.email || linkedProfile?.email || '',
+                          phone: chosen.phone || linkedProfile?.phone || '',
+                          avatar_url: chosen.avatar_url || linkedProfile?.avatar_url || '',
+                          role: linkedProfile?.primary_role || 'Team Member',
+                          status: 'active'
                         };
 
                         saveDeptRoster([...deptRoster, newItem]);
