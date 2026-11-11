@@ -159,7 +159,7 @@ CREATE POLICY "Members read own survey answers"
     SELECT 1
     FROM public.event_survey_responses r
     JOIN public.members m ON m.id = r.member_id
-    WHERE r.id = response_id AND m.profile_id = auth.uid()
+    WHERE r.id = event_survey_answers.response_id AND m.profile_id = auth.uid()
   ));
 
 CREATE POLICY "Members submit answers to own responses"
@@ -169,14 +169,14 @@ CREATE POLICY "Members submit answers to own responses"
     FROM public.event_survey_responses r
     JOIN public.members m ON m.id = r.member_id
     JOIN public.event_surveys s ON s.id = r.survey_id
-    WHERE r.id = response_id
+    WHERE r.id = event_survey_answers.response_id
       AND m.profile_id = auth.uid()
       AND s.status = 'published'
       AND (s.opens_at IS NULL OR s.opens_at <= now())
       AND (s.closes_at IS NULL OR s.closes_at > now())
       AND EXISTS (
         SELECT 1 FROM public.event_survey_questions q
-        WHERE q.id = question_id AND q.survey_id = s.id
+        WHERE q.id = event_survey_answers.question_id AND q.survey_id = s.id
       )
   ));
 
