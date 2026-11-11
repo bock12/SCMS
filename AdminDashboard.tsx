@@ -6,6 +6,8 @@ import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
+import { ResourcesAdminTab } from './ResourcesAdminTab';
+import { EventSurveysAdminTab } from './EventSurveysAdminTab';
 import { hasPermission, getUserPermissions, ALL_PERMISSIONS, getCustomRoles, getRoleAssignments } from './roleService';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
@@ -18,7 +20,7 @@ import {
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
   Clock, AlertCircle, ChevronDown, ChevronRight, ChevronLeft, Video, Calendar as CalendarIcon, Play, Key, RefreshCw, ArrowLeft, Settings, Square, Send, MessageSquare, Eye,
   DollarSign, Heart, Sparkles, ShieldCheck, Download, CheckCircle2, Layers, Church,
-  UserPlus, UserMinus, UserCheck, Filter, Edit, Copy, FileText, LayoutGrid, List, Phone, Mail, Shield, Upload,
+  UserPlus, UserMinus, UserCheck, Filter, Edit, Copy, FileText, ClipboardList, LayoutGrid, List, Phone, Mail, Shield, Upload,
   Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette, Award
 } from 'lucide-react';
 
@@ -105,6 +107,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
   const tabs = [
     { id: 'overview', label: 'Church Overview', icon: Activity, shortLabel: 'Overview' },
     { id: 'events', label: 'Events & Calendar', icon: CalendarIcon, shortLabel: 'Events' },
+    { id: 'resources', label: 'Church Resources', icon: FileText, shortLabel: 'Resources' },
+    { id: 'surveys', label: 'Post-Event Surveys', icon: ClipboardList, shortLabel: 'Surveys' },
     { id: 'users', label: 'Congregation Roster', icon: Users, shortLabel: 'Roster' },
     { id: 'roles', label: 'Roles & Governance', icon: ShieldCheck, shortLabel: 'Roles' },
     { id: 'ministries', label: 'Ministries & Teams', icon: Building2, shortLabel: 'Ministries' },
@@ -152,6 +156,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
               const isActive = currentTab === t.id;
               const permKeyMap: Record<string, any> = {
                 events: 'manage_events',
+                resources: 'manage_events',
+                surveys: 'manage_events',
                 users: 'manage_members',
                 roles: 'manage_members',
                 ministries: 'manage_ministries',
@@ -221,6 +227,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           {currentTab === 'events' && (
             hasPermission(profile, 'manage_events') 
               ? <EventsAdminTab /> 
+              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
+          )}
+          {currentTab === 'resources' && (
+            hasPermission(profile, 'manage_events')
+              ? <ResourcesAdminTab profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
+          )}
+          {currentTab === 'surveys' && (
+            hasPermission(profile, 'manage_events')
+              ? <EventSurveysAdminTab profile={profile} />
               : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
           )}
           {currentTab === 'users' && (
