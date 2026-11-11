@@ -392,11 +392,13 @@ export interface EventRegistration {
   id: string;
   event_id: string;
   user_id?: string;
+  member_id?: string;
   member_name: string;
   email: string;
   phone?: string;
   registered_at: string;
-  status: 'confirmed' | 'cancelled' | 'attended';
+  checked_in_at?: string | null;
+  status: 'confirmed' | 'cancelled' | 'waitlist' | 'checked_in' | 'absent' | 'attended';
 }
 
 export type EventRoleTitle = 
