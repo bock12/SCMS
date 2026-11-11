@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { ChurchEvent, EventSurveyQuestionType, EventSurveyRespondentScope, EventSurveyWithQuestions } from './types';
+import type { ChurchEvent, EventSurveyQuestionType, EventSurveyRespondentScope } from './types';
 import type { Profile } from './types';
 import { getEventSurveys, saveEventSurvey } from './eventSurveyService';
 import type { EventSurveyWithQuestions as SurveyWithQuestions } from './eventSurveyService';
@@ -68,8 +68,8 @@ export function EventSurveysAdminTab({ profile }: { profile: Profile }) {
 
   const createSurvey = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!eventId || !title.trim() || questions.some(question => !question.question_text.trim())) {
-      setError('Select an event, enter a survey title and complete every question.');
+    if (!eventId || !title.trim() || questions.some(question => !question.question_text.trim() || (['single_choice', 'multiple_choice'].includes(question.question_type) && question.options.length < 2))) {
+      setError('Select an event, enter a survey title, complete every question, and provide at least two options for each choice question.');
       return;
     }
     setSaving(true);
