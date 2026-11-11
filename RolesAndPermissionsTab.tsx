@@ -88,7 +88,8 @@ export const RolesAndPermissionsTab: React.FC = () => {
       ...a,
       role_id: roleObj.id,
       role_name: roleObj.name,
-      ministry_name: editAssignMinistryName || roleObj.ministry_name || 'All Ministries'
+      ministry_name: editAssignMinistryName || roleObj.ministry_name || 'All Ministries',
+      ministry_id: ministries.find(m => m.name.toLowerCase() === (editAssignMinistryName || roleObj.ministry_name || '').toLowerCase())?.id
     } : a);
 
     setAssignments(updated);
@@ -174,6 +175,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
         name: roleName.trim(),
         category: roleCategory,
         ministry_name: targetMinistry,
+        ministry_id: ministries.find(m => m.name.toLowerCase() === targetMinistry.toLowerCase())?.id,
         description: roleDesc.trim(),
         responsibilities: respList,
         permissions: selectedPermissions
@@ -184,6 +186,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
         name: roleName.trim(),
         category: roleCategory,
         ministry_name: targetMinistry,
+        ministry_id: ministries.find(m => m.name.toLowerCase() === targetMinistry.toLowerCase())?.id,
         description: roleDesc.trim() || 'Custom ministry-specific leadership role.',
         responsibilities: respList.length > 0 ? respList : ['Execute assigned department duties', 'Support church leadership'],
         permissions: selectedPermissions,
@@ -230,6 +233,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
       role_id: roleObj.id,
       role_name: roleObj.name,
       ministry_name: targetMinistry,
+      ministry_id: ministries.find(m => m.name.toLowerCase() === targetMinistry.toLowerCase())?.id,
       assigned_at: new Date().toISOString(),
       assigned_by: 'Administrator'
     };
