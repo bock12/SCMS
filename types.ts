@@ -692,3 +692,74 @@ export interface EventBudgetApproval {
 
 
 
+
+
+// RES-INT-001: Church resource library
+export type ChurchResourceType = 'document' | 'video' | 'audio' | 'image' | 'link';
+export type ChurchResourceVisibility = 'public' | 'members_only';
+export type ChurchResourceStatus = 'draft' | 'published' | 'archived';
+
+export interface ChurchResource {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  resource_type: ChurchResourceType;
+  resource_url: string;
+  visibility: ChurchResourceVisibility;
+  status: ChurchResourceStatus;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// RES-INT-001: Event-linked feedback surveys
+export type EventSurveyStatus = 'draft' | 'published' | 'closed';
+export type EventSurveyRespondentScope = 'all_members' | 'registrants' | 'attendees';
+export type EventSurveyQuestionType =
+  | 'short_text'
+  | 'long_text'
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'rating'
+  | 'yes_no';
+
+export interface EventSurvey {
+  id: string;
+  event_id: string;
+  title: string;
+  description: string;
+  respondent_scope: EventSurveyRespondentScope;
+  status: EventSurveyStatus;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventSurveyQuestion {
+  id: string;
+  survey_id: string;
+  question_text: string;
+  question_type: EventSurveyQuestionType;
+  is_required: boolean;
+  options: string[];
+  sort_order: number;
+  created_at: string;
+}
+
+export interface EventSurveyResponse {
+  id: string;
+  survey_id: string;
+  member_id: string;
+  submitted_at: string;
+}
+
+export interface EventSurveyAnswer {
+  id: string;
+  response_id: string;
+  question_id: string;
+  answer_value: string | number | boolean | string[];
+  created_at: string;
+}
