@@ -1488,8 +1488,8 @@ Currency: SLE`;
                   <td>${r.email} ${r.phone ? `• ${r.phone}` : ''}</td>
                   <td>${new Date(r.registered_at).toLocaleDateString()}</td>
                   <td>
-                    <span class="${r.status === 'checked_in' ? 'badge-present' : r.status === 'absent' ? 'badge-absent' : 'badge-pending'}">
-                      ${r.status === 'checked_in' ? 'PRESENT (CHECKED IN)' : r.status === 'absent' ? 'ABSENT' : 'REGISTERED (PENDING)'}
+                    <span class="${(r.status === 'checked_in' || r.status === 'attended') ? 'badge-present' : r.status === 'absent' ? 'badge-absent' : 'badge-pending'}">
+                      ${r.status === 'checked_in' || r.status === 'attended' ? 'PRESENT (CHECKED IN)' : r.status === 'absent' ? 'ABSENT' : r.status === 'waitlist' ? 'WAITLISTED' : 'REGISTERED (PENDING)'}
                     </span>
                   </td>
                 </tr>
@@ -1861,7 +1861,7 @@ Currency: SLE`;
 
   const evtRegistrations = registrations.filter(r => r.event_id === event.id);
   const registeredCount = event.registered_count || evtRegistrations.length;
-  const checkedInCount = evtRegistrations.filter(r => r.status === 'checked_in').length;
+  const checkedInCount = evtRegistrations.filter(r => r.status === 'checked_in' || r.status === 'attended').length;
 
   return (
     <div className="w-full max-w-7xl mx-auto min-h-screen bg-slate-50 flex flex-col space-y-4 pb-20 animate-in fade-in duration-200 px-2 sm:px-4">
