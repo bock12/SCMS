@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import type { ChurchEvent, EventSurveyQuestionType, EventSurveyRespondentScope } from './types';
 import type { Profile } from './types';
-import { getEventSurveys, saveEventSurvey } from './eventSurveyService';
-import type { EventSurveyWithQuestions as SurveyWithQuestions } from './eventSurveyService';
+import { getEventSurveys, saveEventSurvey, getEventSurveyResponseReport } from './eventSurveyService';
+import type { EventSurveyWithQuestions as SurveyWithQuestions, EventSurveyReportRow } from './eventSurveyService';
 
 type DraftQuestion = {
   question_text: string;
@@ -31,6 +31,9 @@ export function EventSurveysAdminTab({ profile }: { profile: Profile }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [reportSurveyId, setReportSurveyId] = useState('');
+  const [reportRows, setReportRows] = useState<EventSurveyReportRow[]>([]);
+  const [reportLoading, setReportLoading] = useState(false);
 
   useEffect(() => {
     const loadEvents = async () => {
@@ -92,6 +95,20 @@ export function EventSurveysAdminTab({ profile }: { profile: Profile }) {
       setError(err instanceof Error ? err.message : 'Could not create the survey.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const viewResponses = async (survey: EventSurveyWithQuestions) => {
+    setReportSurveyId(survey.id);
+    setReportLoading(true);
+    setError('');
+    try {
+      setReportRows(await getEventSurveyResponseReport(survey.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load survey responses.');
+      setReportRows([]);
+    } finally {
+      setReportLoading(false);
     }
   };
 
@@ -190,12 +207,34 @@ export function EventSurveysAdminTab({ profile }: { profile: Profile }) {
                 <div className="flex gap-2 shrink-0">
                   {survey.status === 'draft' && <button type="button" disabled={saving} onClick={() => void changeStatus(survey, 'published')} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">Publish</button>}
                   {survey.status === 'published' && <button type="button" disabled={saving} onClick={() => void changeStatus(survey, 'closed')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700">Close</button>}
+                  <button type="button" disabled={reportLoading} onClick={() => void viewResponses(survey)} className="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700">View responses</button>
                 </div>
               </article>
             ))}
           </div>
         )}
       </div>
+
+      {reportSurveyId && (
+        <section className="rounded-3xl bg-white border border-slate-200 p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div><h3 className="font-extrabold text-slate-900">Survey responses</h3><p className="text-xs text-slate-500 mt-1">{reportRows.length} submitted response{reportRows.length === 1 ? '' : 's'}</p></div>
+            <button type="button" onClick={() => { setReportSurveyId(''); setReportRows([]); }} className="text-xs font-bold text-slate-500">Close report</button>
+          </div>
+          {reportLoading ? <p className="py-6 text-sm text-slate-500">Loading responses…</p> : reportRows.length === 0 ? <p className="py-6 text-sm text-slate-500">No responses have been submitted for this survey yet.</p> : (
+            <div className="space-y-3">
+              {reportRows.map(row => (
+                <article key={row.response.id} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1"><h4 className="font-bold text-slate-900">{row.member_name}</h4><span className="text-xs text-slate-500">{new Date(row.response.submitted_at).toLocaleString()}</span></div>
+                  <div className="mt-3 space-y-3">
+                    {row.answers.map(answer => <div key={answer.question_id}><p className="text-xs font-bold text-slate-600">{answer.question_text}</p><p className="text-sm text-slate-800 mt-1 whitespace-pre-wrap">{Array.isArray(answer.answer_value) ? answer.answer_value.join(', ') : String(answer.answer_value)}</p></div>)}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </section>
   );
 }
