@@ -189,11 +189,15 @@ CREATE TABLE IF NOT EXISTS public.event_registrations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
   user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  member_id UUID REFERENCES public.members(id) ON DELETE SET NULL,
   member_name TEXT NOT NULL,
   email TEXT NOT NULL,
   phone TEXT DEFAULT '',
   registered_at TIMESTAMPTZ DEFAULT now(),
-  status TEXT CHECK (status IN ('confirmed', 'cancelled', 'attended')) DEFAULT 'confirmed'
+  checked_in_at TIMESTAMPTZ,
+  status TEXT CHECK (
+    status IN ('confirmed', 'cancelled', 'waitlist', 'checked_in', 'absent', 'attended')
+  ) DEFAULT 'confirmed'
 );
 
 -- 12. ROW LEVEL SECURITY (RLS) POLICIES
