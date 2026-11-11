@@ -635,7 +635,8 @@ export interface CustomRole {
 
 export interface MemberRoleAssignment {
   id: string;
-  profile_id: string;
+  profile_id?: string;
+  member_id?: string;
   member_name: string;
   role_id: string;
   role_name: string;
@@ -643,6 +644,17 @@ export interface MemberRoleAssignment {
   ministry_name?: string;
   assigned_at: string;
   assigned_by: string;
+}
+
+export interface MinistryMember {
+  id: string;
+  ministry_id: string;
+  member_id: string;
+  role_title: string;
+  duty: string;
+  status: 'active' | 'on_leave' | 'in_training' | 'inactive';
+  joined_at: string;
+  created_by?: string;
 }
 
 export interface ProformaLineItem {
