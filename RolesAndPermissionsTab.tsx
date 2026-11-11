@@ -242,16 +242,8 @@ export const RolesAndPermissionsTab: React.FC = () => {
     setAssignments(updated);
     saveRoleAssignments(updated);
 
-    // A ministry appointment is a membership record. Only linked login accounts
-    // receive the application-level leader role used by demo permission checks.
-    if (member.profile_id) {
-      const { error } = await supabase.from('profiles')
-        .update({ primary_role: 'leader' })
-        .eq('id', member.profile_id);
-      if (error) {
-        console.error('Unable to update linked account role:', error);
-      }
-    }
+    // Appointment permissions are evaluated from the linked custom-role assignment.
+    // Do not overwrite the member's primary account role when assigning a ministry title.
 
     setAssignmentSuccess(`🎉 ${memberName} appointed as "${roleObj.name}" in ${targetMinistry}!`);
     setShowAssignModal(false);
