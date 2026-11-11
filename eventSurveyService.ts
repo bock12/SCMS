@@ -38,6 +38,9 @@ export async function saveEventSurvey(
   questions: Array<Omit<EventSurveyQuestion, 'id' | 'survey_id' | 'created_at'>>
 ): Promise<EventSurveyWithQuestions> {
   const now = new Date().toISOString();
+
+  // Preserve question IDs and submitted answers after the first response.
+  const existingResponseCount = survey.id ? await getEventSurveyResponseCount(survey.id) : 0;
   const payload = { ...survey, updated_at: now };
   const surveyQuery = survey.id
     ? supabase.from('event_surveys').update(payload).eq('id', survey.id).select('*').single()
@@ -47,17 +50,28 @@ export async function saveEventSurvey(
   const normalizedSurvey = Array.isArray(savedSurvey) ? savedSurvey[0] : savedSurvey;
   if (!normalizedSurvey) throw new Error('The event survey could not be saved.');
 
-  const surveyId = (normalizedSurvey as EventSurvey).id;
-  const { error: clearError } = await supabase
-    .from('event_survey_questions')
-    .delete()
-    .eq('survey_id', surveyId);
-  if (clearError) throw clearError;
+  const saved = normalizedSurvey as EventSurvey;
+  if (existingResponseCount > 0) {
+    const { data, error: questionError } = await supabase
+      .from('event_survey_questions')
+      .select('*')
+      .eq('survey_id', saved.id)
+      .order('sort_order', { ascending: true });
+    if (questionError) throw questionError;
+    return { ...saved, questions: (data || []) as EventSurveyQuestion[] };
+  }
 
+  const { data: previousQuestions, error: previousError } = await supabase
+    .from('event_survey_questions')
+    .select('*')
+    .eq('survey_id', saved.id);
+  if (previousError) throw previousError;
+
+  let savedQuestions: EventSurveyQuestion[] = [];
   if (questions.length > 0) {
     const questionRows = questions.map((question, index) => ({
       ...question,
-      survey_id: surveyId,
+      survey_id: saved.id,
       sort_order: question.sort_order ?? index
     }));
     const { data, error: questionError } = await supabase
@@ -65,10 +79,20 @@ export async function saveEventSurvey(
       .insert(questionRows)
       .select('*');
     if (questionError) throw questionError;
-    return { ...(normalizedSurvey as EventSurvey), questions: (data || []) as EventSurveyQuestion[] };
+    savedQuestions = (data || []) as EventSurveyQuestion[];
   }
 
-  return { ...(savedSurvey as EventSurvey), questions: [] };
+  // Insert the replacement set first, then remove old rows to avoid losing
+  // the current question set if the replacement insert fails.
+  for (const oldQuestion of (previousQuestions || []) as EventSurveyQuestion[]) {
+    const { error: deleteError } = await supabase
+      .from('event_survey_questions')
+      .delete()
+      .eq('id', oldQuestion.id);
+    if (deleteError) throw deleteError;
+  }
+
+  return { ...saved, questions: savedQuestions };
 }
 
 export async function submitEventSurveyResponse(
@@ -93,7 +117,7 @@ export async function submitEventSurveyResponse(
     }));
     const { error: answerError } = await supabase.from('event_survey_answers').insert(answerRows);
     if (answerError) {
-      await supabase.from('event_survey_responses').delete().eq('id', (response as EventSurveyResponse).id);
+      await supabase.from('event_survey_responses').delete().eq('id', (normalizedResponse as EventSurveyResponse).id);
       throw answerError;
     }
   }
