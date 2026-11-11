@@ -65,7 +65,7 @@ export async function saveEventSurvey(
       .insert(questionRows)
       .select('*');
     if (questionError) throw questionError;
-    return { ...(savedSurvey as EventSurvey), questions: (data || []) as EventSurveyQuestion[] };
+    return { ...(normalizedSurvey as EventSurvey), questions: (data || []) as EventSurveyQuestion[] };
   }
 
   return { ...(savedSurvey as EventSurvey), questions: [] };
@@ -82,11 +82,12 @@ export async function submitEventSurveyResponse(
     .select('*')
     .single();
   if (error) throw error;
-  if (!response) throw new Error('The survey response could not be recorded.');
+  const normalizedResponse = Array.isArray(response) ? response[0] : response;
+  if (!normalizedResponse) throw new Error('The survey response could not be recorded.');
 
   if (answers.length > 0) {
     const answerRows = answers.map(answer => ({
-      response_id: (response as EventSurveyResponse).id,
+      response_id: (normalizedResponse as EventSurveyResponse).id,
       question_id: answer.question_id,
       answer_value: answer.answer_value
     }));
@@ -96,7 +97,7 @@ export async function submitEventSurveyResponse(
       throw answerError;
     }
   }
-  return response as EventSurveyResponse;
+  return normalizedResponse as EventSurveyResponse;
 }
 
 export async function getEventSurveyResponseCount(surveyId: string): Promise<number> {
