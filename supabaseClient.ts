@@ -576,6 +576,7 @@ function loadLocalDatabase() {
       if (!parsed.prayer_requests || parsed.prayer_requests.length === 0) parsed.prayer_requests = initialPrayers;
       if (!parsed.events || parsed.events.length === 0) parsed.events = initialEvents;
       if (!parsed.event_registrations || parsed.event_registrations.length === 0) parsed.event_registrations = initialEventRegistrations;
+      if (!Array.isArray(parsed.ministry_members)) parsed.ministry_members = [];
       return parsed;
     }
   } catch (e) {
@@ -591,6 +592,7 @@ function loadLocalDatabase() {
     streams: initialStreams,
     stream_chat_messages: initialMessages,
     ministries: initialMinistries,
+    ministry_members: [],
     financial_records: initialFinancials,
     prayer_requests: initialPrayers,
     events: initialEvents,
