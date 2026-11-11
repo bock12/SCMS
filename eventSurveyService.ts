@@ -44,9 +44,10 @@ export async function saveEventSurvey(
     : supabase.from('event_surveys').insert({ ...payload, created_at: now }).select('*').single();
   const { data: savedSurvey, error } = await surveyQuery;
   if (error) throw error;
-  if (!savedSurvey) throw new Error('The event survey could not be saved.');
+  const normalizedSurvey = Array.isArray(savedSurvey) ? savedSurvey[0] : savedSurvey;
+  if (!normalizedSurvey) throw new Error('The event survey could not be saved.');
 
-  const surveyId = (savedSurvey as EventSurvey).id;
+  const surveyId = (normalizedSurvey as EventSurvey).id;
   const { error: clearError } = await supabase
     .from('event_survey_questions')
     .delete()
