@@ -173,10 +173,9 @@ export function getUserPermissions(profile: Profile | null): PermissionKey[] {
   // Add permissions from custom role assignments in localStorage
   try {
     const assignments = getRoleAssignments();
-    const userAssignments = assignments.filter(a => 
-      a.profile_id === profile.id || 
-      (profile.email && a.member_name.toLowerCase().includes(profile.first_name.toLowerCase()))
-    );
+    // Only an explicit linked profile ID can grant application permissions.
+    // Name-based matching can accidentally grant permissions to the wrong account.
+    const userAssignments = assignments.filter(a => a.profile_id === profile.id);
 
     if (userAssignments.length > 0) {
       const customRoles = getCustomRoles();
