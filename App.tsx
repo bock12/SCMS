@@ -1171,6 +1171,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [formLastName, setFormLastName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
+  const [formGender, setFormGender] = useState<Member['gender']>('other');
   const [formRole, setFormRole] = useState('member');
   const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
   const [formStatus, setFormStatus] = useState('active');
@@ -1228,6 +1229,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormLastName('');
     setFormEmail('');
     setFormPhone('');
+    setFormGender('other');
     setFormRole('member');
     setFormAssignedDepartment('Media & IT Ministry');
     setFormStatus('active');
@@ -1249,6 +1251,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormLastName(person.last_name);
     setFormEmail(person.email || '');
     setFormPhone(person.phone || '');
+    setFormGender(person.gender || 'other');
     setFormRole(person.primary_role || 'member');
     setFormAssignedDepartment(person.assigned_department || person.department_name || 'Media & IT Ministry');
     setFormStatus(person.status || 'active');
@@ -1277,7 +1280,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       branch_id: branchId,
       first_name: formFirstName.trim(),
       last_name: formLastName.trim(),
-      gender: 'other',
+      gender: formGender,
       status: formStatus as Member['status'],
       membership_date: new Date().toISOString().slice(0, 10),
       email: formEmail.trim() || undefined,
@@ -1360,6 +1363,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     const updatedMember = {
       first_name: formFirstName.trim(),
       last_name: formLastName.trim(),
+      gender: formGender,
       email: formEmail.trim() || undefined,
       phone: formPhone.trim() || undefined,
       status: formStatus as Member['status'],
@@ -1731,6 +1735,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <div className="space-y-2 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-700">
+              <div className="flex justify-between"><span className="text-slate-400">Gender:</span> <span className="font-bold capitalize">{viewingPerson.gender || 'Not recorded'}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">Phone:</span> <span className="font-bold">{viewingPerson.phone || 'N/A'}</span></div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Date of Birth:</span> 
@@ -1873,6 +1878,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <label className="font-bold text-slate-600 uppercase block mb-1">Last Name</label>
                   <input type="text" required value={formLastName} onChange={e => setFormLastName(e.target.value)} placeholder="e.g. Adebayo" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-600 uppercase block mb-1">Gender</label>
+                <select value={formGender} onChange={e => setFormGender(e.target.value as Member['gender'])} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other / Not specified</option>
+                </select>
               </div>
 
               <div>
@@ -2083,6 +2097,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <label className="font-bold text-slate-600 uppercase block mb-1">Last Name</label>
                   <input type="text" required value={formLastName} onChange={e => setFormLastName(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-600 uppercase block mb-1">Gender</label>
+                <select value={formGender} onChange={e => setFormGender(e.target.value as Member['gender'])} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other / Not specified</option>
+                </select>
               </div>
 
               <div>
