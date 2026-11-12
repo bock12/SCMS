@@ -234,6 +234,12 @@ describe('Standalone church membership registration', () => {
       branch_id: 'branch-1',
       membership_date: 'not-a-date'
     })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
+    await expect(registerChurchMember({
+      first_name: 'Kadiatu',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: '2026-02-30'
+    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
   });
 
   test('links only an existing same-branch profile and prevents duplicate links', async () => {
