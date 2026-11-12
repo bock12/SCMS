@@ -123,6 +123,10 @@ describe('Resources and post-event surveys mock-database integration', () => {
     });
     expect(error).toBeNull();
 
+    const matchingRegistrations = await supabase.from('event_registrations').select('*')
+      .eq('member_id', 'mem-5').in('event_id', ['evt-2']);
+    expect(matchingRegistrations.data).toHaveLength(1);
+
     expect((await getMemberAvailableEventSurveys('usr-member-1')).some(row => row.id === survey.id)).toBe(true);
   });
 
