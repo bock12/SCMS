@@ -15,7 +15,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: memoryStorage
 });
 
-const { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails } = await import('./memberService');
+const { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateChurchMemberRecord, updateLinkedMemberDetails } = await import('./memberService');
 
 beforeEach(() => {
   memoryStorage.clear();
@@ -160,6 +160,73 @@ describe('Standalone church membership registration', () => {
     const { supabase } = await import('./supabaseClient');
     const { data: profiles } = await supabase.from('profiles').select('*').eq('email', 'kadiatu@example.org');
     expect(profiles).toHaveLength(0);
+  });
+
+  test('updates membership details and status without changing portal profile data', async () => {
+    const { supabase } = await import('./supabaseClient');
+    const profile = {
+      id: 'usr-independent-status',
+      branch_id: 'branch-1',
+      first_name: 'Aminata',
+      last_name: 'Bangura',
+      email: 'aminata@example.org',
+      phone: '',
+      primary_role: 'member' as const,
+      created_at: new Date().toISOString()
+    };
+    await supabase.from('profiles').insert(profile);
+    const member = await registerChurchMember({
+      first_name: 'Aminata',
+      last_name: 'Bangura',
+      branch_id: 'branch-1',
+      membership_date: '2025-03-01',
+      profile_id: profile.id
+    });
+
+    const updated = await updateChurchMemberRecord(member.id, {
+      first_name: 'Aminata',
+      last_name: 'Kamara',
+      email: 'aminata.kamara@example.org',
+      phone: '+23276000000',
+      gender: 'female',
+      membership_date: '2025-03-02',
+      status: 'inactive',
+      is_baptized: true,
+      baptism_date: '2024-08-10'
+    });
+
+    expect(updated.last_name).toBe('Kamara');
+    expect(updated.status).toBe('inactive');
+    expect(updated.is_baptized).toBe(true);
+    const storedMember = (await getMembers()).find(row => row.id === member.id);
+    expect(storedMember?.status).toBe('inactive');
+    const { data: storedProfile } = await supabase.from('profiles').select('*').eq('id', profile.id).single();
+    expect(storedProfile?.status ?? 'active').toBe('active');
+    expect(storedProfile?.last_name).toBe('Bangura');
+  });
+
+  test('rejects invalid membership updates before writing', async () => {
+    const member = await registerChurchMember({
+      first_name: 'Ibrahim',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12'
+    });
+    await expect(updateChurchMemberRecord(member.id, {
+      first_name: 'Ibrahim',
+      last_name: 'Sesay',
+      gender: 'male',
+      membership_date: 'invalid',
+      status: 'active'
+    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
+    await expect(updateChurchMemberRecord(member.id, {
+      first_name: ' ',
+      last_name: 'Sesay',
+      gender: 'male',
+      membership_date: '2026-11-12',
+      status: 'active'
+    })).rejects.toThrow('First name and last name are required.');
+    expect((await getMembers()).find(row => row.id === member.id)?.membership_date).toBe('2026-11-12');
   });
 
   test('requires names, branch and a valid membership date', async () => {
