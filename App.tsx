@@ -22,7 +22,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
-import { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails } from './memberService';
+import { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails, updateChurchMemberRecord } from './memberService';
 import { syncLinkedMemberProfile } from './memberProfileSyncService';
 import { 
   getMemberContributions, 
@@ -1190,6 +1190,18 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [membershipRecords, setMembershipRecords] = useState<Member[]>([]);
   const [membershipStatusFilter, setMembershipStatusFilter] = useState('all');
   const [portalAccessFilter, setPortalAccessFilter] = useState('all');
+  const [editingMembership, setEditingMembership] = useState<Member | null>(null);
+  const [membershipEditError, setMembershipEditError] = useState('');
+  const [membershipEditSaving, setMembershipEditSaving] = useState(false);
+  const [membershipEditFirstName, setMembershipEditFirstName] = useState('');
+  const [membershipEditLastName, setMembershipEditLastName] = useState('');
+  const [membershipEditEmail, setMembershipEditEmail] = useState('');
+  const [membershipEditPhone, setMembershipEditPhone] = useState('');
+  const [membershipEditGender, setMembershipEditGender] = useState<Member['gender']>('other');
+  const [membershipEditDate, setMembershipEditDate] = useState('');
+  const [membershipEditStatus, setMembershipEditStatus] = useState<Member['status']>('active');
+  const [membershipEditBaptized, setMembershipEditBaptized] = useState(false);
+  const [membershipEditBaptismDate, setMembershipEditBaptismDate] = useState('');
   const [standaloneModalOpen, setStandaloneModalOpen] = useState(false);
   const [standaloneFirstName, setStandaloneFirstName] = useState('');
   const [standaloneLastName, setStandaloneLastName] = useState('');
@@ -1249,6 +1261,46 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     if (data) setProfiles(data as Profile[]);
     setMembershipRecords(members);
     setLoading(false);
+  };
+
+  const openMembershipEditor = (member: Member) => {
+    setEditingMembership(member);
+    setMembershipEditFirstName(member.first_name);
+    setMembershipEditLastName(member.last_name);
+    setMembershipEditEmail(member.email || '');
+    setMembershipEditPhone(member.phone || '');
+    setMembershipEditGender(member.gender || 'other');
+    setMembershipEditDate(member.membership_date);
+    setMembershipEditStatus(member.status);
+    setMembershipEditBaptized(Boolean(member.is_baptized));
+    setMembershipEditBaptismDate(member.baptism_date || '');
+    setMembershipEditError('');
+  };
+
+  const handleMembershipUpdate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingMembership) return;
+    setMembershipEditSaving(true);
+    setMembershipEditError('');
+    try {
+      const updated = await updateChurchMemberRecord(editingMembership.id, {
+        first_name: membershipEditFirstName,
+        last_name: membershipEditLastName,
+        email: membershipEditEmail,
+        phone: membershipEditPhone,
+        gender: membershipEditGender,
+        membership_date: membershipEditDate,
+        status: membershipEditStatus,
+        is_baptized: membershipEditBaptized,
+        baptism_date: membershipEditBaptismDate
+      });
+      setMembershipRecords(previous => previous.map(member => member.id === updated.id ? updated : member));
+      setEditingMembership(null);
+    } catch (error) {
+      setMembershipEditError(error instanceof Error ? error.message : 'Unable to update membership record.');
+    } finally {
+      setMembershipEditSaving(false);
+    }
   };
 
   const openStandaloneRegistration = () => {
@@ -1639,6 +1691,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                           <p className="text-xs text-slate-500 mt-1">Joined {member.membership_date}</p>
                         </td>
                         <td className="px-5 py-3">
+                          <div className="flex flex-col items-start gap-2">
                           {linkedProfile ? (
                             <>
                               <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-indigo-50 text-indigo-700">Profile linked</span>
@@ -1647,6 +1700,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                           ) : (
                             <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-amber-50 text-amber-700">No portal account</span>
                           )}
+                          <button type="button" onClick={() => openMembershipEditor(member)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
+                            <Edit size={13} /> Edit membership
+                          </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2261,6 +2318,67 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setStandaloneModalOpen(false)} className="px-4 py-2 font-bold text-slate-500">Cancel</button>
                 <button type="submit" disabled={standaloneSaving} className="px-5 py-2.5 bg-emerald-600 disabled:opacity-50 text-white font-bold rounded-xl">{standaloneSaving ? 'Saving…' : 'Register Member'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- Church Membership Record Editor --- */}
+      {editingMembership && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[115] flex items-start justify-center p-3 sm:p-6 pt-16 overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900">Edit Church Membership</h3>
+                <p className="text-xs text-slate-500 mt-1">Membership status changes do not alter portal login access or roles.</p>
+              </div>
+              <button type="button" onClick={() => setEditingMembership(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleMembershipUpdate} className="space-y-3 pt-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="font-bold text-slate-600">First name
+                  <input required value={membershipEditFirstName} onChange={e => setMembershipEditFirstName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+                <label className="font-bold text-slate-600">Last name
+                  <input required value={membershipEditLastName} onChange={e => setMembershipEditLastName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="font-bold text-slate-600">Email
+                  <input type="email" value={membershipEditEmail} onChange={e => setMembershipEditEmail(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+                <label className="font-bold text-slate-600">Phone
+                  <input value={membershipEditPhone} onChange={e => setMembershipEditPhone(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="font-bold text-slate-600">Gender
+                  <select value={membershipEditGender} onChange={e => setMembershipEditGender(e.target.value as Member['gender'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
+                    <option value="other">Not specified</option><option value="female">Female</option><option value="male">Male</option>
+                  </select>
+                </label>
+                <label className="font-bold text-slate-600">Membership date
+                  <input required type="date" value={membershipEditDate} onChange={e => setMembershipEditDate(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl" />
+                </label>
+                <label className="font-bold text-slate-600">Membership status
+                  <select value={membershipEditStatus} onChange={e => setMembershipEditStatus(e.target.value as Member['status'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
+                    <option value="active">Active</option><option value="inactive">Inactive</option><option value="suspended">Suspended</option><option value="transferred">Transferred</option><option value="archived">Archived</option>
+                  </select>
+                </label>
+              </div>
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 space-y-2">
+                <label className="flex items-center gap-2 font-bold text-amber-900">
+                  <input type="checkbox" checked={membershipEditBaptized} onChange={e => setMembershipEditBaptized(e.target.checked)} /> Baptized
+                </label>
+                {membershipEditBaptized && <label className="block font-bold text-slate-600">Baptism date
+                  <input type="date" value={membershipEditBaptismDate} onChange={e => setMembershipEditBaptismDate(e.target.value)} className="mt-1 w-full p-2.5 bg-white border rounded-xl" />
+                </label>}
+              </div>
+              {membershipEditError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{membershipEditError}</p>}
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setEditingMembership(null)} className="px-4 py-2 font-bold text-slate-500">Cancel</button>
+                <button type="submit" disabled={membershipEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl">{membershipEditSaving ? 'Saving…' : 'Save membership'}</button>
               </div>
             </form>
           </div>
