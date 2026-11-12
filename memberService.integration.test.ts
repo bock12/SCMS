@@ -64,6 +64,25 @@ describe('Membership record integration', () => {
     expect((await getMembers()).filter(row => row.profile_id === profile.id)).toHaveLength(1);
   });
 
+  test('concurrent profile linking still creates exactly one membership record', async () => {
+    const profile = {
+      id: 'usr-concurrent-link',
+      branch_id: 'branch-1',
+      first_name: 'Fatmata',
+      last_name: 'Jalloh',
+      email: 'fatmata@example.org',
+      phone: '',
+      primary_role: 'member' as const,
+      created_at: new Date().toISOString()
+    };
+    const [first, second] = await Promise.all([
+      ensureLinkedMemberRecord(profile),
+      ensureLinkedMemberRecord(profile)
+    ]);
+    expect(first.id).toBe(second.id);
+    expect((await getMembers()).filter(row => row.profile_id === profile.id)).toHaveLength(1);
+  });
+
   test('updates shared profile details without changing membership status', async () => {
     await ensureLinkedMemberRecord({
       id: 'usr-update',
