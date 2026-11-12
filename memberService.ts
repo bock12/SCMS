@@ -137,3 +137,97 @@ export async function syncLinkedMemberStatus(
 
   if (error) throw error;
 }
+
+
+export interface StandaloneMemberRegistrationInput {
+  first_name: string;
+  last_name: string;
+  branch_id: string;
+  membership_date: string;
+  gender?: Member['gender'];
+  email?: string;
+  phone?: string;
+  profile_id?: string | null;
+  is_baptized?: boolean;
+  baptism_date?: string;
+  baptized_by?: string;
+  date_of_birth?: string;
+  marital_status?: Member['marital_status'];
+  marriage_date?: string;
+}
+
+/**
+ * Registers a church membership independently of portal access.
+ * A profile is linked only when an existing profile_id is explicitly supplied;
+ * this function never creates profiles, auth users, passwords or sessions.
+ */
+export async function registerChurchMember(
+  input: StandaloneMemberRegistrationInput
+): Promise<Member> {
+  const firstName = input.first_name?.trim() || '';
+  const lastName = input.last_name?.trim() || '';
+  const branchId = input.branch_id?.trim() || '';
+  const membershipDate = input.membership_date?.trim() || '';
+
+  if (!firstName || !lastName) throw new Error('First name and last name are required.');
+  if (!branchId) throw new Error('A branch is required.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(membershipDate) || Number.isNaN(Date.parse(membershipDate))) {
+    throw new Error('A valid membership date is required (YYYY-MM-DD).');
+  }
+
+  const { data: branch, error: branchError } = await supabase
+    .from('church_branches')
+    .select('id')
+    .eq('id', branchId)
+    .maybeSingle();
+  if (branchError) throw branchError;
+  if (!branch) throw new Error('The selected branch does not exist.');
+
+  const profileId = input.profile_id?.trim() || null;
+  if (profileId) {
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, branch_id')
+      .eq('id', profileId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile) throw new Error('The selected portal profile does not exist.');
+    if (profile.branch_id !== branchId) {
+      throw new Error('The member and linked portal profile must belong to the same branch.');
+    }
+
+    const { data: linkedRows, error: linkedError } = await supabase
+      .from('members')
+      .select('id')
+      .eq('profile_id', profileId);
+    if (linkedError) throw linkedError;
+    if (linkedRows?.length) throw new Error('This portal profile is already linked to a membership record.');
+  }
+
+  const { data, error } = await supabase
+    .from('members')
+    .insert({
+      profile_id: profileId,
+      branch_id: branchId,
+      first_name: firstName,
+      last_name: lastName,
+      gender: input.gender || 'other',
+      status: 'active',
+      membership_date: membershipDate,
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+      is_baptized: Boolean(input.is_baptized),
+      baptism_date: input.baptism_date || null,
+      baptized_by: input.baptized_by?.trim() || null,
+      date_of_birth: input.date_of_birth || null,
+      marital_status: input.marital_status || null,
+      marriage_date: input.marriage_date || null
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  const saved = Array.isArray(data) ? data[0] : data;
+  if (!saved) throw new Error('The membership record was not created.');
+  return saved as Member;
+}
