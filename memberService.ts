@@ -8,6 +8,45 @@ function isValidIsoDate(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function validateOptionalDate(value: string | undefined, fieldLabel: string): void {
+  if (value && !isValidIsoDate(value)) {
+    throw new Error(fieldLabel + ' must be a valid date in YYYY-MM-DD format.');
+  }
+}
+
+function normalizeEmail(value: string | undefined): string | null {
+  const normalized = value?.trim().toLowerCase() || '';
+  if (normalized && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new Error('Enter a valid email address.');
+  }
+  return normalized || null;
+}
+
+function validateMemberAttributes(input: {
+  gender?: Member['gender'];
+  is_baptized?: boolean;
+  baptism_date?: string;
+  date_of_birth?: string;
+  marital_status?: Member['marital_status'];
+  marriage_date?: string;
+}): void {
+  if (input.gender && !['male', 'female', 'other'].includes(input.gender)) {
+    throw new Error('Invalid gender value.');
+  }
+  if (input.marital_status && !['Single', 'Married', 'Widowed', 'Divorced'].includes(input.marital_status)) {
+    throw new Error('Invalid marital status.');
+  }
+  validateOptionalDate(input.baptism_date, 'Baptism date');
+  validateOptionalDate(input.date_of_birth, 'Date of birth');
+  validateOptionalDate(input.marriage_date, 'Marriage date');
+  if (input.date_of_birth && input.date_of_birth > new Date().toISOString().slice(0, 10)) {
+    throw new Error('Date of birth cannot be in the future.');
+  }
+  if (input.is_baptized === false && input.baptism_date) {
+    throw new Error('A baptism date cannot be set when the member is not baptized.');
+  }
+}
+
 export type LinkedMemberDetails = Pick<Profile, 'first_name' | 'last_name'> & Partial<Pick<
   Profile,
   'email' | 'phone' | 'avatar_url' | 'is_baptized' | 'baptism_date' | 'baptized_by' | 'date_of_birth' | 'marital_status' | 'marriage_date'
@@ -48,12 +87,15 @@ export async function ensureLinkedMemberRecord(
     .eq('profile_id', profile.id);
 
   if (lookupError) throw lookupError;
+  if ((existingRows || []).length > 1) {
+    throw new Error('Data integrity error: this portal profile is linked to multiple membership records.');
+  }
   const existing = (existingRows || [])[0] as Member | undefined;
 
   const details = {
     first_name: profile.first_name.trim(),
     last_name: profile.last_name.trim(),
-    email: profile.email.trim(),
+    email: normalizeEmail(profile.email) || '',
     phone: profile.phone?.trim() || '',
     avatar_url: profile.avatar_url || '',
     is_baptized: Boolean(profile.is_baptized),
@@ -63,6 +105,14 @@ export async function ensureLinkedMemberRecord(
     marital_status: profile.marital_status || null,
     marriage_date: profile.marriage_date || null
   };
+
+  validateMemberAttributes({
+    is_baptized: details.is_baptized,
+    baptism_date: details.baptism_date || undefined,
+    date_of_birth: details.date_of_birth || undefined,
+    marital_status: details.marital_status || undefined,
+    marriage_date: details.marriage_date || undefined
+  });
 
   if (existing) {
     const { error } = await supabase
@@ -154,6 +204,8 @@ export async function registerChurchMember(
   if (!isValidIsoDate(membershipDate)) {
     throw new Error('A valid membership date is required (YYYY-MM-DD).');
   }
+  validateMemberAttributes(input);
+  const email = normalizeEmail(input.email);
 
   const { data: branch, error: branchError } = await supabase
     .from('church_branches')
@@ -194,7 +246,7 @@ export async function registerChurchMember(
       gender: input.gender || 'other',
       status: 'active',
       membership_date: membershipDate,
-      email: input.email?.trim() || null,
+      email,
       phone: input.phone?.trim() || null,
       is_baptized: Boolean(input.is_baptized),
       baptism_date: input.baptism_date || null,
@@ -237,6 +289,8 @@ export async function updateChurchMemberRecord(
   if (!isValidIsoDate(input.membership_date)) {
     throw new Error('A valid membership date is required (YYYY-MM-DD).');
   }
+  validateMemberAttributes(input);
+  const email = normalizeEmail(input.email);
   const allowedStatuses: Member['status'][] = ['active', 'inactive', 'suspended', 'transferred', 'archived'];
   if (!allowedStatuses.includes(input.status)) throw new Error('Invalid membership status.');
 
@@ -248,7 +302,7 @@ export async function updateChurchMemberRecord(
   const updates = {
     first_name: firstName,
     last_name: lastName,
-    email: input.email?.trim() || null,
+    email,
     phone: input.phone?.trim() || null,
     gender: input.gender,
     membership_date: input.membership_date,
