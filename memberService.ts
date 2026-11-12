@@ -58,14 +58,12 @@ export async function ensureLinkedMemberRecord(
   };
 
   if (existing) {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('members')
       .update(details)
-      .eq('id', existing.id)
-      .select('*')
-      .single();
+      .eq('id', existing.id);
     if (error) throw error;
-    return (Array.isArray(data) ? data[0] : data) as Member;
+    return { ...existing, ...details } as Member;
   }
 
   const { data, error } = await supabase
