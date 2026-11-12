@@ -231,3 +231,52 @@ export async function registerChurchMember(
   if (!saved) throw new Error('The membership record was not created.');
   return saved as Member;
 }
+
+
+export interface UpdateChurchMemberInput {
+  first_name: string;
+  last_name: string;
+  email?: string;
+  phone?: string;
+  gender: Member['gender'];
+  membership_date: string;
+  status: Member['status'];
+  is_baptized?: boolean;
+  baptism_date?: string;
+}
+
+/** Updates a church membership record without changing its linked portal profile or credentials. */
+export async function updateChurchMemberRecord(
+  memberId: string,
+  input: UpdateChurchMemberInput
+): Promise<Member> {
+  if (!memberId.trim()) throw new Error('A membership record ID is required.');
+  const firstName = input.first_name?.trim() || '';
+  const lastName = input.last_name?.trim() || '';
+  if (!firstName || !lastName) throw new Error('First name and last name are required.');
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(input.membership_date) || Number.isNaN(Date.parse(input.membership_date))) {
+    throw new Error('A valid membership date is required (YYYY-MM-DD).');
+  }
+  const allowedStatuses: Member['status'][] = ['active', 'inactive', 'suspended', 'transferred', 'archived'];
+  if (!allowedStatuses.includes(input.status)) throw new Error('Invalid membership status.');
+
+  const { data: existing, error: lookupError } = await supabase
+    .from('members').select('*').eq('id', memberId).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (!existing) throw new Error('Membership record not found.');
+
+  const updates = {
+    first_name: firstName,
+    last_name: lastName,
+    email: input.email?.trim() || null,
+    phone: input.phone?.trim() || null,
+    gender: input.gender,
+    membership_date: input.membership_date,
+    status: input.status,
+    is_baptized: Boolean(input.is_baptized),
+    baptism_date: input.is_baptized ? (input.baptism_date || null) : null
+  };
+  const { error } = await supabase.from('members').update(updates).eq('id', memberId);
+  if (error) throw error;
+  return { ...(existing as Member), ...updates } as Member;
+}
