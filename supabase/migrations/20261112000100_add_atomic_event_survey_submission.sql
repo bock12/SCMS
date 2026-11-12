@@ -77,9 +77,11 @@ BEGIN
           WHERE submitted.answer->>'question_id' = q.id::text
             AND submitted.answer->'answer_value' IS NOT NULL
             AND submitted.answer->'answer_value' <> 'null'::jsonb
-            AND (
-              jsonb_typeof(submitted.answer->'answer_value') <> 'string'
-              OR btrim(submitted.answer->>'answer_value') <> ''
+            AND NOT (
+              (jsonb_typeof(submitted.answer->'answer_value') = 'string'
+                AND btrim(submitted.answer->>'answer_value') = '')
+              OR (jsonb_typeof(submitted.answer->'answer_value') = 'array'
+                AND jsonb_array_length(submitted.answer->'answer_value') = 0)
             )
        )
   ) THEN
