@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
-import { CustomRole, MemberRoleAssignment, PermissionKey, Member, Ministry } from './types';
+import { CustomRole, MemberRoleAssignment, PermissionKey, Profile, Ministry } from './types';
 import { getMembers } from './memberService';
 import { 
   getCustomRoles, saveCustomRoles, getRoleAssignments, saveRoleAssignments, ALL_PERMISSIONS 
@@ -10,7 +10,7 @@ import {
   Users, Layers, Award, Sparkles, CheckCircle2, FileText, Calendar, Building2, Filter
 } from 'lucide-react';
 
-export const DEMOGRAPHIC_FELLOWSHIPS = [
+const DEMOGRAPHIC_FELLOWSHIPS = [
   "Women's Fellowship & Caring Hands",
   "Men's Fellowship & Brotherhood",
   "Kingdom Youth & Young Adult Fellowship",
@@ -18,7 +18,7 @@ export const DEMOGRAPHIC_FELLOWSHIPS = [
   "Senior Citizens & Elders Circle"
 ];
 
-export const SERVICE_DEPARTMENTS = [
+const SERVICE_DEPARTMENTS = [
   "Voices of Grace Choir & Music Ministry",
   "Media & Digital Production Team",
   "Ushering & Sanctuary Protocol",
@@ -27,7 +27,7 @@ export const SERVICE_DEPARTMENTS = [
   "Finance & Treasury Department"
 ];
 
-export const DEFAULT_MINISTRY_SCOPES = [
+const DEFAULT_MINISTRY_SCOPES = [
   'All Ministries / Global Scope',
   ...DEMOGRAPHIC_FELLOWSHIPS,
   ...SERVICE_DEPARTMENTS
@@ -36,7 +36,7 @@ export const DEFAULT_MINISTRY_SCOPES = [
 export const RolesAndPermissionsTab: React.FC = () => {
   const [roles, setRoles] = useState<CustomRole[]>(getCustomRoles());
   const [assignments, setAssignments] = useState<MemberRoleAssignment[]>(getRoleAssignments());
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<Profile[]>([]);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'roles' | 'assignments'>('roles');
@@ -103,7 +103,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
     setLoading(true);
     try {
       const membershipRecords = await getMembers();
-      setMembers(membershipRecords.filter(member => member.status === 'active'));
+      setMembers(membershipRecords.filter(member => (member.membership_status || 'active') === 'active'));
     } catch (error) {
       console.error('Unable to load ministry role appointment members:', error);
       setMembers([]);
@@ -228,7 +228,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
     const newAssignment: MemberRoleAssignment = {
       id: `asgn-${Date.now()}`,
       member_id: member.id,
-      profile_id: member.profile_id,
+      profile_id: member.id,
       member_name: memberName,
       role_id: roleObj.id,
       role_name: roleObj.name,
@@ -239,7 +239,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
     };
 
     const existingFiltered = assignments.filter(a =>
-      !((a.member_id === member.id || (!a.member_id && a.profile_id === member.profile_id)) && a.role_id === selectedRoleId)
+      !((a.member_id === member.id || a.profile_id === member.id) && a.role_id === selectedRoleId)
     );
     const updated = [newAssignment, ...existingFiltered];
 
@@ -812,7 +812,7 @@ export const RolesAndPermissionsTab: React.FC = () => {
                   <option value="">-- Choose Member from Roster --</option>
                   {members.map(m => (
                     <option key={m.id} value={m.id}>
-                      {m.first_name} {m.last_name} ({m.email || 'No login account'})
+                      {m.first_name} {m.last_name} ({m.auth_user_id ? (m.email || 'Portal Active') : 'No login account'})
                     </option>
                   ))}
                 </select>

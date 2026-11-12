@@ -1,4 +1,4 @@
-import type { EventSurvey, EventSurveyQuestion, EventSurveyResponse, Member, EventRegistration, ChurchEvent } from './types';
+import type { EventSurvey, EventSurveyQuestion, EventSurveyResponse, EventRegistration, ChurchEvent, Profile } from './types';
 import { supabase } from './supabaseClient';
 import type { EventSurveyWithQuestions } from './eventSurveyService';
 import { submitEventSurveyResponse } from './eventSurveyService';
@@ -10,15 +10,28 @@ export interface MemberEventSurvey extends EventSurveyWithQuestions {
   already_submitted: boolean;
 }
 
+async function resolveActiveMemberProfile(profileOrAuthId: string): Promise<Profile | null> {
+  if (!profileOrAuthId.trim()) return null;
+
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select('*');
+  if (error) throw error;
+
+  const matched = ((profiles || []) as Profile[]).find(
+    person =>
+      (person.id === profileOrAuthId || person.auth_user_id === profileOrAuthId) &&
+      (person.membership_status || 'active') === 'active'
+  );
+  return matched || null;
+}
+
 /**
- * Return only surveys for which the linked active member is eligible.
+ * Return only surveys for which the active member profile is eligible.
  * Eligibility is checked here for a useful UI and again by RLS on submission.
  */
 export async function getMemberAvailableEventSurveys(profileId: string): Promise<MemberEventSurvey[]> {
-  const { data: members, error: memberError } = await supabase
-    .from('members').select('*').eq('profile_id', profileId).eq('status', 'active');
-  if (memberError) throw memberError;
-  const member = ((members || []) as Member[])[0];
+  const member = await resolveActiveMemberProfile(profileId);
   if (!member) return [];
 
   const { data: surveys, error: surveyError } = await supabase
@@ -67,10 +80,7 @@ export async function submitMemberEventSurvey(
   surveyId: string,
   answers: Array<{ question_id: string; answer_value: string | number | boolean | string[] }>
 ): Promise<EventSurveyResponse> {
-  const { data, error } = await supabase
-    .from('members').select('*').eq('profile_id', profileId).eq('status', 'active');
-  if (error) throw error;
-  const member = ((data || []) as Member[])[0];
+  const member = await resolveActiveMemberProfile(profileId);
   if (!member) throw new Error('Your account is not linked to an active member record.');
   return submitEventSurveyResponse(surveyId, member.id, answers);
 }

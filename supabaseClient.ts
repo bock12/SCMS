@@ -1,4 +1,4 @@
-import type { Profile, District, ChurchBranch, Member, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
+import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
 
 // Storage keys
 const DB_STORAGE_KEY = 'faithconnect_db_v2';
@@ -22,13 +22,18 @@ const initialBranches: ChurchBranch[] = [
 const initialProfiles: Profile[] = [
   {
     id: 'usr-admin-1',
+    auth_user_id: 'usr-admin-1',
     branch_id: 'branch-1',
     first_name: 'David',
     last_name: 'Miller',
     email: 'admin@faithconnect.church',
     phone: '+1 (555) 234-5678',
+    gender: 'male',
     avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
     primary_role: 'super_admin',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-01-15',
     created_at: new Date(Date.now() - 365 * 86400000).toISOString(),
     is_baptized: true,
     baptism_date: '2018-10-05',
@@ -36,13 +41,18 @@ const initialProfiles: Profile[] = [
   },
   {
     id: 'usr-pastor-1',
+    auth_user_id: 'usr-pastor-1',
     branch_id: 'branch-1',
     first_name: 'Sarah',
     last_name: 'Johnson',
     email: 'pastor@faithconnect.church',
     phone: '+1 (555) 345-6789',
+    gender: 'female',
     avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=200&q=80',
     primary_role: 'pastor',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-03-20',
     created_at: new Date(Date.now() - 200 * 86400000).toISOString(),
     is_baptized: true,
     baptism_date: '2019-04-20',
@@ -50,13 +60,18 @@ const initialProfiles: Profile[] = [
   },
   {
     id: 'usr-bishop-1',
+    auth_user_id: 'usr-bishop-1',
     branch_id: 'branch-1',
     first_name: 'Michael',
     last_name: 'Thomas',
     email: 'bishop@faithconnect.church',
     phone: '+1 (555) 456-7890',
+    gender: 'male',
     avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
     primary_role: 'district_admin',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-05-10',
     created_at: new Date(Date.now() - 150 * 86400000).toISOString(),
     is_baptized: true,
     baptism_date: '2015-10-12',
@@ -64,13 +79,18 @@ const initialProfiles: Profile[] = [
   },
   {
     id: 'usr-leader-1',
+    auth_user_id: 'usr-leader-1',
     branch_id: 'branch-2',
     first_name: 'Hannah',
     last_name: 'Adams',
     email: 'worship@faithconnect.church',
     phone: '+1 (555) 567-8901',
+    gender: 'female',
     avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=200&q=80',
     primary_role: 'leader',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-06-01',
     created_at: new Date(Date.now() - 90 * 86400000).toISOString(),
     is_baptized: true,
     baptism_date: '2021-06-14',
@@ -78,30 +98,97 @@ const initialProfiles: Profile[] = [
   },
   {
     id: 'usr-member-1',
+    auth_user_id: 'usr-member-1',
     branch_id: 'branch-1',
     first_name: 'Grace',
     last_name: 'Campbell',
     email: 'member@faithconnect.church',
     phone: '+1 (555) 678-9012',
+    gender: 'female',
     avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80',
     primary_role: 'member',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-08-12',
     created_at: new Date(Date.now() - 45 * 86400000).toISOString(),
     is_baptized: true,
     baptism_date: '2022-10-17',
     baptized_by: 'Rev. Sarah Johnson'
+  },
+  {
+    id: 'mem-6',
+    auth_user_id: null,
+    branch_id: 'branch-2',
+    first_name: 'Elijah',
+    last_name: 'Wright',
+    email: 'ewright@gmail.com',
+    phone: '+1 (555) 789-0123',
+    gender: 'male',
+    avatar_url: 'https://picsum.photos/seed/elijah/200/200',
+    primary_role: 'member',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-09-05',
+    created_at: '2023-09-05T00:00:00.000Z',
+    is_baptized: true,
+    baptism_date: '2020-10-10',
+    baptized_by: 'Rev. Sarah Johnson'
+  },
+  {
+    id: 'mem-7',
+    auth_user_id: null,
+    branch_id: 'branch-3',
+    first_name: 'Rebecca',
+    last_name: 'Foster',
+    email: 'rfoster@gmail.com',
+    phone: '+1 (555) 890-1234',
+    gender: 'female',
+    avatar_url: 'https://picsum.photos/seed/rebecca/200/200',
+    primary_role: 'member',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2023-10-18',
+    created_at: '2023-10-18T00:00:00.000Z',
+    is_baptized: true,
+    baptism_date: '2023-10-22',
+    baptized_by: 'Pastor David Miller'
+  },
+  {
+    id: 'mem-8',
+    auth_user_id: null,
+    branch_id: 'branch-1',
+    first_name: 'Samuel',
+    last_name: 'Okonkwo',
+    email: 'sokonkwo@gmail.com',
+    phone: '+1 (555) 901-2345',
+    gender: 'male',
+    avatar_url: 'https://picsum.photos/seed/samuel/200/200',
+    primary_role: 'member',
+    status: 'active',
+    membership_status: 'transferred',
+    membership_date: '2023-11-01',
+    created_at: '2023-11-01T00:00:00.000Z',
+    is_baptized: true,
+    baptism_date: '2021-10-28',
+    baptized_by: 'Bishop Marcus Vance'
+  },
+  {
+    id: 'mem-9',
+    auth_user_id: null,
+    branch_id: 'branch-4',
+    first_name: 'Ruth',
+    last_name: 'Martinez',
+    email: 'rmartinez@gmail.com',
+    phone: '+1 (555) 012-3456',
+    gender: 'female',
+    avatar_url: 'https://picsum.photos/seed/ruth/200/200',
+    primary_role: 'member',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2024-01-08',
+    created_at: '2024-01-08T00:00:00.000Z',
+    is_baptized: false
   }
-];
-
-const initialMembers: Member[] = [
-  { id: 'mem-1', profile_id: 'usr-admin-1', branch_id: 'branch-1', first_name: 'David', last_name: 'Miller', email: 'admin@faithconnect.church', phone: '+1 (555) 234-5678', avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80', gender: 'male', status: 'active', membership_date: '2023-01-15', is_baptized: true, baptism_date: '2018-10-05', baptized_by: 'Bishop Marcus Vance' },
-  { id: 'mem-2', profile_id: 'usr-pastor-1', branch_id: 'branch-1', first_name: 'Sarah', last_name: 'Johnson', email: 'pastor@faithconnect.church', phone: '+1 (555) 345-6789', avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=200&q=80', gender: 'female', status: 'active', membership_date: '2023-03-20', is_baptized: true, baptism_date: '2019-04-20', baptized_by: 'Bishop Marcus Vance' },
-  { id: 'mem-3', profile_id: 'usr-bishop-1', branch_id: 'branch-1', first_name: 'Michael', last_name: 'Thomas', email: 'bishop@faithconnect.church', phone: '+1 (555) 456-7890', avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80', gender: 'male', status: 'active', membership_date: '2023-05-10', is_baptized: true, baptism_date: '2015-10-12', baptized_by: 'Apostle John Miller' },
-  { id: 'mem-4', profile_id: 'usr-leader-1', branch_id: 'branch-2', first_name: 'Hannah', last_name: 'Adams', email: 'worship@faithconnect.church', phone: '+1 (555) 567-8901', avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=200&q=80', gender: 'female', status: 'active', membership_date: '2023-06-01', is_baptized: true, baptism_date: '2021-06-14', baptized_by: 'Rev. Sarah Johnson' },
-  { id: 'mem-5', profile_id: 'usr-member-1', branch_id: 'branch-1', first_name: 'Grace', last_name: 'Campbell', email: 'member@faithconnect.church', phone: '+1 (555) 678-9012', avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80', gender: 'female', status: 'active', membership_date: '2023-08-12', is_baptized: true, baptism_date: '2022-10-17', baptized_by: 'Rev. Sarah Johnson' },
-  { id: 'mem-6', branch_id: 'branch-2', first_name: 'Elijah', last_name: 'Wright', email: 'ewright@gmail.com', phone: '+1 (555) 789-0123', avatar_url: 'https://picsum.photos/seed/elijah/200/200', gender: 'male', status: 'active', membership_date: '2023-09-05', is_baptized: true, baptism_date: '2020-10-10', baptized_by: 'Rev. Sarah Johnson' },
-  { id: 'mem-7', branch_id: 'branch-3', first_name: 'Rebecca', last_name: 'Foster', email: 'rfoster@gmail.com', phone: '+1 (555) 890-1234', avatar_url: 'https://picsum.photos/seed/rebecca/200/200', gender: 'female', status: 'active', membership_date: '2023-10-18', is_baptized: true, baptism_date: '2023-10-22', baptized_by: 'Pastor David Miller' },
-  { id: 'mem-8', branch_id: 'branch-1', first_name: 'Samuel', last_name: 'Okonkwo', email: 'sokonkwo@gmail.com', phone: '+1 (555) 901-2345', avatar_url: 'https://picsum.photos/seed/samuel/200/200', gender: 'male', status: 'transferred', membership_date: '2023-11-01', is_baptized: true, baptism_date: '2021-10-28', baptized_by: 'Bishop Marcus Vance' },
-  { id: 'mem-9', branch_id: 'branch-4', first_name: 'Ruth', last_name: 'Martinez', email: 'rmartinez@gmail.com', phone: '+1 (555) 012-3456', avatar_url: 'https://picsum.photos/seed/ruth/200/200', gender: 'female', status: 'active', membership_date: '2024-01-08', is_baptized: false }
 ];
 
 const initialTransfers: MemberTransfer[] = [
@@ -116,7 +203,7 @@ const initialTransfers: MemberTransfer[] = [
   },
   {
     id: 'tr-2',
-    member_id: 'mem-4',
+    member_id: 'usr-leader-1',
     from_branch_id: 'branch-1',
     to_branch_id: 'branch-2',
     status: 'approved',
@@ -493,7 +580,7 @@ const initialEventRegistrations: EventRegistration[] = [
     id: 'reg-1',
     event_id: 'evt-2',
     user_id: 'usr-member-1',
-    member_id: 'mem-5',
+    member_id: 'usr-member-1',
     member_name: 'Grace Campbell',
     email: 'member@faithconnect.church',
     phone: '+1 (555) 678-9012',
@@ -504,7 +591,7 @@ const initialEventRegistrations: EventRegistration[] = [
     id: 'reg-2',
     event_id: 'evt-2',
     user_id: 'usr-leader-1',
-    member_id: 'mem-4',
+    member_id: 'usr-leader-1',
     member_name: 'Hannah Adams',
     email: 'worship@faithconnect.church',
     phone: '+1 (555) 567-8901',
@@ -515,7 +602,7 @@ const initialEventRegistrations: EventRegistration[] = [
     id: 'reg-3',
     event_id: 'evt-3',
     user_id: 'usr-admin-1',
-    member_id: 'mem-1',
+    member_id: 'usr-admin-1',
     member_name: 'David Miller',
     email: 'admin@faithconnect.church',
     phone: '+1 (555) 234-5678',
@@ -523,6 +610,181 @@ const initialEventRegistrations: EventRegistration[] = [
     status: 'confirmed'
   }
 ];
+
+function sanitizeProfileRecord(rawProfile: any): Profile {
+  const {
+    temporary_password: _tp,
+    login_email: _le,
+    has_login_credentials: _hlc,
+    ...rest
+  } = rawProfile || {};
+
+  return {
+    ...rest,
+    email: (rest.email || '').trim().toLowerCase(),
+    phone: rest.phone || '',
+    auth_user_id: rest.auth_user_id !== undefined ? (rest.auth_user_id || null) : null,
+    status: rest.status || 'active',
+    membership_status: rest.membership_status || 'active',
+    membership_date: rest.membership_date || (rest.created_at ? String(rest.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10))
+  } as Profile;
+}
+
+function getStoredUsersRaw(): Record<string, { id: string; email: string; password?: string; setup_token?: string; user_metadata?: any }> {
+  try {
+    const raw = localStorage.getItem(USERS_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+
+  const defaultUsers: Record<string, any> = {
+    'admin@faithconnect.church': {
+      id: 'usr-admin-1',
+      email: 'admin@faithconnect.church',
+      password: 'password123',
+      user_metadata: { first_name: 'David', last_name: 'Miller' }
+    },
+    'pastor@faithconnect.church': {
+      id: 'usr-pastor-1',
+      email: 'pastor@faithconnect.church',
+      password: 'password123',
+      user_metadata: { first_name: 'Sarah', last_name: 'Johnson' }
+    },
+    'bishop@faithconnect.church': {
+      id: 'usr-bishop-1',
+      email: 'bishop@faithconnect.church',
+      password: 'password123',
+      user_metadata: { first_name: 'Michael', last_name: 'Thomas' }
+    },
+    'worship@faithconnect.church': {
+      id: 'usr-leader-1',
+      email: 'worship@faithconnect.church',
+      password: 'password123',
+      user_metadata: { first_name: 'Hannah', last_name: 'Adams' }
+    },
+    'member@faithconnect.church': {
+      id: 'usr-member-1',
+      email: 'member@faithconnect.church',
+      password: 'password123',
+      user_metadata: { first_name: 'Grace', last_name: 'Campbell' }
+    }
+  };
+  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(defaultUsers));
+  return defaultUsers;
+}
+
+function migrateUnifiedDirectoryData(parsed: any): { db: any; changed: boolean } {
+  let changed = false;
+  const profilesList: any[] = Array.isArray(parsed.profiles) ? [...parsed.profiles] : [];
+  const legacyMembers: any[] = Array.isArray(parsed.members) ? parsed.members : [];
+  const legacyMemberIdToProfileId = new Map<string, string>([
+    ['mem-1', 'usr-admin-1'],
+    ['mem-2', 'usr-pastor-1'],
+    ['mem-3', 'usr-bishop-1'],
+    ['mem-4', 'usr-leader-1'],
+    ['mem-5', 'usr-member-1']
+  ]);
+
+  const storedUsers = getStoredUsersRaw();
+  const authUsersById = new Map<string, any>(Object.values(storedUsers).map((u: any) => [u.id, u]));
+
+  if (legacyMembers.length > 0) {
+    changed = true;
+    for (const member of legacyMembers) {
+      if (member.profile_id) {
+        legacyMemberIdToProfileId.set(member.id, member.profile_id);
+        const idx = profilesList.findIndex(p => p.id === member.profile_id);
+        if (idx >= 0) {
+          const existing = profilesList[idx];
+          profilesList[idx] = {
+            ...existing,
+            gender: existing.gender || member.gender || 'other',
+            membership_status: existing.membership_status || member.status || 'active',
+            membership_date: existing.membership_date || member.membership_date,
+            phone: existing.phone || member.phone || '',
+            avatar_url: existing.avatar_url || member.avatar_url,
+            is_baptized: existing.is_baptized ?? member.is_baptized,
+            baptism_date: existing.baptism_date || member.baptism_date,
+            baptized_by: existing.baptized_by || member.baptized_by,
+            date_of_birth: existing.date_of_birth || member.date_of_birth,
+            marital_status: existing.marital_status || member.marital_status,
+            marriage_date: existing.marriage_date || member.marriage_date
+          };
+        }
+      } else {
+        legacyMemberIdToProfileId.set(member.id, member.id);
+        if (!profilesList.some(p => p.id === member.id)) {
+          profilesList.push({
+            id: member.id,
+            auth_user_id: null,
+            branch_id: member.branch_id || 'branch-1',
+            first_name: member.first_name,
+            last_name: member.last_name,
+            email: member.email || '',
+            phone: member.phone || '',
+            gender: member.gender || 'other',
+            avatar_url: member.avatar_url || '',
+            primary_role: 'member',
+            status: 'active',
+            membership_status: member.status || 'active',
+            membership_date: member.membership_date || new Date().toISOString().slice(0, 10),
+            created_at: member.created_at || (member.membership_date ? `${member.membership_date}T00:00:00.000Z` : new Date().toISOString()),
+            is_baptized: member.is_baptized,
+            baptism_date: member.baptism_date,
+            baptized_by: member.baptized_by,
+            date_of_birth: member.date_of_birth,
+            marital_status: member.marital_status,
+            marriage_date: member.marriage_date
+          });
+        }
+      }
+    }
+    delete parsed.members;
+  }
+
+  // Ensure every profile has canonical fields & auth_user_id backfilled only if a real auth user exists
+  const normalizedProfiles = profilesList.map(raw => {
+    const clean = sanitizeProfileRecord(raw);
+    if (clean.auth_user_id === null && raw.auth_user_id === undefined) {
+      if (authUsersById.has(clean.id)) {
+        clean.auth_user_id = clean.id;
+        changed = true;
+      }
+    }
+    if (
+      raw.temporary_password !== undefined ||
+      raw.login_email !== undefined ||
+      raw.has_login_credentials !== undefined ||
+      raw.auth_user_id === undefined ||
+      raw.membership_status === undefined ||
+      raw.status === undefined
+    ) {
+      changed = true;
+    }
+    return clean;
+  });
+  parsed.profiles = normalizedProfiles;
+
+  const remapTableMemberIds = (tableKey: string) => {
+    if (!Array.isArray(parsed[tableKey])) return;
+    parsed[tableKey] = parsed[tableKey].map((row: any) => {
+      if (row.member_id && legacyMemberIdToProfileId.has(row.member_id)) {
+        const mapped = legacyMemberIdToProfileId.get(row.member_id)!;
+        if (mapped !== row.member_id) {
+          changed = true;
+          return { ...row, member_id: mapped };
+        }
+      }
+      return row;
+    });
+  };
+
+  remapTableMemberIds('member_transfers');
+  remapTableMemberIds('ministry_members');
+  remapTableMemberIds('event_registrations');
+  remapTableMemberIds('event_survey_responses');
+
+  return { db: parsed, changed };
+}
 
 // Load or seed local database
 function loadLocalDatabase() {
@@ -580,7 +842,12 @@ function loadLocalDatabase() {
       if (!Array.isArray(parsed.event_survey_questions)) parsed.event_survey_questions = [];
       if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
       if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
-      return parsed;
+
+      const migrated = migrateUnifiedDirectoryData(parsed);
+      if (migrated.changed) {
+        saveLocalDatabase(migrated.db);
+      }
+      return migrated.db;
     }
   } catch (e) {
     console.warn("Could not read local DB, initializing fresh:", e);
@@ -589,8 +856,7 @@ function loadLocalDatabase() {
   const initialDb = {
     districts: initialDistricts,
     church_branches: initialBranches,
-    profiles: initialProfiles,
-    members: initialMembers,
+    profiles: initialProfiles.map(p => sanitizeProfileRecord(p)),
     member_transfers: initialTransfers,
     streams: initialStreams,
     stream_chat_messages: initialMessages,
@@ -659,47 +925,8 @@ function setCurrentSession(session: any) {
 }
 
 // Local users registered
-function getStoredUsers(): Record<string, { id: string; email: string; password?: string; user_metadata?: any }> {
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-
-  // Pre-seed demo users
-  const defaultUsers: Record<string, any> = {
-    'admin@faithconnect.church': {
-      id: 'usr-admin-1',
-      email: 'admin@faithconnect.church',
-      password: 'password123',
-      user_metadata: { first_name: 'David', last_name: 'Miller' }
-    },
-    'pastor@faithconnect.church': {
-      id: 'usr-pastor-1',
-      email: 'pastor@faithconnect.church',
-      password: 'password123',
-      user_metadata: { first_name: 'Sarah', last_name: 'Johnson' }
-    },
-    'bishop@faithconnect.church': {
-      id: 'usr-bishop-1',
-      email: 'bishop@faithconnect.church',
-      password: 'password123',
-      user_metadata: { first_name: 'Michael', last_name: 'Thomas' }
-    },
-    'worship@faithconnect.church': {
-      id: 'usr-leader-1',
-      email: 'worship@faithconnect.church',
-      password: 'password123',
-      user_metadata: { first_name: 'Hannah', last_name: 'Adams' }
-    },
-    'member@faithconnect.church': {
-      id: 'usr-member-1',
-      email: 'member@faithconnect.church',
-      password: 'password123',
-      user_metadata: { first_name: 'Grace', last_name: 'Campbell' }
-    }
-  };
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(defaultUsers));
-  return defaultUsers;
+function getStoredUsers(): Record<string, { id: string; email: string; password?: string; setup_token?: string; user_metadata?: any }> {
+  return getStoredUsersRaw();
 }
 
 function saveStoredUsers(users: Record<string, any>) {
@@ -810,44 +1037,69 @@ class LocalQueryBuilder {
 
     // 2. UPDATE
     if (this.pendingUpdateData) {
-      let updatedCount = 0;
-      const updatedRows = rows.map(row => {
-        if (this.filters.every(f => f(row))) {
-          updatedCount++;
-          return { ...row, ...this.pendingUpdateData };
-        }
-        return row;
-      });
-      localDb[this.tableName] = updatedRows;
-      saveLocalDatabase(localDb);
-      resolve({ data: updatedRows, error: null, count: updatedCount });
-      return;
-    }
-
-    // 3. INSERT
-    if (this.pendingInsertData) {
-      if (this.tableName === 'members') {
-        const incomingProfileIds = this.pendingInsertData
-          .map((item: any) => item.profile_id)
-          .filter((profileId: string | null | undefined): profileId is string => Boolean(profileId));
-        const hasDuplicateIncoming = new Set(incomingProfileIds).size !== incomingProfileIds.length;
-        const hasExistingLink = incomingProfileIds.some(profileId => rows.some(row => row.profile_id === profileId));
-        if (hasDuplicateIncoming || hasExistingLink) {
+      if (this.tableName === 'profiles' && this.pendingUpdateData.auth_user_id) {
+        const incomingAuthId = this.pendingUpdateData.auth_user_id;
+        const targetIds = new Set(rows.filter(r => this.filters.every(f => f(r))).map(r => r.id));
+        const collision = rows.some(row => !targetIds.has(row.id) && row.auth_user_id === incomingAuthId);
+        if (collision) {
           resolve({
             data: null,
             error: {
               code: '23505',
-              message: 'duplicate key value violates unique constraint "idx_members_profile_id_unique"'
+              message: 'duplicate key value violates unique constraint "idx_profiles_auth_user_id_unique"'
             }
           });
           return;
         }
       }
-      const inserted = this.pendingInsertData.map((item: any) => ({
-        id: item.id || `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        created_at: item.created_at || new Date().toISOString(),
-        ...item
-      }));
+
+      let updatedCount = 0;
+      const updatedRows = rows.map(row => {
+        if (this.filters.every(f => f(row))) {
+          updatedCount++;
+          const merged = { ...row, ...this.pendingUpdateData };
+          return this.tableName === 'profiles' ? sanitizeProfileRecord(merged) : merged;
+        }
+        return row;
+      });
+      localDb[this.tableName] = updatedRows;
+      saveLocalDatabase(localDb);
+      const returnedRows = updatedRows.filter(row => this.filters.every(f => f(row)));
+      if (this.isSingle) {
+        resolve({ data: returnedRows[0] || null, error: returnedRows[0] ? null : { message: 'Row not found' }, count: updatedCount });
+      } else {
+        resolve({ data: returnedRows, error: null, count: updatedCount });
+      }
+      return;
+    }
+
+    // 3. INSERT
+    if (this.pendingInsertData) {
+      if (this.tableName === 'profiles') {
+        const incomingAuthIds = this.pendingInsertData
+          .map((item: any) => item.auth_user_id)
+          .filter((authUserId: string | null | undefined): authUserId is string => Boolean(authUserId));
+        const hasDuplicateIncoming = new Set(incomingAuthIds).size !== incomingAuthIds.length;
+        const hasExistingLink = incomingAuthIds.some(authUserId => rows.some(row => row.auth_user_id === authUserId));
+        if (hasDuplicateIncoming || hasExistingLink) {
+          resolve({
+            data: null,
+            error: {
+              code: '23505',
+              message: 'duplicate key value violates unique constraint "idx_profiles_auth_user_id_unique"'
+            }
+          });
+          return;
+        }
+      }
+      const inserted = this.pendingInsertData.map((item: any) => {
+        const record = {
+          id: item.id || `${this.tableName === 'profiles' ? 'per' : 'item'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          created_at: item.created_at || new Date().toISOString(),
+          ...item
+        };
+        return this.tableName === 'profiles' ? sanitizeProfileRecord(record) : record;
+      });
       localDb[this.tableName] = [...rows, ...inserted];
       saveLocalDatabase(localDb);
 
@@ -863,7 +1115,11 @@ class LocalQueryBuilder {
         });
       }
 
-      resolve({ data: inserted, error: null });
+      if (this.isSingle) {
+        resolve({ data: inserted[0] || null, error: null });
+      } else {
+        resolve({ data: inserted, error: null });
+      }
       return;
     }
 
@@ -895,7 +1151,7 @@ class LocalQueryBuilder {
     } else if (this.tableName === 'member_transfers') {
       result = result.map(transfer => ({
         ...transfer,
-        member: localDb.members?.find((m: any) => m.id === transfer.member_id) || { first_name: 'Member', last_name: '' },
+        member: localDb.profiles?.find((p: any) => p.id === transfer.member_id) || { first_name: 'Member', last_name: '' },
         from_branch: localDb.church_branches?.find((b: any) => b.id === transfer.from_branch_id) || { name: 'Campus' },
         to_branch: localDb.church_branches?.find((b: any) => b.id === transfer.to_branch_id) || { name: 'Campus' }
       }));
@@ -992,22 +1248,35 @@ const localAuth = {
     users[normalizedEmail] = userData;
     saveStoredUsers(users);
 
-    // Create profile in local profiles database
+    // Link auth_user_id onto an existing unlinked profile if email matches, otherwise create canonical profile
     localDb = loadLocalDatabase();
     const firstBranch = localDb.church_branches?.[0]?.id || 'branch-1';
-    const newProfile: Profile = {
-      id: newId,
-      branch_id: options?.data?.branch_id || firstBranch,
-      first_name: options?.data?.first_name || 'Faithful',
-      last_name: options?.data?.last_name || 'Member',
-      email: normalizedEmail,
-      phone: options?.data?.phone || '',
-      avatar_url: options?.data?.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
-      primary_role: (options?.data?.primary_role as any) || 'member',
-      created_at: new Date().toISOString()
-    };
+    const existingUnlinked = (localDb.profiles || []).find(
+      (p: any) => (p.email || '').trim().toLowerCase() === normalizedEmail && !p.auth_user_id
+    );
 
-    localDb.profiles = [...(localDb.profiles || []), newProfile];
+    if (existingUnlinked) {
+      localDb.profiles = (localDb.profiles || []).map((p: any) =>
+        p.id === existingUnlinked.id ? sanitizeProfileRecord({ ...p, auth_user_id: newId }) : p
+      );
+    } else {
+      const newProfile: Profile = sanitizeProfileRecord({
+        id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        auth_user_id: newId,
+        branch_id: options?.data?.branch_id || firstBranch,
+        first_name: options?.data?.first_name || 'Faithful',
+        last_name: options?.data?.last_name || 'Member',
+        email: normalizedEmail,
+        phone: options?.data?.phone || '',
+        avatar_url: options?.data?.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
+        primary_role: (options?.data?.primary_role as any) || 'member',
+        status: 'active',
+        membership_status: 'active',
+        membership_date: new Date().toISOString().slice(0, 10),
+        created_at: new Date().toISOString()
+      });
+      localDb.profiles = [...(localDb.profiles || []), newProfile];
+    }
     saveLocalDatabase(localDb);
 
     const session = {
@@ -1034,15 +1303,199 @@ const localAuth = {
   },
 
   /**
+   * Provisions portal access for an existing canonical person record without
+   * storing plaintext passwords on profiles. Generates a one-time setup token
+   * so the member can set their own password via /auth.
+   */
+  async provisionPortalAccess({
+    profileId,
+    email,
+    firstName,
+    lastName,
+    primaryRole
+  }: {
+    profileId: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    primaryRole?: string;
+  }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return { data: null, error: { message: 'A valid email address is required to enable portal access.' } };
+    }
+
+    localDb = loadLocalDatabase();
+    const targetProfile = (localDb.profiles || []).find((p: any) => p.id === profileId);
+    if (!targetProfile) {
+      return { data: null, error: { message: 'Member directory record not found.' } };
+    }
+
+    const users = getStoredUsers();
+    const emailConflict = Object.values(users).find(
+      (u: any) => u.email === normalizedEmail && u.id !== targetProfile.auth_user_id
+    );
+    if (emailConflict) {
+      return { data: null, error: { message: 'Another portal account already uses this email address.' } };
+    }
+
+    const authUserId = targetProfile.auth_user_id || `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    // Remove previous email entry if email changed for the same authUserId
+    for (const [key, value] of Object.entries(users)) {
+      if (value.id === authUserId && key !== normalizedEmail) {
+        delete users[key];
+      }
+    }
+
+    const setupToken = `setup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const existingAuth = users[normalizedEmail];
+    users[normalizedEmail] = {
+      id: authUserId,
+      email: normalizedEmail,
+      password: existingAuth?.password,
+      setup_token: existingAuth?.password ? undefined : setupToken,
+      user_metadata: {
+        first_name: firstName ?? targetProfile.first_name,
+        last_name: lastName ?? targetProfile.last_name
+      }
+    };
+    saveStoredUsers(users);
+
+    // Ensure uniqueness before linking auth_user_id onto the profile
+    const authCollision = (localDb.profiles || []).some(
+      (p: any) => p.id !== profileId && p.auth_user_id === authUserId
+    );
+    if (authCollision) {
+      return {
+        data: null,
+        error: {
+          code: '23505',
+          message: 'duplicate key value violates unique constraint "idx_profiles_auth_user_id_unique"'
+        }
+      };
+    }
+
+    localDb.profiles = (localDb.profiles || []).map((p: any) =>
+      p.id === profileId
+        ? sanitizeProfileRecord({
+            ...p,
+            auth_user_id: authUserId,
+            email: normalizedEmail,
+            primary_role: primaryRole || p.primary_role || 'member',
+            status: p.status === 'archived' ? 'active' : (p.status || 'active')
+          })
+        : p
+    );
+    saveLocalDatabase(localDb);
+
+    const effectiveToken = users[normalizedEmail].setup_token || setupToken;
+    const setupUrl = `/auth?setup=${encodeURIComponent(effectiveToken)}&email=${encodeURIComponent(normalizedEmail)}`;
+
+    return {
+      data: {
+        authUserId,
+        email: normalizedEmail,
+        setupToken: effectiveToken,
+        setupUrl,
+        alreadyActivated: Boolean(existingAuth?.password)
+      },
+      error: null
+    };
+  },
+
+  /**
+   * Completes password setup for an invited portal account without storing
+   * any password on the profiles table.
+   */
+  async completePasswordSetup({
+    email,
+    setupToken,
+    newPassword
+  }: {
+    email: string;
+    setupToken: string;
+    newPassword: string;
+  }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !setupToken.trim() || !newPassword || newPassword.length < 6) {
+      return { data: { user: null, session: null }, error: { message: 'Valid email, activation token, and a password of at least 6 characters are required.' } };
+    }
+
+    const users = getStoredUsers();
+    const user = users[normalizedEmail];
+    if (!user || !user.setup_token || user.setup_token !== setupToken.trim()) {
+      return { data: { user: null, session: null }, error: { message: 'Invalid or expired portal activation token.' } };
+    }
+
+    localDb = loadLocalDatabase();
+    const profile = (localDb.profiles || []).find(
+      (p: any) => p.auth_user_id === user.id || p.id === user.id
+    );
+    if (profile && (profile.status === 'suspended' || profile.status === 'archived')) {
+      return { data: { user: null, session: null }, error: { message: 'This portal account is suspended or archived.' } };
+    }
+
+    users[normalizedEmail] = {
+      ...user,
+      password: newPassword,
+      setup_token: undefined
+    };
+    saveStoredUsers(users);
+
+    const session = {
+      access_token: `mock_jwt_${user.id}`,
+      token_type: 'bearer',
+      expires_in: 3600,
+      user: {
+        id: user.id,
+        email: user.email,
+        user_metadata: user.user_metadata
+      }
+    };
+    setCurrentSession(session);
+    notifyAuthChange('SIGNED_IN', session);
+    return { data: { user: session.user, session }, error: null };
+  },
+
+  /**
+   * Revokes portal access for a canonical person record by removing the auth user
+   * and clearing auth_user_id WITHOUT deleting their church membership profile.
+   */
+  async revokePortalAccess(profileId: string) {
+    localDb = loadLocalDatabase();
+    const target = (localDb.profiles || []).find((p: any) => p.id === profileId || p.auth_user_id === profileId);
+    const authUserId = target?.auth_user_id || profileId;
+
+    const users = getStoredUsers();
+    const entry = Object.entries(users).find(([, user]) => user.id === authUserId);
+    if (entry) {
+      delete users[entry[0]];
+      saveStoredUsers(users);
+    }
+
+    localDb.profiles = (localDb.profiles || []).map((item: any) =>
+      (item.id === profileId || item.auth_user_id === authUserId)
+        ? sanitizeProfileRecord({ ...item, auth_user_id: null })
+        : item
+    );
+    saveLocalDatabase(localDb);
+
+    const currentSession = getCurrentSession();
+    if (currentSession?.user?.id === authUserId) {
+      setCurrentSession(null);
+      notifyAuthChange('SIGNED_OUT', null);
+    }
+    return { error: null };
+  },
+
+  /**
    * Creates a demo portal account without signing the administrator out or
    * switching the active demo session to the newly created user.
-   * This is mock-auth functionality only; production account provisioning
-   * must use a trusted server-side authentication flow.
    */
-  async createUser({ email, password, options }: { email: string; password: string; options?: { data?: any } }) {
+  async createUser({ email, password, options }: { email: string; password?: string; options?: { data?: any } }) {
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password) {
-      return { data: { user: null }, error: { message: 'Email and password are required.' } };
+    if (!normalizedEmail) {
+      return { data: { user: null }, error: { message: 'Email is required.' } };
     }
 
     const users = getStoredUsers();
@@ -1052,30 +1505,42 @@ const localAuth = {
 
     const newId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const userMetadata = options?.data || {};
+    const setupToken = password ? undefined : `setup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     users[normalizedEmail] = {
       id: newId,
       email: normalizedEmail,
-      password,
+      ...(password ? { password } : { setup_token: setupToken }),
       user_metadata: userMetadata
     };
     saveStoredUsers(users);
 
     localDb = loadLocalDatabase();
     const firstBranch = localDb.church_branches?.[0]?.id || 'branch-1';
-    const newProfile: Profile = {
-      id: newId,
-      branch_id: userMetadata.branch_id || firstBranch,
-      first_name: userMetadata.first_name || 'Faithful',
-      last_name: userMetadata.last_name || 'Member',
-      email: normalizedEmail,
-      phone: userMetadata.phone || '',
-      avatar_url: userMetadata.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
-      primary_role: (userMetadata.primary_role as any) || 'member',
-      department_name: userMetadata.department_name,
-      assigned_department: userMetadata.assigned_department,
-      created_at: new Date().toISOString()
-    };
-    localDb.profiles = [...(localDb.profiles || []), newProfile];
+    const existingProfileId = userMetadata.profile_id;
+    if (existingProfileId) {
+      localDb.profiles = (localDb.profiles || []).map((p: any) =>
+        p.id === existingProfileId ? sanitizeProfileRecord({ ...p, auth_user_id: newId, email: normalizedEmail }) : p
+      );
+    } else {
+      const newProfile: Profile = sanitizeProfileRecord({
+        id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        auth_user_id: newId,
+        branch_id: userMetadata.branch_id || firstBranch,
+        first_name: userMetadata.first_name || 'Faithful',
+        last_name: userMetadata.last_name || 'Member',
+        email: normalizedEmail,
+        phone: userMetadata.phone || '',
+        avatar_url: userMetadata.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
+        primary_role: (userMetadata.primary_role as any) || 'member',
+        status: 'active',
+        membership_status: 'active',
+        membership_date: new Date().toISOString().slice(0, 10),
+        department_name: userMetadata.department_name,
+        assigned_department: userMetadata.assigned_department,
+        created_at: new Date().toISOString()
+      });
+      localDb.profiles = [...(localDb.profiles || []), newProfile];
+    }
     saveLocalDatabase(localDb);
 
     return {
@@ -1084,24 +1549,19 @@ const localAuth = {
           id: newId,
           email: normalizedEmail,
           user_metadata: userMetadata
-        }
+        },
+        setupToken
       },
       error: null
     };
   },
 
+  /**
+   * Deleting an auth user must only clear the auth_user_id link on profiles;
+   * it must never delete the person's church membership record (ADR-0001).
+   */
   async deleteUser({ id }: { id: string }) {
-    const users = getStoredUsers();
-    const entry = Object.entries(users).find(([, user]) => user.id === id);
-    if (entry) {
-      delete users[entry[0]];
-      saveStoredUsers(users);
-    }
-
-    localDb = loadLocalDatabase();
-    localDb.profiles = (localDb.profiles || []).filter((item: any) => item.id !== id);
-    saveLocalDatabase(localDb);
-    return { error: null };
+    return this.revokePortalAccess(id);
   },
 
   async signInWithPassword({ email, password }: { email: string; password?: string }) {
@@ -1123,10 +1583,28 @@ const localAuth = {
       });
     }
 
+    if (user.setup_token && !user.password) {
+      return {
+        data: { user: null, session: null },
+        error: { message: 'Portal invitation pending activation. Please use your activation link to set a password first.' }
+      };
+    }
+
     if (password && user.password && user.password !== password) {
       return {
         data: { user: null, session: null },
         error: { message: 'Invalid login credentials. Please check your password.' }
+      };
+    }
+
+    localDb = loadLocalDatabase();
+    const matchingProfile = (localDb.profiles || []).find(
+      (p: any) => p.auth_user_id === user.id || p.id === user.id
+    );
+    if (matchingProfile && (matchingProfile.status === 'suspended' || matchingProfile.status === 'archived')) {
+      return {
+        data: { user: null, session: null },
+        error: { message: 'Your portal access is currently suspended or archived. Please contact a church administrator.' }
       };
     }
 

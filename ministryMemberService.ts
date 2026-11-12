@@ -1,24 +1,24 @@
-import type { Member, Ministry, MinistryMember } from './types';
+import type { MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
 
 export interface MinistryRosterEntry extends MinistryMember {
-  member: Member;
+  member: Profile;
 }
 
 /**
- * Ministry participation is linked to church membership, not login accounts.
- * A member can serve in several ministries without needing a user profile.
+ * Ministry participation references canonical `profiles` (`member_id` -> `profiles.id`),
+ * supporting all church members whether or not they have portal login access.
  */
 export async function getMinistryRoster(ministryId: string): Promise<MinistryRosterEntry[]> {
-  const [{ data: assignments, error: assignmentError }, { data: members, error: memberError }] = await Promise.all([
+  const [{ data: assignments, error: assignmentError }, { data: profiles, error: profileError }] = await Promise.all([
     supabase.from('ministry_members').select('*').eq('ministry_id', ministryId).order('joined_at', { ascending: true }),
-    supabase.from('members').select('*')
+    supabase.from('profiles').select('*')
   ]);
 
   if (assignmentError) throw assignmentError;
-  if (memberError) throw memberError;
+  if (profileError) throw profileError;
 
-  const memberById = new Map<string, Member>((members || []).map((member: Member) => [member.id, member]));
+  const memberById = new Map<string, Profile>((profiles || []).map((person: Profile) => [person.id, person]));
   return (assignments || [])
     .map((assignment: MinistryMember) => {
       const member = memberById.get(assignment.member_id);

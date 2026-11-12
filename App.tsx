@@ -10,7 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import type { Profile, ChurchBranch, Stream, ChatMessage, Member, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem } from './types';
+import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { MemberResourcesPage } from './MemberResourcesPage';
@@ -22,8 +22,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
-import { ensureLinkedMemberRecord, getMembers, registerChurchMember, updateLinkedMemberDetails, updateChurchMemberRecord } from './memberService';
-import { syncLinkedMemberProfile } from './memberProfileSyncService';
+import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updateMembershipStatus, updatePortalAccountStatus, enablePortalAccess, disablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
@@ -442,13 +441,22 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
 
 interface AuthCardProps {
   initialSignUp?: boolean;
+  initialSetupToken?: string;
+  initialEmail?: string;
   onClose?: () => void;
 }
 
-export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClose }) => {
+export const AuthCard: React.FC<AuthCardProps> = ({
+  initialSignUp = false,
+  initialSetupToken = '',
+  initialEmail = '',
+  onClose
+}) => {
   const [isSignUp, setIsSignUp] = useState(initialSignUp);
-  const [email, setEmail] = useState('');
+  const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken));
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
+  const [setupToken, setSetupToken] = useState(initialSetupToken);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
@@ -460,8 +468,14 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
   const navigate = useNavigate();
 
   useEffect(() => {
-    setIsSignUp(initialSignUp);
-  }, [initialSignUp]);
+    if (initialSetupToken) {
+      setIsSetupMode(true);
+      setSetupToken(initialSetupToken);
+      if (initialEmail) setEmail(initialEmail);
+    } else {
+      setIsSignUp(initialSignUp);
+    }
+  }, [initialSignUp, initialSetupToken, initialEmail]);
 
   const handleClose = () => {
     if (onClose) {
@@ -478,8 +492,21 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
     setSuccessMsg(null);
 
     try {
-      if (isSignUp) {
-        const { data, error: signUpErr } = await supabase.auth.signUp({
+      if (isSetupMode) {
+        const { error: setupErr } = await supabase.auth.completePasswordSetup({
+          email: email.trim(),
+          setupToken: setupToken.trim(),
+          newPassword: password
+        });
+        if (setupErr) throw setupErr;
+
+        setSuccessMsg("Portal access activated! Redirecting to your portal...");
+        setTimeout(() => {
+          if (onClose) onClose();
+          navigate('/portal');
+        }, 700);
+      } else if (isSignUp) {
+        const { error: signUpErr } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
@@ -501,7 +528,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
           navigate('/portal');
         }, 800);
       } else {
-        const { data, error: signInErr } = await supabase.auth.signInWithPassword({
+        const { error: signInErr } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password
         });
@@ -526,10 +553,11 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
     setLoading(true);
     setError(null);
     try {
-      await supabase.auth.signInWithPassword({
+      const { error: demoErr } = await supabase.auth.signInWithPassword({
         email: demoEmail,
         password: 'password123'
       });
+      if (demoErr) throw demoErr;
       if (onClose) onClose();
       navigate('/portal');
     } catch (err: any) {
@@ -559,7 +587,11 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
         </div>
         <h2 className="text-2xl font-black tracking-tight">FaithConnect</h2>
         <p className="text-indigo-100 text-xs mt-1">
-          {isSignUp ? 'Join Grace Cathedral Church Community' : 'Welcome back to Grace Cathedral Portal'}
+          {isSetupMode
+            ? 'Activate Your Portal Invitation & Set Password'
+            : isSignUp
+            ? 'Join Grace Cathedral Church Community'
+            : 'Welcome back to Grace Cathedral Portal'}
         </p>
       </div>
 
@@ -579,7 +611,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
           </div>
         )}
 
-        {isSignUp && (
+        {isSignUp && !isSetupMode && (
           <>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -646,8 +678,24 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
           />
         </div>
 
+        {isSetupMode && (
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-600 uppercase">Activation Token</label>
+            <input 
+              type="text" 
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none text-xs font-mono transition-all"
+              value={setupToken}
+              onChange={(e) => setSetupToken(e.target.value)}
+              placeholder="setup_..."
+              required
+            />
+          </div>
+        )}
+
         <div className="space-y-1">
-          <label className="text-xs font-bold text-slate-600 uppercase">Password</label>
+          <label className="text-xs font-bold text-slate-600 uppercase">
+            {isSetupMode ? 'Choose New Password (min 6 characters)' : 'Password'}
+          </label>
           <input 
             type="password" 
             className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none text-sm font-medium transition-all"
@@ -666,20 +714,39 @@ export const AuthCard: React.FC<AuthCardProps> = ({ initialSignUp = false, onClo
           {loading ? (
             <span>Processing...</span>
           ) : (
-            <span>{isSignUp ? 'Create My Account' : 'Sign In to Portal'}</span>
+            <span>
+              {isSetupMode
+                ? 'Activate Portal & Sign In'
+                : isSignUp
+                ? 'Create My Account'
+                : 'Sign In to Portal'}
+            </span>
           )}
         </button>
 
-        <div className="pt-2 text-center">
-          <button 
+        <div className="pt-2 text-center space-y-1.5">
+          {!isSetupMode && (
+            <button 
+              type="button"
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setError(null);
+              }}
+              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer block mx-auto"
+            >
+              {isSignUp ? 'Already have an account? Sign In' : "Don't have an account yet? Create one"}
+            </button>
+          )}
+          <button
             type="button"
             onClick={() => {
-              setIsSignUp(!isSignUp);
+              setIsSetupMode(!isSetupMode);
+              setIsSignUp(false);
               setError(null);
             }}
-            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
+            className="text-[11px] font-semibold text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer block mx-auto"
           >
-            {isSignUp ? 'Already have an account? Sign In' : "Don't have an account yet? Create one"}
+            {isSetupMode ? 'Back to Standard Sign In' : 'Have an invitation token? Activate Portal Access'}
           </button>
         </div>
 
@@ -744,6 +811,8 @@ const AuthRoutePage = ({ profile, session }: { profile: Profile | null; session:
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const initialSignUp = searchParams.get('signup') === 'true';
+  const initialSetupToken = searchParams.get('setup') || '';
+  const initialEmail = searchParams.get('email') || '';
   const navigate = useNavigate();
 
   return (
@@ -764,7 +833,12 @@ const AuthRoutePage = ({ profile, session }: { profile: Profile | null; session:
             </button>
           </div>
         )}
-        <AuthCard initialSignUp={initialSignUp} onClose={() => navigate('/')} />
+        <AuthCard
+          initialSignUp={initialSignUp}
+          initialSetupToken={initialSetupToken}
+          initialEmail={initialEmail}
+          onClose={() => navigate('/')}
+        />
       </div>
     </div>
   );
@@ -1182,71 +1256,54 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
 // --- Church Member Directory Page with Admin CRUD, Suspend, Soft Delete & Pic Upload ---
 
 const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [members, setMembers] = useState<Profile[]>([]);
+  const [branches, setBranches] = useState<ChurchBranch[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>('all');
+  const [membershipStatusFilter, setMembershipStatusFilter] = useState<string>('all');
+  const [portalAccessFilter, setPortalAccessFilter] = useState<string>('all');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [membershipRecords, setMembershipRecords] = useState<Member[]>([]);
-  const [membershipStatusFilter, setMembershipStatusFilter] = useState('all');
-  const [portalAccessFilter, setPortalAccessFilter] = useState('all');
-  const [editingMembership, setEditingMembership] = useState<Member | null>(null);
-  const [membershipEditError, setMembershipEditError] = useState('');
-  const [membershipEditSaving, setMembershipEditSaving] = useState(false);
-  const [membershipEditFirstName, setMembershipEditFirstName] = useState('');
-  const [membershipEditLastName, setMembershipEditLastName] = useState('');
-  const [membershipEditEmail, setMembershipEditEmail] = useState('');
-  const [membershipEditPhone, setMembershipEditPhone] = useState('');
-  const [membershipEditGender, setMembershipEditGender] = useState<Member['gender']>('other');
-  const [membershipEditDate, setMembershipEditDate] = useState('');
-  const [membershipEditStatus, setMembershipEditStatus] = useState<Member['status']>('active');
-  const [membershipEditBaptized, setMembershipEditBaptized] = useState(false);
-  const [membershipEditBaptismDate, setMembershipEditBaptismDate] = useState('');
-  const [standaloneModalOpen, setStandaloneModalOpen] = useState(false);
-  const [standaloneFirstName, setStandaloneFirstName] = useState('');
-  const [standaloneLastName, setStandaloneLastName] = useState('');
-  const [standaloneEmail, setStandaloneEmail] = useState('');
-  const [standalonePhone, setStandalonePhone] = useState('');
-  const [standaloneGender, setStandaloneGender] = useState<Member['gender']>('other');
-  const [standaloneMembershipDate, setStandaloneMembershipDate] = useState(new Date().toISOString().slice(0, 10));
-  const [standaloneProfileId, setStandaloneProfileId] = useState('');
-  const [standaloneIsBaptized, setStandaloneIsBaptized] = useState(false);
-  const [standaloneBaptismDate, setStandaloneBaptismDate] = useState('');
-  const [standaloneError, setStandaloneError] = useState('');
-  const [standaloneSaving, setStandaloneSaving] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Modals state
+  // Unified Modals State
   const [viewingPerson, setViewingPerson] = useState<Profile | null>(null);
-  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [memberModalMode, setMemberModalMode] = useState<'add' | 'edit' | null>(null);
   const [editingPerson, setEditingPerson] = useState<Profile | null>(null);
-  const [profileEditError, setProfileEditError] = useState('');
-  const [profileEditSaving, setProfileEditSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formSaving, setFormSaving] = useState(false);
 
-  // Add / Edit Form State
+  // Unified 3-Section Form State
   const [formFirstName, setFormFirstName] = useState('');
   const [formLastName, setFormLastName] = useState('');
+  const [formGender, setFormGender] = useState<'male' | 'female' | 'other'>('other');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
-  const [formRole, setFormRole] = useState('member');
-  const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
-  const [formStatus, setFormStatus] = useState('active');
   const [formAvatar, setFormAvatar] = useState('');
-  const [formIsBaptized, setFormIsBaptized] = useState(false);
-  const [formBaptismDate, setFormBaptismDate] = useState('');
-  const [formBaptizedBy, setFormBaptizedBy] = useState('');
   const [formDob, setFormDob] = useState('');
   const [formMaritalStatus, setFormMaritalStatus] = useState<'Single' | 'Married' | 'Widowed' | 'Divorced'>('Single');
   const [formMarriageDate, setFormMarriageDate] = useState('');
-  const [formCreateCredentials, setFormCreateCredentials] = useState(false);
-  const [formPassword, setFormPassword] = useState('');
 
-  // Generated Credential Display Modal State
-  const [createdCredsModal, setCreatedCredsModal] = useState<{
+  // Section 2: Church Membership Information
+  const [formBranchId, setFormBranchId] = useState('branch-1');
+  const [formMembershipStatus, setFormMembershipStatus] = useState<MembershipStatus>('active');
+  const [formMembershipDate, setFormMembershipDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
+  const [formIsBaptized, setFormIsBaptized] = useState(false);
+  const [formBaptismDate, setFormBaptismDate] = useState('');
+  const [formBaptizedBy, setFormBaptizedBy] = useState('');
+
+  // Section 3: Portal Account (Optional)
+  const [formEnablePortal, setFormEnablePortal] = useState(false);
+  const [formRole, setFormRole] = useState<AppRole>('member');
+  const [formPortalStatus, setFormPortalStatus] = useState<PortalAccountStatus>('active');
+
+  // Portal Invitation / Activation Modal (No plaintext password stored on profile)
+  const [portalInviteModal, setPortalInviteModal] = useState<{
     name: string;
-    email: string;
-    pass: string;
-    isBaptized: boolean;
+    invite: PortalInvitationInfo;
   } | null>(null);
+  const [copiedInvite, setCopiedInvite] = useState(false);
 
   const isAdminOrPastor = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile?.primary_role || '');
 
@@ -1256,97 +1313,23 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const loadDirectory = async () => {
     setLoading(true);
-    const [{ data }, members] = await Promise.all([
-      supabase.from('profiles').select('*'),
-      getMembers()
-    ]);
-    if (data) setProfiles(data as Profile[]);
-    setMembershipRecords(members);
-    setLoading(false);
-  };
-
-  const openMembershipEditor = (member: Member) => {
-    setEditingMembership(member);
-    setMembershipEditFirstName(member.first_name);
-    setMembershipEditLastName(member.last_name);
-    setMembershipEditEmail(member.email || '');
-    setMembershipEditPhone(member.phone || '');
-    setMembershipEditGender(member.gender || 'other');
-    setMembershipEditDate(member.membership_date);
-    setMembershipEditStatus(member.status);
-    setMembershipEditBaptized(Boolean(member.is_baptized));
-    setMembershipEditBaptismDate(member.baptism_date || '');
-    setMembershipEditError('');
-  };
-
-  const handleMembershipUpdate = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!editingMembership) return;
-    setMembershipEditSaving(true);
-    setMembershipEditError('');
     try {
-      const updated = await updateChurchMemberRecord(editingMembership.id, {
-        first_name: membershipEditFirstName,
-        last_name: membershipEditLastName,
-        email: membershipEditEmail,
-        phone: membershipEditPhone,
-        gender: membershipEditGender,
-        membership_date: membershipEditDate,
-        status: membershipEditStatus,
-        is_baptized: membershipEditBaptized,
-        baptism_date: membershipEditBaptismDate
-      });
-      setMembershipRecords(previous => previous.map(member => member.id === updated.id ? updated : member));
-      setEditingMembership(null);
+      const [directoryRows, branchRes] = await Promise.all([
+        getMembers(),
+        supabase.from('church_branches').select('*').order('name', { ascending: true })
+      ]);
+      setMembers(directoryRows);
+      if (branchRes.data) setBranches(branchRes.data as ChurchBranch[]);
     } catch (error) {
-      setMembershipEditError(error instanceof Error ? error.message : 'Unable to update membership record.');
+      console.error('Unable to load unified member directory:', error);
     } finally {
-      setMembershipEditSaving(false);
+      setLoading(false);
     }
   };
 
-  const openStandaloneRegistration = () => {
-    setStandaloneFirstName('');
-    setStandaloneLastName('');
-    setStandaloneEmail('');
-    setStandalonePhone('');
-    setStandaloneGender('other');
-    setStandaloneMembershipDate(new Date().toISOString().slice(0, 10));
-    setStandaloneProfileId('');
-    setStandaloneIsBaptized(false);
-    setStandaloneBaptismDate('');
-    setStandaloneError('');
-    setStandaloneModalOpen(true);
-  };
-
-  const handleStandaloneRegistration = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile?.branch_id) {
-      setStandaloneError('Your account is not assigned to a branch.');
-      return;
-    }
-    setStandaloneSaving(true);
-    setStandaloneError('');
-    try {
-      const saved = await registerChurchMember({
-        first_name: standaloneFirstName,
-        last_name: standaloneLastName,
-        branch_id: profile.branch_id,
-        membership_date: standaloneMembershipDate,
-        gender: standaloneGender,
-        email: standaloneEmail,
-        phone: standalonePhone,
-        profile_id: standaloneProfileId || null,
-        is_baptized: standaloneIsBaptized,
-        baptism_date: standaloneIsBaptized ? standaloneBaptismDate : undefined
-      });
-      setMembershipRecords(previous => [saved, ...previous]);
-      setStandaloneModalOpen(false);
-    } catch (error) {
-      setStandaloneError(error instanceof Error ? error.message : 'Unable to register this member.');
-    } finally {
-      setStandaloneSaving(false);
-    }
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setActionFeedback({ type, message });
+    setTimeout(() => setActionFeedback(null), 4500);
   };
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1361,246 +1344,249 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const openAddModal = () => {
+    setFormError('');
+    setEditingPerson(null);
     setFormFirstName('');
     setFormLastName('');
+    setFormGender('other');
     setFormEmail('');
     setFormPhone('');
-    setFormRole('member');
-    setFormAssignedDepartment('Media & IT Ministry');
-    setFormStatus('active');
     setFormAvatar('');
-    setFormIsBaptized(true);
-    setFormBaptismDate(new Date().toISOString().split('T')[0]);
-    setFormBaptizedBy('Rev. Sarah Johnson');
     setFormDob('');
     setFormMaritalStatus('Single');
     setFormMarriageDate('');
-    setFormCreateCredentials(true);
-    setFormPassword('FaithConnect2026!');
-    setAddModalOpen(true);
+
+    setFormBranchId(profile?.branch_id || branches[0]?.id || 'branch-1');
+    setFormMembershipStatus('active');
+    setFormMembershipDate(new Date().toISOString().slice(0, 10));
+    setFormAssignedDepartment('Media & IT Ministry');
+    setFormIsBaptized(false);
+    setFormBaptismDate('');
+    setFormBaptizedBy('Rev. Sarah Johnson');
+
+    setFormEnablePortal(false);
+    setFormRole('member');
+    setFormPortalStatus('active');
+    setMemberModalMode('add');
   };
 
   const openEditModal = (p: Profile) => {
-    setProfileEditError('');
+    setFormError('');
     setEditingPerson(p);
-    setFormFirstName(p.first_name);
-    setFormLastName(p.last_name);
-    setFormEmail(p.email);
+    setFormFirstName(p.first_name || '');
+    setFormLastName(p.last_name || '');
+    setFormGender(p.gender || 'other');
+    setFormEmail(p.email || '');
     setFormPhone(p.phone || '');
-    setFormRole(p.primary_role || 'member');
-    setFormAssignedDepartment((p as any).assigned_department || (p as any).department_name || 'Media & IT Ministry');
-    setFormStatus((p as any).status || 'active');
     setFormAvatar(p.avatar_url || '');
-    setFormIsBaptized(Boolean((p as any).is_baptized));
-    setFormBaptismDate((p as any).baptism_date || '2022-10-17');
-    setFormBaptizedBy((p as any).baptized_by || 'Rev. Sarah Johnson');
-    setFormDob((p as any).date_of_birth || '');
-    setFormMaritalStatus((p as any).marital_status || 'Single');
-    setFormMarriageDate((p as any).marriage_date || '');
-    setFormCreateCredentials(Boolean((p as any).has_login_credentials ?? true));
-    setFormPassword((p as any).temporary_password || 'FaithConnect2026!');
+    setFormDob(p.date_of_birth || '');
+    setFormMaritalStatus(p.marital_status || 'Single');
+    setFormMarriageDate(p.marriage_date || '');
+
+    setFormBranchId(p.branch_id || 'branch-1');
+    setFormMembershipStatus(p.membership_status || 'active');
+    setFormMembershipDate(p.membership_date || (p.created_at ? p.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)));
+    setFormAssignedDepartment(p.assigned_department || p.department_name || 'Media & IT Ministry');
+    setFormIsBaptized(Boolean(p.is_baptized));
+    setFormBaptismDate(p.baptism_date || '');
+    setFormBaptizedBy(p.baptized_by || 'Rev. Sarah Johnson');
+
+    setFormEnablePortal(hasPortalAccess(p));
+    setFormRole(p.primary_role || 'member');
+    setFormPortalStatus(p.status || 'active');
+    setMemberModalMode('edit');
   };
 
-  const handleAddMember = async (e: React.FormEvent) => {
+  const handleUnifiedSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newProfile: Profile = {
-      id: `usr_${Date.now()}`,
-      branch_id: 'branch-1',
-      first_name: formFirstName.trim(),
-      last_name: formLastName.trim(),
-      email: formEmail.trim(),
-      phone: formPhone.trim(),
-      primary_role: formRole as any,
-      department_name: formAssignedDepartment,
-      assigned_department: formAssignedDepartment,
-      avatar_url: formAvatar || `https://picsum.photos/seed/${Date.now()}/200`,
-      created_at: new Date().toISOString(),
-      is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
-      date_of_birth: formDob || undefined,
-      marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined
-    };
-    (newProfile as any).status = formStatus;
-    (newProfile as any).has_login_credentials = formCreateCredentials;
-    (newProfile as any).login_email = formEmail.trim();
-    (newProfile as any).temporary_password = formPassword || 'FaithConnect2026!';
-
-    const { error: profileInsertError } = await supabase.from('profiles').insert(newProfile);
-    if (profileInsertError) {
-      console.error('Unable to create member profile:', profileInsertError);
-      return;
-    }
+    setFormSaving(true);
+    setFormError('');
 
     try {
-      await ensureLinkedMemberRecord(newProfile, 'other');
-    } catch (membershipError) {
-      // Keep profile and membership data consistent in the mock workflow.
-      await supabase.from('profiles').delete().eq('id', newProfile.id);
-      console.error('Unable to create the linked church membership record:', membershipError);
-      return;
-    }
+      if (memberModalMode === 'add') {
+        const result = await registerUnifiedMember({
+          first_name: formFirstName,
+          last_name: formLastName,
+          branch_id: formBranchId,
+          membership_date: formMembershipDate,
+          membership_status: formMembershipStatus,
+          gender: formGender,
+          email: formEmail,
+          phone: formPhone,
+          avatar_url: formAvatar || undefined,
+          assigned_department: formAssignedDepartment,
+          is_baptized: formIsBaptized,
+          baptism_date: formIsBaptized ? formBaptismDate : undefined,
+          baptized_by: formIsBaptized ? formBaptizedBy : undefined,
+          date_of_birth: formDob || undefined,
+          marital_status: formMaritalStatus,
+          marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined,
+          enable_portal_access: formEnablePortal,
+          primary_role: formRole,
+          portal_status: formPortalStatus
+        });
 
-    setProfiles(prev => [newProfile, ...prev]);
-    window.dispatchEvent(new CustomEvent('profile-updated', { detail: newProfile }));
-    setAddModalOpen(false);
+        setMembers(prev => [result.profile, ...prev]);
+        setMemberModalMode(null);
+        showToast('success', `${result.profile.first_name} ${result.profile.last_name} added to the Member Directory.`);
 
-    if (formCreateCredentials) {
-      setCreatedCredsModal({
-        name: `${formFirstName} ${formLastName}`,
-        email: formEmail.trim(),
-        pass: formPassword || 'FaithConnect2026!',
-        isBaptized: formIsBaptized
-      });
+        if (result.portalInvite) {
+          setPortalInviteModal({
+            name: `${result.profile.first_name} ${result.profile.last_name}`,
+            invite: result.portalInvite
+          });
+        }
+      } else if (memberModalMode === 'edit' && editingPerson) {
+        const result = await updateUnifiedMember(editingPerson.id, {
+          first_name: formFirstName,
+          last_name: formLastName,
+          branch_id: formBranchId,
+          gender: formGender,
+          email: formEmail,
+          phone: formPhone,
+          avatar_url: formAvatar || editingPerson.avatar_url,
+          membership_status: formMembershipStatus,
+          membership_date: formMembershipDate,
+          assigned_department: formAssignedDepartment,
+          is_baptized: formIsBaptized,
+          baptism_date: formIsBaptized ? formBaptismDate : undefined,
+          baptized_by: formIsBaptized ? formBaptizedBy : undefined,
+          date_of_birth: formDob || undefined,
+          marital_status: formMaritalStatus,
+          marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined,
+          primary_role: formRole,
+          portal_status: formPortalStatus,
+          enable_portal_access: formEnablePortal
+        });
+
+        setMembers(prev => prev.map(p => (p.id === result.profile.id ? result.profile : p)));
+        window.dispatchEvent(new CustomEvent('profile-updated', { detail: result.profile }));
+        setMemberModalMode(null);
+        setEditingPerson(null);
+        showToast('success', `Updated ${result.profile.first_name} ${result.profile.last_name}'s directory record.`);
+
+        if (result.portalInvite) {
+          setPortalInviteModal({
+            name: `${result.profile.first_name} ${result.profile.last_name}`,
+            invite: result.portalInvite
+          });
+        }
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Unable to save member record.');
+    } finally {
+      setFormSaving(false);
     }
   };
 
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingPerson) return;
-    setProfileEditSaving(true);
-    setProfileEditError('');
-
-    const updatedData = {
-      first_name: formFirstName.trim(),
-      last_name: formLastName.trim(),
-      email: formEmail.trim(),
-      phone: formPhone.trim(),
-      primary_role: formRole as any,
-      department_name: formAssignedDepartment,
-      assigned_department: formAssignedDepartment,
-      status: formStatus,
-      avatar_url: formAvatar || editingPerson.avatar_url,
-      is_baptized: formIsBaptized,
-      baptism_date: formIsBaptized ? formBaptismDate : undefined,
-      baptized_by: formIsBaptized ? formBaptizedBy : undefined,
-      date_of_birth: formDob || undefined,
-      marital_status: formMaritalStatus,
-      marriage_date: formMaritalStatus === 'Married' ? formMarriageDate : undefined,
-      has_login_credentials: formCreateCredentials,
-      login_email: formEmail.trim(),
-      temporary_password: formPassword || 'FaithConnect2026!'
-    };
-
-    // Portal-account status belongs to profiles; membership status is managed separately.
+  const handleTogglePortalSuspend = async (person: Profile) => {
+    const currentStatus = person.status || 'active';
+    const nextStatus: PortalAccountStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
     try {
-      const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
-      if (error) throw error;
-
-      await updateLinkedMemberDetails(editingPerson.id, {
-        first_name: updatedData.first_name,
-        last_name: updatedData.last_name,
-        email: updatedData.email,
-        phone: updatedData.phone,
-        avatar_url: updatedData.avatar_url,
-        is_baptized: updatedData.is_baptized,
-        // Empty values explicitly clear previously stored optional membership details.
-        baptism_date: updatedData.baptism_date || '',
-        baptized_by: updatedData.baptized_by || '',
-        date_of_birth: updatedData.date_of_birth || '',
-        marital_status: updatedData.marital_status,
-        marriage_date: updatedData.marriage_date || ''
-      });
-    } catch (saveError) {
-      setProfileEditError(saveError instanceof Error
-        ? `Unable to save all profile and linked membership details: ${saveError.message}`
-        : 'Unable to save all profile and linked membership details. Please retry.');
-      setProfileEditSaving(false);
-      return;
-    }
-
-    setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
-    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
-    setEditingPerson(null);
-    setProfileEditSaving(false);
-
-    if (formCreateCredentials) {
-      setCreatedCredsModal({
-        name: `${formFirstName} ${formLastName}`,
-        email: formEmail.trim(),
-        pass: formPassword || 'FaithConnect2026!',
-        isBaptized: formIsBaptized
-      });
+      const updated = await updatePortalAccountStatus(person.id, nextStatus);
+      setMembers(prev => prev.map(p => (p.id === person.id ? updated : p)));
+      showToast(
+        'success',
+        nextStatus === 'suspended'
+          ? `Portal login suspended for ${person.first_name} ${person.last_name} (church membership remains ${person.membership_status || 'active'}).`
+          : `Portal login restored for ${person.first_name} ${person.last_name}.`
+      );
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Unable to update portal account status.');
     }
   };
 
-  const handleToggleSuspend = async (person: Profile) => {
-    const previousStatus = (person as any).status || 'active';
-    const newStatus = previousStatus === 'suspended' ? 'active' : 'suspended';
-
-    const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-    if (error) {
-      console.error('Unable to update portal account status:', error);
-      return;
+  const handleToggleArchiveMembership = async (person: Profile) => {
+    const currentMembership = person.membership_status || 'active';
+    const nextMembership: MembershipStatus = currentMembership === 'archived' ? 'active' : 'archived';
+    try {
+      const updated = await updateMembershipStatus(person.id, nextMembership);
+      setMembers(prev => prev.map(p => (p.id === person.id ? updated : p)));
+      showToast(
+        'success',
+        nextMembership === 'archived'
+          ? `Archived ${person.first_name} ${person.last_name}'s membership record.`
+          : `Restored ${person.first_name} ${person.last_name} to active church membership.`
+      );
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Unable to update membership status.');
     }
-    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
   };
 
-  const handleSoftDelete = async (person: Profile) => {
-    const previousStatus = (person as any).status || 'active';
-    const newStatus = previousStatus === 'archived' ? 'active' : 'archived';
-
-    const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-    if (error) {
-      console.error('Unable to update portal account archive status:', error);
+  const handleEnablePortalFromCard = async (person: Profile) => {
+    if (!person.email?.trim()) {
+      openEditModal(person);
+      setFormEnablePortal(true);
+      setFormError('Add an email address below to enable portal access for this member.');
       return;
     }
-    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
+    try {
+      const result = await enablePortalAccess(person.id);
+      setMembers(prev => prev.map(p => (p.id === person.id ? result.profile : p)));
+      if (result.portalInvite) {
+        setPortalInviteModal({
+          name: `${person.first_name} ${person.last_name}`,
+          invite: result.portalInvite
+        });
+      }
+      showToast('success', `Portal access enabled for ${person.first_name} ${person.last_name}.`);
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Unable to enable portal access.');
+    }
   };
 
-  const filteredMembershipRecords = membershipRecords.filter(member => {
-    const linkedProfile = member.profile_id
-      ? profiles.find(person => person.id === member.profile_id)
-      : undefined;
-    const matchesSearch = `${member.first_name} ${member.last_name} ${member.email || ''} ${member.phone || ''}`
-      .toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = membershipStatusFilter === 'all' || member.status === membershipStatusFilter;
-    const hasPortalAccess = Boolean(linkedProfile && ((linkedProfile as any).has_login_credentials ?? true));
-    const matchesPortalAccess = portalAccessFilter === 'all'
-      || (portalAccessFilter === 'linked' && Boolean(linkedProfile))
-      || (portalAccessFilter === 'unlinked' && !linkedProfile)
-      || (portalAccessFilter === 'enabled' && hasPortalAccess)
-      || (portalAccessFilter === 'disabled' && Boolean(linkedProfile) && !hasPortalAccess);
-    return matchesSearch && matchesStatus && matchesPortalAccess;
-  });
+  const handleDisablePortalFromCard = async (person: Profile) => {
+    try {
+      const updated = await disablePortalAccess(person.id);
+      setMembers(prev => prev.map(p => (p.id === person.id ? updated : p)));
+      showToast(
+        'success',
+        `Revoked portal login for ${person.first_name} ${person.last_name}. Church membership record was preserved.`
+      );
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Unable to disable portal access.');
+    }
+  };
 
-  const filtered = profiles.filter(p => {
-    const personStatus = (p as any).status || 'active';
-    if (!showArchived && personStatus === 'archived') return false;
-    if (showArchived && personStatus !== 'archived') return false;
+  const branchNameById = new Map(branches.map(b => [b.id, b.name]));
+
+  const filtered = members.filter(p => {
+    const mStatus = p.membership_status || 'active';
+    if (!showArchived && membershipStatusFilter !== 'archived' && mStatus === 'archived') return false;
+    if (showArchived && mStatus !== 'archived') return false;
+    if (membershipStatusFilter !== 'all' && mStatus !== membershipStatusFilter) return false;
+
+    const portalEnabled = hasPortalAccess(p);
+    if (portalAccessFilter === 'enabled' && !portalEnabled) return false;
+    if (portalAccessFilter === 'disabled' && portalEnabled) return false;
 
     const matchesRole = selectedRole === 'all' || p.primary_role === selectedRole;
-    const nameMatch = `${p.first_name} ${p.last_name} ${p.email} ${p.phone || ''}`.toLowerCase().includes(search.toLowerCase());
+    const q = search.trim().toLowerCase();
+    const nameMatch = !q || `${p.first_name} ${p.last_name} ${p.email || ''} ${p.phone || ''}`.toLowerCase().includes(q);
     return matchesRole && nameMatch;
   });
+
+  const portalCount = members.filter(m => hasPortalAccess(m)).length;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-black text-slate-900 tracking-tight">Church Member Directory</h2>
-          <p className="text-slate-500 text-sm">Grace Cathedral pastoral team, department ministers, and congregants.</p>
+          <p className="text-slate-500 text-sm">
+            Unified congregation directory for all members—with or without online portal access.
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="text-xs font-bold px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
-            {filtered.length} Congregants Listed
+            {filtered.length} Listed · {portalCount} Portal Enabled
           </div>
           {isAdminOrPastor && (
             <button
               type="button"
-              onClick={openStandaloneRegistration}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <UserPlus size={16} /> Register Member (No Login)
-            </button>
-          )}
-          {isAdminOrPastor && (
-            <button
-              type="button"
               onClick={openAddModal}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-100 flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-100 flex items-center gap-1.5 transition-all cursor-pointer"
             >
               <UserPlus size={16} /> Add New Member
             </button>
@@ -1608,103 +1594,24 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
         </div>
       </div>
 
-      {isAdminOrPastor && (
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div>
-                <h3 className="font-bold text-slate-900">Unified Church Membership Directory</h3>
-                <p className="text-xs text-slate-500">Every church member appears here, whether or not they have a portal account.</p>
-              </div>
-              <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">
-                {filteredMembershipRecords.length} of {membershipRecords.length} members
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <select
-                aria-label="Filter by membership status"
-                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
-                value={membershipStatusFilter}
-                onChange={e => setMembershipStatusFilter(e.target.value)}
-              >
-                <option value="all">All membership statuses</option>
-                <option value="active">Active members</option>
-                <option value="inactive">Inactive members</option>
-                <option value="suspended">Suspended members</option>
-                <option value="transferred">Transferred members</option>
-                <option value="archived">Archived members</option>
-              </select>
-              <select
-                aria-label="Filter by portal access"
-                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
-                value={portalAccessFilter}
-                onChange={e => setPortalAccessFilter(e.target.value)}
-              >
-                <option value="all">All portal access states</option>
-                <option value="linked">Linked to a portal profile</option>
-                <option value="unlinked">No portal profile</option>
-                <option value="enabled">Portal login enabled</option>
-                <option value="disabled">Portal login disabled</option>
-              </select>
-            </div>
-          </div>
-          {loading ? (
-            <p className="p-5 text-sm text-slate-500">Loading membership records...</p>
-          ) : filteredMembershipRecords.length === 0 ? (
-            <p className="p-5 text-sm text-slate-500">No members match the selected search and filters.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
-                  <tr>
-                    <th className="px-5 py-3 font-bold">Member</th>
-                    <th className="px-5 py-3 font-bold">Membership</th>
-                    <th className="px-5 py-3 font-bold">Portal account</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredMembershipRecords.map(member => {
-                    const linkedProfile = member.profile_id
-                      ? profiles.find(person => person.id === member.profile_id)
-                      : undefined;
-                    const loginEnabled = Boolean(linkedProfile && ((linkedProfile as any).has_login_credentials ?? true));
-                    return (
-                      <tr key={member.id} className="align-top">
-                        <td className="px-5 py-3">
-                          <p className="text-sm font-bold text-slate-800">{member.first_name} {member.last_name}</p>
-                          <p className="text-xs text-slate-500">{member.email || 'No email'} · {member.phone || 'No phone'}</p>
-                        </td>
-                        <td className="px-5 py-3">
-                          <span className="inline-flex text-[10px] uppercase font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-700">{member.status}</span>
-                          <p className="text-xs text-slate-500 mt-1">Joined {member.membership_date}</p>
-                        </td>
-                        <td className="px-5 py-3">
-                          <div className="flex flex-col items-start gap-2">
-                          {linkedProfile ? (
-                            <>
-                              <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-indigo-50 text-indigo-700">Profile linked</span>
-                              <p className="text-xs text-slate-500 mt-1">{loginEnabled ? 'Login enabled' : 'Login disabled'} · {(linkedProfile as any).status || 'active'}</p>
-                            </>
-                          ) : (
-                            <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-amber-50 text-amber-700">No portal account</span>
-                          )}
-                          <button type="button" onClick={() => openMembershipEditor(member)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
-                            <Edit size={13} /> Edit membership
-                          </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+      {actionFeedback && (
+        <div
+          role="status"
+          className={`p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between ${
+            actionFeedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          <span>{actionFeedback.message}</span>
+          <button type="button" onClick={() => setActionFeedback(null)} className="opacity-60 hover:opacity-100 cursor-pointer">
+            <X size={15} />
+          </button>
+        </div>
       )}
 
-      {/* Filter, Search & Archive Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-3">
+      {/* Search & Unified Filter Bar */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
         <div className="relative flex-1 w-full">
           <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input 
@@ -1716,57 +1623,84 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           />
         </div>
 
-        <select 
-          className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none w-full md:w-auto cursor-pointer"
-          value={selectedRole}
-          onChange={(e) => setSelectedRole(e.target.value)}
-        >
-          <option value="all">All Roles</option>
-          <option value="super_admin">Senior Pastors & Admins</option>
-          <option value="pastor">Pastors</option>
-          <option value="leader">Ministry Leaders</option>
-          <option value="worker">Volunteers & Workers</option>
-          <option value="member">Members</option>
-        </select>
-
-        {isAdminOrPastor && (
-          <button
-            type="button"
-            onClick={() => setShowArchived(!showArchived)}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-              showArchived ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-            }`}
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+          <select
+            aria-label="Filter by membership status"
+            className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+            value={membershipStatusFilter}
+            onChange={e => setMembershipStatusFilter(e.target.value)}
           >
-            {showArchived ? 'Viewing Soft-Deleted' : 'View Archived'}
-          </button>
-        )}
+            <option value="all">Membership: All</option>
+            <option value="active">Active Members</option>
+            <option value="inactive">Inactive</option>
+            <option value="suspended">Suspended Membership</option>
+            <option value="transferred">Transferred</option>
+            <option value="archived">Archived</option>
+          </select>
+
+          <select
+            aria-label="Filter by portal access"
+            className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+            value={portalAccessFilter}
+            onChange={e => setPortalAccessFilter(e.target.value)}
+          >
+            <option value="all">Portal Access: All</option>
+            <option value="enabled">Portal Enabled</option>
+            <option value="disabled">Directory Only (No Login)</option>
+          </select>
+
+          <select 
+            aria-label="Filter by role"
+            className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+            value={selectedRole}
+            onChange={(e) => setSelectedRole(e.target.value)}
+          >
+            <option value="all">All Roles</option>
+            <option value="super_admin">Senior Pastors & Admins</option>
+            <option value="pastor">Pastors</option>
+            <option value="leader">Ministry Leaders</option>
+            <option value="worker">Volunteers & Workers</option>
+            <option value="member">Members</option>
+          </select>
+
+          {isAdminOrPastor && (
+            <button
+              type="button"
+              onClick={() => setShowArchived(!showArchived)}
+              className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                showArchived ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {showArchived ? 'Viewing Archived' : 'View Archived'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {isAdminOrPastor && (
-        <div className="pt-2">
-          <h3 className="text-lg font-bold text-slate-900">Portal Accounts & Role Management</h3>
-          <p className="text-xs text-slate-500">Manage sign-in profiles, roles, and account status here. Church membership status is managed separately above.</p>
-        </div>
-      )}
-
-      {/* Member Cards Grid */}
+      {/* Unified Member Cards Grid */}
       {loading ? (
         <div className="p-12 text-center text-slate-400 font-semibold">Loading church directory...</div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-2">
+          <p className="text-sm font-bold text-slate-700">No members match your search or filter criteria.</p>
+          <p className="text-xs text-slate-400">Adjust filters or add a new member to the directory.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map(person => {
-            const personStatus = (person as any).status || 'active';
-            const isSuspended = personStatus === 'suspended';
-            const isArchived = personStatus === 'archived';
-            const isBaptized = Boolean((person as any).is_baptized);
-            const bDate = (person as any).baptism_date;
-            const hasLogin = Boolean((person as any).has_login_credentials ?? true);
+            const portalStatus = person.status || 'active';
+            const membershipStatus = person.membership_status || 'active';
+            const isPortalSuspended = portalStatus === 'suspended';
+            const isMembershipArchived = membershipStatus === 'archived';
+            const isBaptized = Boolean(person.is_baptized);
+            const bDate = person.baptism_date;
+            const portalEnabled = hasPortalAccess(person);
 
             return (
               <div 
                 key={person.id}
                 className={`bg-white rounded-3xl border p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative overflow-hidden ${
-                  isSuspended ? 'border-rose-300 bg-rose-50/20' : isArchived ? 'border-amber-300 bg-amber-50/20 opacity-75' : 'border-slate-200'
+                  isPortalSuspended ? 'border-rose-300 bg-rose-50/20' : isMembershipArchived ? 'border-amber-300 bg-amber-50/20 opacity-80' : 'border-slate-200'
                 }`}
               >
                 <div>
@@ -1787,14 +1721,18 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                           <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
                             {person.primary_role?.replace('_', ' ')}
                           </span>
-                          {isSuspended && (
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                            membershipStatus === 'active'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : membershipStatus === 'transferred'
+                              ? 'bg-sky-50 text-sky-700'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {membershipStatus}
+                          </span>
+                          {portalEnabled && isPortalSuspended && (
                             <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-rose-100 text-rose-700">
-                              Suspended
-                            </span>
-                          )}
-                          {isArchived && (
-                            <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-amber-100 text-amber-800">
-                              Archived
+                              Portal Suspended
                             </span>
                           )}
                         </div>
@@ -1811,7 +1749,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                     </button>
                   </div>
 
-                  {/* Baptism & Login Badges */}
+                  {/* Baptism & Portal Access Badges */}
                   <div className="flex flex-wrap items-center gap-1.5 my-2.5">
                     {isBaptized ? (
                       <span className="px-2.5 py-1 bg-amber-50 text-amber-800 text-[10px] font-bold rounded-lg border border-amber-200 flex items-center gap-1">
@@ -1824,14 +1762,14 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       </span>
                     )}
 
-                    {hasLogin ? (
+                    {portalEnabled ? (
                       <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-lg border border-emerald-200 flex items-center gap-1">
                         <Key size={11} className="text-emerald-600" />
-                        Login Active
+                        Portal Enabled
                       </span>
                     ) : (
-                      <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-lg">
-                        No Credentials
+                      <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-lg border border-slate-200">
+                        No Portal Access
                       </span>
                     )}
                   </div>
@@ -1839,36 +1777,49 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <div className="space-y-1 text-xs text-slate-500">
                     <p className="flex items-center gap-2 truncate">
                       <span className="text-slate-400 font-semibold w-14">Email:</span>
-                      <span className="font-mono text-slate-700">{person.email}</span>
+                      <span className="font-mono text-slate-700 truncate">{person.email || 'Not recorded'}</span>
                     </p>
                     <p className="flex items-center gap-2 truncate">
                       <span className="text-slate-400 font-semibold w-14">Phone:</span>
                       <span className="text-slate-700">{person.phone || 'Not listed'}</span>
+                    </p>
+                    <p className="flex items-center gap-2 truncate">
+                      <span className="text-slate-400 font-semibold w-14">Branch:</span>
+                      <span className="text-slate-700 truncate">{branchNameById.get(person.branch_id) || 'Main Campus'}</span>
                     </p>
                   </div>
                 </div>
 
                 {/* Member Action Controls */}
                 <div className="pt-3 mt-3 border-t border-slate-100 flex items-center gap-1.5">
-                  <a 
-                    href={`mailto:${person.email}`}
-                    className="flex-1 py-2 text-center text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors"
-                  >
-                    Send Email
-                  </a>
+                  {person.email ? (
+                    <a 
+                      href={`mailto:${person.email}`}
+                      className="flex-1 py-2 text-center text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors"
+                    >
+                      Send Email
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setViewingPerson(person)}
+                      className="flex-1 py-2 text-center text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                    >
+                      View Record
+                    </button>
+                  )}
 
                   {isAdminOrPastor && (
                     <>
                       <button
                         type="button"
-                        onClick={() => setCreatedCredsModal({
-                          name: `${person.first_name} ${person.last_name}`,
-                          email: person.email,
-                          pass: (person as any).temporary_password || 'FaithConnect2026!',
-                          isBaptized: isBaptized
-                        })}
-                        title="View / Create Login Credentials"
-                        className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-colors cursor-pointer"
+                        onClick={() => (portalEnabled ? handleDisablePortalFromCard(person) : handleEnablePortalFromCard(person))}
+                        title={portalEnabled ? 'Disable Portal Access (Keep Membership)' : 'Enable Portal Access'}
+                        className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                          portalEnabled
+                            ? 'bg-emerald-50 hover:bg-amber-50 text-emerald-700 hover:text-amber-700'
+                            : 'bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700'
+                        }`}
                       >
                         <Key size={16} />
                       </button>
@@ -1876,29 +1827,31 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       <button
                         type="button"
                         onClick={() => openEditModal(person)}
-                        title="Edit Member Details & Photo"
+                        title="Edit Member Record"
                         className="p-2 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-xl transition-colors cursor-pointer"
                       >
                         <Edit size={16} />
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleToggleSuspend(person)}
-                        title={isSuspended ? "Unsuspend Member" : "Suspend Member Access"}
-                        className={`p-2 rounded-xl transition-colors cursor-pointer ${
-                          isSuspended ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600'
-                        }`}
-                      >
-                        <UserMinus size={16} />
-                      </button>
+                      {portalEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePortalSuspend(person)}
+                          title={isPortalSuspended ? 'Restore Portal Access' : 'Suspend Portal Access'}
+                          className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                            isPortalSuspended ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600'
+                          }`}
+                        >
+                          <UserMinus size={16} />
+                        </button>
+                      )}
 
                       <button
                         type="button"
-                        onClick={() => handleSoftDelete(person)}
-                        title={isArchived ? "Restore Member" : "Soft Delete / Archive Member"}
+                        onClick={() => handleToggleArchiveMembership(person)}
+                        title={isMembershipArchived ? 'Restore Membership Record' : 'Archive Membership Record'}
                         className={`p-2 rounded-xl transition-colors cursor-pointer ${
-                          isArchived ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 hover:bg-amber-50 text-slate-700 hover:text-amber-700'
+                          isMembershipArchived ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 hover:bg-amber-50 text-slate-700 hover:text-amber-700'
                         }`}
                       >
                         <Trash2 size={16} />
@@ -1917,7 +1870,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <h3 className="font-extrabold text-slate-900 text-lg">Member Profile Details</h3>
+              <h3 className="font-extrabold text-slate-900 text-lg">Member Directory Record</h3>
               <button onClick={() => setViewingPerson(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X size={20} />
               </button>
@@ -1929,88 +1882,99 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               </div>
               <div>
                 <h4 className="text-xl font-bold text-slate-900">{viewingPerson.first_name} {viewingPerson.last_name}</h4>
-                <p className="text-xs text-slate-500 font-mono">{viewingPerson.email}</p>
-                <span className="inline-block mt-1 px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-indigo-50 text-indigo-700">
-                  {viewingPerson.primary_role?.replace('_', ' ')}
-                </span>
+                <p className="text-xs text-slate-500 font-mono">{viewingPerson.email || 'No email recorded'}</p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-indigo-50 text-indigo-700">
+                    {viewingPerson.primary_role?.replace('_', ' ')}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase bg-emerald-50 text-emerald-700">
+                    {viewingPerson.membership_status || 'active'}
+                  </span>
+                </div>
               </div>
             </div>
 
             <div className="space-y-2 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-700">
               <div className="flex justify-between"><span className="text-slate-400">Phone:</span> <span className="font-bold">{viewingPerson.phone || 'N/A'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Gender:</span> <span className="font-bold capitalize">{viewingPerson.gender || 'Not specified'}</span></div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Date of Birth:</span> 
                 <span className="font-bold text-purple-700">
-                  {(viewingPerson as any).date_of_birth ? new Date((viewingPerson as any).date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
+                  {viewingPerson.date_of_birth ? new Date(viewingPerson.date_of_birth).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not set'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{(viewingPerson as any).marital_status || 'Single'}</span></div>
-              {(viewingPerson as any).marital_status === 'Married' && (
+              <div className="flex justify-between"><span className="text-slate-400">Marital Status:</span> <span className="font-bold">{viewingPerson.marital_status || 'Single'}</span></div>
+              {viewingPerson.marital_status === 'Married' && (
                 <div className="flex justify-between">
                   <span className="text-slate-400">Marriage Anniversary:</span> 
                   <span className="font-bold text-purple-800">
-                    {(viewingPerson as any).marriage_date ? new Date((viewingPerson as any).marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                    {viewingPerson.marriage_date ? new Date(viewingPerson.marriage_date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
                   </span>
                 </div>
               )}
-              <div className="flex justify-between"><span className="text-slate-400">Church Branch:</span> <span className="font-bold">Grace Cathedral (Main Sanctuary)</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Church Branch:</span> <span className="font-bold">{branchNameById.get(viewingPerson.branch_id) || 'Grace Cathedral'}</span></div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Water Baptism:</span> 
                 <span className="font-bold text-amber-700">
-                  {(viewingPerson as any).is_baptized ? `Baptized (${(viewingPerson as any).baptism_date || 'Oct 2022'})` : 'Not Baptized'}
+                  {viewingPerson.is_baptized ? `Baptized (${viewingPerson.baptism_date || 'Date logged'})` : 'Not Baptized'}
                 </span>
               </div>
-              <div className="flex justify-between"><span className="text-slate-400">Login Account:</span> <span className="font-bold text-emerald-600">Active</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">System Status:</span> <span className="font-bold uppercase text-emerald-600">{(viewingPerson as any).status || 'Active'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Member Since:</span> <span className="font-bold">{new Date(viewingPerson.created_at).toLocaleDateString()}</span></div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Portal Access:</span>
+                <span className={`font-bold ${hasPortalAccess(viewingPerson) ? 'text-emerald-600' : 'text-slate-500'}`}>
+                  {hasPortalAccess(viewingPerson) ? `Enabled (${viewingPerson.status || 'active'})` : 'Directory Only (No Login)'}
+                </span>
+              </div>
+              <div className="flex justify-between"><span className="text-slate-400">Membership Since:</span> <span className="font-bold">{viewingPerson.membership_date || new Date(viewingPerson.created_at).toLocaleDateString()}</span></div>
             </div>
 
-            <div className="pt-2 flex justify-end">
+            <div className="pt-2 flex justify-end gap-2">
+              {isAdminOrPastor && (
+                <button
+                  type="button"
+                  onClick={() => { const target = viewingPerson; setViewingPerson(null); openEditModal(target); }}
+                  className="px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 cursor-pointer"
+                >
+                  Edit Member
+                </button>
+              )}
               <button onClick={() => setViewingPerson(null)} className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 cursor-pointer">
-                Close Window
+                Close
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- Created Login Credentials Modal --- */}
-      {createdCredsModal && (
+      {/* --- Portal Invitation / Activation Modal (Zero Plaintext Passwords) --- */}
+      {portalInviteModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-emerald-200 space-y-5">
             <div className="flex justify-between items-center pb-2 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <Key className="text-emerald-600" size={20} />
-                <h3 className="font-extrabold text-slate-900 text-base">Member Login Credentials</h3>
+                <h3 className="font-extrabold text-slate-900 text-base">Portal Access Provisioned</h3>
               </div>
-              <button onClick={() => setCreatedCredsModal(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button onClick={() => { setPortalInviteModal(null); setCopiedInvite(false); }} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X size={20} />
               </button>
             </div>
 
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs space-y-2">
-              <p className="font-bold text-emerald-900">
-                Credentials Ready for {createdCredsModal.name}
-              </p>
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs space-y-1.5">
+              <p className="font-bold text-emerald-900">Portal invitation ready for {portalInviteModal.name}</p>
               <p className="text-emerald-700">
-                Provide these details to the member so they can log in to the FaithConnect portal.
+                No password is stored in the directory. Share this activation link so the member can set their own password.
               </p>
             </div>
 
-            <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs font-mono">
+            <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs">
               <div>
-                <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Login Email</span>
-                <p className="text-slate-900 font-bold text-sm">{createdCredsModal.email}</p>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Portal Email</span>
+                <p className="text-slate-900 font-bold font-mono">{portalInviteModal.invite.email}</p>
               </div>
               <div>
-                <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Temporary Password</span>
-                <p className="text-indigo-600 font-bold text-sm">{createdCredsModal.pass}</p>
-              </div>
-              <div>
-                <span className="text-[10px] font-sans font-bold text-slate-400 uppercase block">Baptism Status</span>
-                <p className="text-amber-800 font-bold font-sans">
-                  {createdCredsModal.isBaptized ? '✓ Baptized Member' : 'Member'}
-                </p>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Activation Link</span>
+                <p className="text-indigo-600 font-mono text-[11px] break-all">{portalInviteModal.invite.setupUrl}</p>
               </div>
             </div>
 
@@ -2018,16 +1982,18 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <button 
                 type="button"
                 onClick={() => {
-                  navigator.clipboard?.writeText(`Email: ${createdCredsModal.email}\nPassword: ${createdCredsModal.pass}`);
-                  alert('Login details copied to clipboard!');
+                  const fullUrl = `${window.location.origin}${portalInviteModal.invite.setupUrl}`;
+                  navigator.clipboard?.writeText(fullUrl);
+                  setCopiedInvite(true);
+                  setTimeout(() => setCopiedInvite(false), 2500);
                 }}
                 className="px-4 py-2.5 bg-emerald-100 text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-200 cursor-pointer"
               >
-                Copy Details
+                {copiedInvite ? 'Copied Link!' : 'Copy Activation Link'}
               </button>
               <button 
                 type="button" 
-                onClick={() => setCreatedCredsModal(null)} 
+                onClick={() => { setPortalInviteModal(null); setCopiedInvite(false); }} 
                 className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 cursor-pointer"
               >
                 Done
@@ -2037,22 +2003,44 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
         </div>
       )}
 
-      {/* --- Add Member Modal --- */}
-      {addModalOpen && (
+      {/* --- Unified 3-Section Add / Edit Member Modal --- */}
+      {memberModalMode && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-start justify-center p-3 sm:p-6 pt-16 sm:pt-20 pb-12 overflow-y-auto">
-          <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-xl w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-base">Add New Congregation Member</h3>
-              <button onClick={() => setAddModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-2xl w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg">
+                  {memberModalMode === 'add' ? 'Add New Member' : 'Edit Member Record'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  One canonical church directory record—portal login access is optional.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={formSaving}
+                onClick={() => { setMemberModalMode(null); setEditingPerson(null); }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleAddMember} className="space-y-3 text-xs">
-              {/* Profile Pic Upload Input */}
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase block mb-1">Profile Photo Upload</label>
-                <div className="flex items-center gap-3 p-3 bg-slate-50 border border-dashed border-slate-300 rounded-xl">
+            <form onSubmit={handleUnifiedSubmit} className="space-y-5 text-xs">
+              {formError && (
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-semibold flex items-start gap-2">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Section 1: Personal Information */}
+              <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
+                  1. Personal Information
+                </h4>
+
+                <div className="flex items-center gap-3 p-3 bg-white border border-dashed border-slate-300 rounded-xl">
                   {formAvatar ? (
                     <img src={formAvatar} alt="Preview" className="w-12 h-12 rounded-full object-cover border" />
                   ) : (
@@ -2062,88 +2050,34 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   )}
                   <input type="file" accept="image/*" onChange={handleImageFileChange} className="text-xs text-slate-500 cursor-pointer" />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">First Name</label>
-                  <input type="text" required value={formFirstName} onChange={e => setFormFirstName(e.target.value)} placeholder="e.g. Samuel" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Last Name</label>
-                  <input type="text" required value={formLastName} onChange={e => setFormLastName(e.target.value)} placeholder="e.g. Adebayo" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} placeholder="member@domain.com" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Phone Number</label>
-                <input type="text" value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+1 (555) 000-0000" className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                    <option value="member">Member</option>
-                    <option value="worker">Worker</option>
-                    <option value="leader">Leader (Dept Lead)</option>
-                    <option value="pastor">Pastor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Initial Status</label>
-                  <select value={formStatus} onChange={e => setFormStatus(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                    <option value="active">Active</option>
-                    <option value="suspended">Suspended</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">
-                  Assigned Department Console {formRole === 'leader' && <span className="text-indigo-600 font-extrabold">(Leader Assignment)</span>}
-                </label>
-                <select
-                  value={formAssignedDepartment}
-                  onChange={e => setFormAssignedDepartment(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none font-semibold cursor-pointer"
-                >
-                  <option value="Media & IT Ministry">Media & IT Ministry</option>
-                  <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-                  <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-                  <option value="Children Ministry">Children Ministry</option>
-                  <option value="Outreach & Evangelism">Outreach & Evangelism</option>
-                  <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-                  <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
-                </select>
-              </div>
-
-              {/* Date of Birth & Marital Status Section */}
-              <div className="p-3 bg-purple-50/60 rounded-2xl border border-purple-200 space-y-2">
-                <span className="font-bold text-purple-900 block">🎂 Birth Date & Marital Status</span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Date of Birth</label>
-                    <input 
-                      type="date" 
-                      value={formDob} 
-                      onChange={e => setFormDob(e.target.value)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs" 
-                    />
+                    <label className="font-bold text-slate-600 uppercase block mb-1">First Name *</label>
+                    <input type="text" required value={formFirstName} onChange={e => setFormFirstName(e.target.value)} placeholder="e.g. Samuel" className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none" />
                   </div>
                   <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Marital Status</label>
-                    <select 
-                      value={formMaritalStatus} 
-                      onChange={e => setFormMaritalStatus(e.target.value as any)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs font-semibold"
-                    >
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Last Name *</label>
+                    <input type="text" required value={formLastName} onChange={e => setFormLastName(e.target.value)} placeholder="e.g. Kamara" className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Gender</label>
+                    <select value={formGender} onChange={e => setFormGender(e.target.value as 'male' | 'female' | 'other')} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none font-semibold">
+                      <option value="other">Not specified</option>
+                      <option value="female">Female</option>
+                      <option value="male">Male</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Date of Birth</label>
+                    <input type="date" value={formDob} onChange={e => setFormDob(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none" />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Marital Status</label>
+                    <select value={formMaritalStatus} onChange={e => setFormMaritalStatus(e.target.value as any)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none font-semibold">
                       <option value="Single">Single</option>
                       <option value="Married">Married</option>
                       <option value="Widowed">Widowed</option>
@@ -2154,358 +2088,81 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
                 {formMaritalStatus === 'Married' && (
                   <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Marriage Anniversary Date</label>
-                    <input 
-                      type="date" 
-                      value={formMarriageDate} 
-                      onChange={e => setFormMarriageDate(e.target.value)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs" 
-                    />
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Marriage Anniversary Date</label>
+                    <input type="date" value={formMarriageDate} onChange={e => setFormMarriageDate(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none" />
                   </div>
                 )}
-              </div>
 
-              {/* Water Baptism Record Section */}
-              <div className="p-3 bg-amber-50/60 rounded-2xl border border-amber-200 space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-amber-900">
-                  <input 
-                    type="checkbox" 
-                    checked={formIsBaptized} 
-                    onChange={e => setFormIsBaptized(e.target.checked)} 
-                    className="w-4 h-4 text-amber-600 rounded"
-                  />
-                  <span>Member is Water Baptized</span>
-                </label>
-
-                {formIsBaptized && (
-                  <div className="space-y-2 pt-1">
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Baptism Date</label>
-                      <input 
-                        type="date" 
-                        value={formBaptismDate} 
-                        onChange={e => setFormBaptismDate(e.target.value)} 
-                        className="w-full p-2 bg-white border rounded-xl outline-none" 
-                      />
-                    </div>
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Officiating Minister</label>
-                      <input 
-                        type="text" 
-                        value={formBaptizedBy} 
-                        onChange={e => setFormBaptizedBy(e.target.value)} 
-                        placeholder="e.g. Rev. Sarah Johnson" 
-                        className="w-full p-2 bg-white border rounded-xl outline-none" 
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Create Login Credentials Section */}
-              <div className="p-3 bg-indigo-50/60 rounded-2xl border border-indigo-200 space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-indigo-950">
-                  <input 
-                    type="checkbox" 
-                    checked={formCreateCredentials} 
-                    onChange={e => setFormCreateCredentials(e.target.checked)} 
-                    className="w-4 h-4 text-indigo-600 rounded"
-                  />
-                  <span>Create Login Account for Member</span>
-                </label>
-
-                {formCreateCredentials && (
-                  <div className="space-y-2 pt-1">
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Initial Password</label>
-                      <div className="flex gap-1.5">
-                        <input 
-                          type="text" 
-                          value={formPassword} 
-                          onChange={e => setFormPassword(e.target.value)} 
-                          className="flex-1 p-2 bg-white border rounded-xl font-mono outline-none" 
-                        />
-                        <button 
-                          type="button" 
-                          onClick={() => setFormPassword(`Grace${Math.floor(1000 + Math.random() * 9000)}!`)} 
-                          className="px-2.5 py-1 bg-indigo-100 text-indigo-700 font-bold rounded-xl text-[11px]"
-                        >
-                          Gen
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setAddModalOpen(false)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">Cancel</button>
-                <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Create Member</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- Standalone Church Membership Registration --- */}
-      {standaloneModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-start justify-center p-3 sm:p-6 pt-16 overflow-y-auto">
-          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 my-auto">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-900">Register Church Member</h3>
-                <p className="text-xs text-slate-500 mt-1">This creates a membership record only—not a login account.</p>
-              </div>
-              <button type="button" onClick={() => setStandaloneModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-            </div>
-            <form onSubmit={handleStandaloneRegistration} className="space-y-3 pt-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <label className="font-bold text-slate-600">First name
-                  <input required value={standaloneFirstName} onChange={e => setStandaloneFirstName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-                <label className="font-bold text-slate-600">Last name
-                  <input required value={standaloneLastName} onChange={e => setStandaloneLastName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="font-bold text-slate-600">Email (optional)
-                  <input type="email" value={standaloneEmail} onChange={e => setStandaloneEmail(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-                <label className="font-bold text-slate-600">Phone (optional)
-                  <input value={standalonePhone} onChange={e => setStandalonePhone(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="font-bold text-slate-600">Gender
-                  <select value={standaloneGender} onChange={e => setStandaloneGender(e.target.value as Member['gender'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
-                    <option value="other">Not specified</option><option value="female">Female</option><option value="male">Male</option>
-                  </select>
-                </label>
-                <label className="font-bold text-slate-600">Membership date
-                  <input required type="date" value={standaloneMembershipDate} onChange={e => setStandaloneMembershipDate(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl" />
-                </label>
-              </div>
-              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-2">
-                <label className="font-bold text-indigo-900 block">Link an existing portal account (optional)</label>
-                <select value={standaloneProfileId} onChange={e => setStandaloneProfileId(e.target.value)} className="w-full p-2.5 bg-white border rounded-xl">
-                  <option value="">Do not link — membership only</option>
-                  {profiles.map(existing => <option key={existing.id} value={existing.id}>{existing.first_name} {existing.last_name} · {existing.email}</option>)}
-                </select>
-                <p className="text-[10px] text-indigo-700">Only existing accounts are listed. No account or credentials will be created.</p>
-              </div>
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 space-y-2">
-                <label className="flex items-center gap-2 font-bold text-amber-900">
-                  <input type="checkbox" checked={standaloneIsBaptized} onChange={e => setStandaloneIsBaptized(e.target.checked)} />
-                  Baptized
-                </label>
-                {standaloneIsBaptized && <label className="block font-bold text-slate-600">Baptism date
-                  <input type="date" value={standaloneBaptismDate} onChange={e => setStandaloneBaptismDate(e.target.value)} className="mt-1 w-full p-2.5 bg-white border rounded-xl" />
-                </label>}
-              </div>
-              {standaloneError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{standaloneError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setStandaloneModalOpen(false)} className="px-4 py-2 font-bold text-slate-500">Cancel</button>
-                <button type="submit" disabled={standaloneSaving} className="px-5 py-2.5 bg-emerald-600 disabled:opacity-50 text-white font-bold rounded-xl">{standaloneSaving ? 'Saving…' : 'Register Member'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- Church Membership Record Editor --- */}
-      {editingMembership && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[115] flex items-start justify-center p-3 sm:p-6 pt-16 overflow-y-auto">
-          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 my-auto">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-900">Edit Church Membership</h3>
-                <p className="text-xs text-slate-500 mt-1">Membership status changes do not alter portal login access or roles.</p>
-              </div>
-              <button type="button" onClick={() => setEditingMembership(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-            </div>
-            <form onSubmit={handleMembershipUpdate} className="space-y-3 pt-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <label className="font-bold text-slate-600">First name
-                  <input required value={membershipEditFirstName} onChange={e => setMembershipEditFirstName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-                <label className="font-bold text-slate-600">Last name
-                  <input required value={membershipEditLastName} onChange={e => setMembershipEditLastName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="font-bold text-slate-600">Email
-                  <input type="email" value={membershipEditEmail} onChange={e => setMembershipEditEmail(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-                <label className="font-bold text-slate-600">Phone
-                  <input value={membershipEditPhone} onChange={e => setMembershipEditPhone(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
-                </label>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <label className="font-bold text-slate-600">Gender
-                  <select value={membershipEditGender} onChange={e => setMembershipEditGender(e.target.value as Member['gender'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
-                    <option value="other">Not specified</option><option value="female">Female</option><option value="male">Male</option>
-                  </select>
-                </label>
-                <label className="font-bold text-slate-600">Membership date
-                  <input required type="date" value={membershipEditDate} onChange={e => setMembershipEditDate(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl" />
-                </label>
-                <label className="font-bold text-slate-600">Membership status
-                  <select value={membershipEditStatus} onChange={e => setMembershipEditStatus(e.target.value as Member['status'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
-                    <option value="active">Active</option><option value="inactive">Inactive</option><option value="suspended">Suspended</option><option value="transferred">Transferred</option><option value="archived">Archived</option>
-                  </select>
-                </label>
-              </div>
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 space-y-2">
-                <label className="flex items-center gap-2 font-bold text-amber-900">
-                  <input type="checkbox" checked={membershipEditBaptized} onChange={e => setMembershipEditBaptized(e.target.checked)} /> Baptized
-                </label>
-                {membershipEditBaptized && <label className="block font-bold text-slate-600">Baptism date
-                  <input type="date" value={membershipEditBaptismDate} onChange={e => setMembershipEditBaptismDate(e.target.value)} className="mt-1 w-full p-2.5 bg-white border rounded-xl" />
-                </label>}
-              </div>
-              {membershipEditError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{membershipEditError}</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setEditingMembership(null)} className="px-4 py-2 font-bold text-slate-500">Cancel</button>
-                <button type="submit" disabled={membershipEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl">{membershipEditSaving ? 'Saving…' : 'Save membership'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- Edit Member Modal --- */}
-      {editingPerson && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-base">Edit Member Details</h3>
-              <button type="button" disabled={profileEditSaving} onClick={() => setEditingPerson(null)} className="text-slate-400 hover:text-slate-600 disabled:opacity-50 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
-              {profileEditError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{profileEditError}</p>}
-              {/* Profile Pic Upload Input */}
-              <div>
-                <label className="text-xs font-bold text-slate-600 uppercase block mb-1">Update Profile Photo</label>
-                <div className="flex items-center gap-3 p-3 bg-slate-50 border border-dashed border-slate-300 rounded-xl">
-                  {formAvatar ? (
-                    <img src={formAvatar} alt="Preview" className="w-12 h-12 rounded-full object-cover border" />
-                  ) : (
-                    <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
-                      <Upload size={20} />
-                    </div>
-                  )}
-                  <input type="file" accept="image/*" onChange={handleImageFileChange} className="text-xs text-slate-500 cursor-pointer" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">First Name</label>
-                  <input type="text" required value={formFirstName} onChange={e => setFormFirstName(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Last Name</label>
-                  <input type="text" required value={formLastName} onChange={e => setFormLastName(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Email Address</label>
-                <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">Phone Number</label>
-                <input type="text" value={formPhone} onChange={e => setFormPhone(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Role Privilege</label>
-                  <select value={formRole} onChange={e => setFormRole(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                    <option value="member">Member</option>
-                    <option value="worker">Worker</option>
-                    <option value="leader">Leader (Dept Lead)</option>
-                    <option value="pastor">Pastor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Account Status</label>
-                  <select value={formStatus} onChange={e => setFormStatus(e.target.value)} className="w-full p-2.5 bg-slate-50 border rounded-xl outline-none font-semibold">
-                    <option value="active">Active</option>
-                    <option value="suspended">Suspended</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-600 uppercase block mb-1">
-                  Assigned Department Console {formRole === 'leader' && <span className="text-indigo-600 font-extrabold">(Leader Assignment)</span>}
-                </label>
-                <select
-                  value={formAssignedDepartment}
-                  onChange={e => setFormAssignedDepartment(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none font-semibold cursor-pointer"
-                >
-                  <option value="Media & IT Ministry">Media & IT Ministry</option>
-                  <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-                  <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-                  <option value="Children Ministry">Children Ministry</option>
-                  <option value="Outreach & Evangelism">Outreach & Evangelism</option>
-                  <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-                  <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
-                </select>
-              </div>
-
-              {/* Date of Birth & Marital Status Section */}
-              <div className="p-3 bg-purple-50/60 rounded-2xl border border-purple-200 space-y-2">
-                <span className="font-bold text-purple-900 block">🎂 Birth Date & Marital Status</span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Date of Birth</label>
-                    <input 
-                      type="date" 
-                      value={formDob} 
-                      onChange={e => setFormDob(e.target.value)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs" 
-                    />
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Phone Number</label>
+                    <input type="text" value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+1 (555) 000-0000" className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none" />
                   </div>
                   <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Marital Status</label>
-                    <select 
-                      value={formMaritalStatus} 
-                      onChange={e => setFormMaritalStatus(e.target.value as any)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs font-semibold"
-                    >
-                      <option value="Single">Single</option>
-                      <option value="Married">Married</option>
-                      <option value="Widowed">Widowed</option>
-                      <option value="Divorced">Divorced</option>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">
+                      Email Address {formEnablePortal ? '*' : '(Optional)'}
+                    </label>
+                    <input
+                      type="email"
+                      required={formEnablePortal}
+                      value={formEmail}
+                      onChange={e => setFormEmail(e.target.value)}
+                      placeholder={formEnablePortal ? 'member@domain.com' : 'Optional unless enabling portal'}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Church Membership Information */}
+              <div className="p-4 bg-amber-50/40 rounded-2xl border border-amber-200 space-y-3">
+                <h4 className="font-extrabold text-amber-950 uppercase tracking-wider text-[11px]">
+                  2. Church Membership Information
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Branch *</label>
+                    <select value={formBranchId} onChange={e => setFormBranchId(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold">
+                      {(branches.length > 0 ? branches : [{ id: 'branch-1', name: 'Grace Cathedral (Main Campus)' } as ChurchBranch]).map(branch => (
+                        <option key={branch.id} value={branch.id}>{branch.name}</option>
+                      ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Membership Status</label>
+                    <select value={formMembershipStatus} onChange={e => setFormMembershipStatus(e.target.value as MembershipStatus)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold">
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                      <option value="suspended">Suspended</option>
+                      <option value="transferred">Transferred</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-600 uppercase block mb-1">Membership Date *</label>
+                    <input type="date" required value={formMembershipDate} onChange={e => setFormMembershipDate(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none" />
+                  </div>
                 </div>
 
-                {formMaritalStatus === 'Married' && (
-                  <div>
-                    <label className="font-bold text-slate-600 block mb-0.5">Marriage Anniversary Date</label>
-                    <input 
-                      type="date" 
-                      value={formMarriageDate} 
-                      onChange={e => setFormMarriageDate(e.target.value)} 
-                      className="w-full p-2 bg-white border rounded-xl outline-none text-xs" 
-                    />
-                  </div>
-                )}
-              </div>
+                <div>
+                  <label className="font-bold text-slate-600 uppercase block mb-1">Assigned Department</label>
+                  <select
+                    value={formAssignedDepartment}
+                    onChange={e => setFormAssignedDepartment(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold cursor-pointer"
+                  >
+                    <option value="Media & IT Ministry">Media & IT Ministry</option>
+                    <option value="Voices of Grace Choir">Voices of Grace Choir</option>
+                    <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
+                    <option value="Children Ministry">Children Ministry</option>
+                    <option value="Outreach & Evangelism">Outreach & Evangelism</option>
+                    <option value="Ushers & Hospitality">Ushers & Hospitality</option>
+                    <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+                  </select>
+                </div>
 
-              {/* Water Baptism Record Section */}
-              <div className="p-3 bg-amber-50/60 rounded-2xl border border-amber-200 space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-amber-900">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-amber-900 pt-1">
                   <input 
                     type="checkbox" 
                     checked={formIsBaptized} 
@@ -2516,59 +2173,86 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 </label>
 
                 {formIsBaptized && (
-                  <div className="space-y-2 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
                       <label className="font-bold text-slate-600 block mb-0.5">Baptism Date</label>
-                      <input 
-                        type="date" 
-                        value={formBaptismDate} 
-                        onChange={e => setFormBaptismDate(e.target.value)} 
-                        className="w-full p-2 bg-white border rounded-xl outline-none" 
-                      />
+                      <input type="date" value={formBaptismDate} onChange={e => setFormBaptismDate(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none" />
                     </div>
                     <div>
                       <label className="font-bold text-slate-600 block mb-0.5">Officiating Minister</label>
-                      <input 
-                        type="text" 
-                        value={formBaptizedBy} 
-                        onChange={e => setFormBaptizedBy(e.target.value)} 
-                        className="w-full p-2 bg-white border rounded-xl outline-none" 
-                      />
+                      <input type="text" value={formBaptizedBy} onChange={e => setFormBaptizedBy(e.target.value)} placeholder="e.g. Rev. Sarah Johnson" className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none" />
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Login Credentials Section */}
-              <div className="p-3 bg-indigo-50/60 rounded-2xl border border-indigo-200 space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-indigo-950">
-                  <input 
-                    type="checkbox" 
-                    checked={formCreateCredentials} 
-                    onChange={e => setFormCreateCredentials(e.target.checked)} 
-                    className="w-4 h-4 text-indigo-600 rounded"
-                  />
-                  <span>Generate / Enable Portal Login</span>
-                </label>
+              {/* Section 3: Portal Account (Optional) */}
+              <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-200 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-extrabold text-indigo-950 uppercase tracking-wider text-[11px]">
+                      3. Portal Account (Optional)
+                    </h4>
+                    <p className="text-[11px] text-indigo-700 mt-0.5">
+                      {formEnablePortal
+                        ? 'Portal login will be linked via an activation invite (no password stored on profile).'
+                        : 'Directory record only—no portal login or auth user will be created.'}
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-indigo-950 shrink-0">
+                    <input 
+                      type="checkbox" 
+                      checked={formEnablePortal} 
+                      onChange={e => setFormEnablePortal(e.target.checked)} 
+                      className="w-4 h-4 text-indigo-600 rounded"
+                    />
+                    <span>Enable Portal Access</span>
+                  </label>
+                </div>
 
-                {formCreateCredentials && (
-                  <div className="space-y-2 pt-1">
+                {formEnablePortal && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Password</label>
-                      <input 
-                        type="text" 
-                        value={formPassword} 
-                        onChange={e => setFormPassword(e.target.value)} 
-                        className="w-full p-2 bg-white border rounded-xl font-mono outline-none" 
-                      />
+                      <label className="font-bold text-slate-600 uppercase block mb-1">Portal Role</label>
+                      <select value={formRole} onChange={e => setFormRole(e.target.value as AppRole)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold">
+                        <option value="member">Member</option>
+                        <option value="worker">Worker</option>
+                        <option value="leader">Leader (Dept Lead)</option>
+                        <option value="finance_officer">Finance Officer</option>
+                        <option value="pastor">Pastor</option>
+                        <option value="admin">Admin</option>
+                        <option value="district_admin">District Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-600 uppercase block mb-1">Portal Account Status</label>
+                      <select value={formPortalStatus} onChange={e => setFormPortalStatus(e.target.value as PortalAccountStatus)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold">
+                        <option value="active">Active</option>
+                        <option value="suspended">Suspended</option>
+                        <option value="archived">Archived</option>
+                      </select>
                     </div>
                   </div>
                 )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" disabled={profileEditSaving} onClick={() => setEditingPerson(null)} className="px-4 py-2 font-bold text-slate-500 disabled:opacity-50 cursor-pointer">Cancel</button>
-                <button type="submit" disabled={profileEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">{profileEditSaving ? 'Saving…' : 'Save Member Changes'}</button>
+                <button
+                  type="button"
+                  disabled={formSaving}
+                  onClick={() => { setMemberModalMode(null); setEditingPerson(null); }}
+                  className="px-4 py-2 font-bold text-slate-500 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={formSaving}
+                  className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer"
+                >
+                  {formSaving ? 'Saving…' : memberModalMode === 'add' ? 'Save Member' : 'Save Changes'}
+                </button>
               </div>
             </form>
           </div>
@@ -3594,7 +3278,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [addRosterPhone, setAddRosterPhone] = useState('');
 
   // Registered Congregation Members Directory
-  const [congregationMembers, setCongregationMembers] = useState<Member[]>([]);
+  const [congregationMembers, setCongregationMembers] = useState<Profile[]>([]);
   const [selectedCongregationMemberId, setSelectedCongregationMemberId] = useState('');
 
   useEffect(() => {
@@ -8958,27 +8642,10 @@ const CalendarPage = ({ profile }: { profile: Profile | null }) => {
         const isAtCapacity = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
         const regStatus: EventRegistration['status'] = isAtCapacity ? 'waitlist' : 'confirmed';
 
-        // Link the RSVP to the church membership record when this account has one.
-        // Account-only users can still register; member_id remains optional.
-        let memberId: string | undefined;
-        if (profile?.id) {
-          const { data: linkedMember, error: memberLookupError } = await supabase
-            .from('members')
-            .select('id')
-            .eq('profile_id', profile.id)
-            .maybeSingle();
-
-          if (memberLookupError) {
-            console.warn('Unable to resolve linked membership record for event RSVP:', memberLookupError);
-          } else {
-            memberId = linkedMember?.id;
-          }
-        }
-
         const newReg: Omit<EventRegistration, 'id'> = {
           event_id: evt.id,
-          user_id: profile?.id,
-          member_id: memberId,
+          user_id: profile?.auth_user_id || profile?.id,
+          member_id: profile?.id,
           member_name: userName,
           email: userEmail,
           phone: profile?.phone || '',
@@ -10197,12 +9864,6 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
         return;
       }
 
-      // Keep the linked church membership identity aligned with the account profile.
-      await syncLinkedMemberProfile(profile.id, {
-        first_name: updatedProfileData.first_name,
-        last_name: updatedProfileData.last_name
-      });
-
       // Keep the signed-in profile, header, and other profile consumers in sync.
       window.dispatchEvent(new CustomEvent('profile-updated', {
         detail: { id: profile.id, ...updatedProfileData }
@@ -10994,23 +10655,41 @@ const App = () => {
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data } = await supabase
+      let { data } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', userId)
+        .eq('auth_user_id', userId)
         .maybeSingle();
-      
+
+      if (!data) {
+        const fallback = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        data = fallback.data;
+      }
+
       if (data) {
+        if (data.status === 'suspended' || data.status === 'archived') {
+          await supabase.auth.signOut();
+          setSession(null);
+          setProfile(null);
+          return;
+        }
         setProfile(data);
       } else {
         setProfile({
           id: userId,
+          auth_user_id: userId,
           branch_id: 'branch-1',
           first_name: 'Faithful',
           last_name: 'Member',
           email: session?.user?.email || 'user@faithconnect.church',
           phone: '',
           primary_role: 'member',
+          status: 'active',
+          membership_status: 'active',
           created_at: new Date().toISOString()
         });
       }

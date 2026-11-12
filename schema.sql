@@ -10,7 +10,8 @@ DO $$ BEGIN
     'pastor',
     'leader',
     'worker',
-    'member'
+    'member',
+    'finance_officer'
   );
 EXCEPTION
   WHEN duplicate_object THEN null;
@@ -82,32 +83,23 @@ CREATE TABLE IF NOT EXISTS public.church_branches (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 4. PROFILES TABLE (Linked with auth.users)
+-- 4. CANONICAL PROFILES / MEMBER DIRECTORY TABLE (Optional auth.users link via auth_user_id)
 CREATE TABLE IF NOT EXISTS public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   branch_id UUID REFERENCES public.church_branches(id) ON DELETE SET NULL,
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
-  email TEXT NOT NULL,
+  email TEXT DEFAULT '',
   phone TEXT DEFAULT '',
+  gender TEXT CHECK (gender IN ('male', 'female', 'other')) DEFAULT 'other',
   avatar_url TEXT DEFAULT '',
   primary_role app_role DEFAULT 'member',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- 5. MEMBERS TABLE
-CREATE TABLE IF NOT EXISTS public.members (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  branch_id UUID NOT NULL REFERENCES public.church_branches(id) ON DELETE CASCADE,
-  first_name TEXT NOT NULL,
-  last_name TEXT NOT NULL,
-  gender TEXT CHECK (gender IN ('male', 'female', 'other')) DEFAULT 'male',
-  status member_status DEFAULT 'active',
+  status TEXT CHECK (status IN ('active', 'suspended', 'archived')) DEFAULT 'active',
+  membership_status member_status DEFAULT 'active',
   membership_date DATE DEFAULT CURRENT_DATE,
-  email TEXT,
-  phone TEXT,
-  avatar_url TEXT,
+  department_name TEXT,
+  assigned_department TEXT,
   is_baptized BOOLEAN DEFAULT false,
   baptism_date DATE,
   baptized_by TEXT,
@@ -117,8 +109,13 @@ CREATE TABLE IF NOT EXISTS public.members (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 6. MEMBER TRANSFERS TABLE
--- 6. MINISTRIES AND MINISTRY MEMBERSHIP
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_auth_user_id_unique
+  ON public.profiles(auth_user_id)
+  WHERE auth_user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_profiles_membership_status
+  ON public.profiles(membership_status);
+
+-- 5. MINISTRIES AND MINISTRY MEMBERSHIP
 CREATE TABLE IF NOT EXISTS public.ministries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
@@ -136,7 +133,7 @@ CREATE TABLE IF NOT EXISTS public.ministries (
 CREATE TABLE IF NOT EXISTS public.ministry_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ministry_id UUID NOT NULL REFERENCES public.ministries(id) ON DELETE CASCADE,
-  member_id UUID NOT NULL REFERENCES public.members(id) ON DELETE CASCADE,
+  member_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   role_title TEXT NOT NULL DEFAULT 'Team Member',
   duty TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK (status IN ('active', 'on_leave', 'in_training', 'inactive')) DEFAULT 'active',
@@ -148,9 +145,10 @@ CREATE TABLE IF NOT EXISTS public.ministry_members (
 CREATE INDEX IF NOT EXISTS idx_ministry_members_ministry_id ON public.ministry_members(ministry_id);
 CREATE INDEX IF NOT EXISTS idx_ministry_members_member_id ON public.ministry_members(member_id);
 
+-- 6. MEMBER TRANSFERS TABLE
 CREATE TABLE IF NOT EXISTS public.member_transfers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  member_id UUID NOT NULL REFERENCES public.members(id) ON DELETE CASCADE,
+  member_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   from_branch_id UUID NOT NULL REFERENCES public.church_branches(id),
   to_branch_id UUID NOT NULL REFERENCES public.church_branches(id),
   status TEXT CHECK (status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
@@ -219,7 +217,7 @@ CREATE TABLE IF NOT EXISTS public.event_registrations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
   user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  member_id UUID REFERENCES public.members(id) ON DELETE SET NULL,
+  member_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   member_name TEXT NOT NULL,
   email TEXT NOT NULL,
   phone TEXT DEFAULT '',
@@ -234,7 +232,6 @@ CREATE TABLE IF NOT EXISTS public.event_registrations (
 ALTER TABLE public.districts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.church_branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.member_transfers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.streams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stream_chat_messages ENABLE ROW LEVEL SECURITY;
@@ -249,25 +246,52 @@ CREATE POLICY "Public read streams" ON public.streams FOR SELECT USING (true);
 CREATE POLICY "Public read profiles" ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Public read events" ON public.events FOR SELECT USING (true);
 CREATE POLICY "Public read event registrations" ON public.event_registrations FOR SELECT USING (true);
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = auth_user_id);
 CREATE POLICY "Public read chat messages" ON public.stream_chat_messages FOR SELECT USING (true);
 CREATE POLICY "Authenticated users can send chat messages" ON public.stream_chat_messages FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-CREATE POLICY "Authenticated users can read members" ON public.members FOR SELECT USING (auth.role() = 'authenticated');
 CREATE POLICY "Authenticated users can read transfers" ON public.member_transfers FOR SELECT USING (auth.role() = 'authenticated');
 
--- 11. AUTOMATIC PROFILE TRIGGER ON SIGN UP
+-- 13. AUTOMATIC PROFILE TRIGGER ON SIGN UP
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_existing_profile_id UUID;
 BEGIN
-  INSERT INTO public.profiles (id, first_name, last_name, email, primary_role)
-  VALUES (
-    NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'first_name', 'Faithful'),
-    COALESCE(NEW.raw_user_meta_data->>'last_name', 'Member'),
-    NEW.email,
-    'member'
-  )
-  ON CONFLICT (id) DO NOTHING;
+  IF NEW.email IS NOT NULL AND btrim(NEW.email) <> '' THEN
+    SELECT id INTO v_existing_profile_id
+    FROM public.profiles
+    WHERE lower(btrim(email)) = lower(btrim(NEW.email))
+      AND auth_user_id IS NULL
+    LIMIT 1;
+  END IF;
+
+  IF v_existing_profile_id IS NOT NULL THEN
+    UPDATE public.profiles
+    SET auth_user_id = NEW.id
+    WHERE id = v_existing_profile_id;
+  ELSE
+    INSERT INTO public.profiles (
+      auth_user_id,
+      first_name,
+      last_name,
+      email,
+      primary_role,
+      status,
+      membership_status,
+      membership_date
+    )
+    VALUES (
+      NEW.id,
+      COALESCE(NEW.raw_user_meta_data->>'first_name', 'Faithful'),
+      COALESCE(NEW.raw_user_meta_data->>'last_name', 'Member'),
+      COALESCE(NEW.email, ''),
+      'member',
+      'active',
+      'active',
+      CURRENT_DATE
+    )
+    ON CONFLICT (auth_user_id) DO NOTHING;
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

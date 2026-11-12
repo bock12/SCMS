@@ -158,15 +158,15 @@ export async function getEventSurveyResponseReport(surveyId: string): Promise<Ev
 
   const responseIds = responses.map(response => response.id);
   const memberIds = [...new Set(responses.map(response => response.member_id))];
-  const [answersResult, membersResult] = await Promise.all([
+  const [answersResult, profilesResult] = await Promise.all([
     supabase.from('event_survey_answers').select('*').in('response_id', responseIds),
-    supabase.from('members').select('*').in('id', memberIds)
+    supabase.from('profiles').select('*').in('id', memberIds)
   ]);
   if (answersResult.error) throw answersResult.error;
-  if (membersResult.error) throw membersResult.error;
+  if (profilesResult.error) throw profilesResult.error;
 
   const answers = (answersResult.data || []) as EventSurveyAnswer[];
-  const members = new Map(((membersResult.data || []) as Array<{ id: string; first_name: string; last_name: string }>).map(member => [member.id, member]));
+  const members = new Map(((profilesResult.data || []) as Array<{ id: string; first_name: string; last_name: string }>).map(person => [person.id, person]));
   const questionText = new Map(questions.map(question => [question.id, question.question_text]));
 
   return responses.map(response => ({

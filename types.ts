@@ -1,15 +1,23 @@
 
 export type AppRole = 'super_admin' | 'admin' | 'district_admin' | 'pastor' | 'finance_officer' | 'leader' | 'worker' | 'member';
 
+export type MembershipStatus = 'active' | 'inactive' | 'suspended' | 'transferred' | 'archived';
+export type PortalAccountStatus = 'active' | 'suspended' | 'archived';
+
 export interface Profile {
   id: string;
+  auth_user_id?: string | null;
   branch_id: string;
   first_name: string;
   last_name: string;
   email: string;
   phone: string;
+  gender?: 'male' | 'female' | 'other';
   avatar_url?: string;
   primary_role: AppRole;
+  status?: PortalAccountStatus;
+  membership_status?: MembershipStatus;
+  membership_date?: string;
   department_name?: string;
   assigned_department?: string;
   created_at: string;

@@ -15,354 +15,333 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: memoryStorage
 });
 
-const { ensureLinkedMemberRecord, getMembers, registerChurchMember, updateChurchMemberRecord, updateLinkedMemberDetails } = await import('./memberService');
+const {
+  getMembers,
+  hasPortalAccess,
+  registerUnifiedMember,
+  updateUnifiedMember,
+  updateMembershipStatus,
+  updatePortalAccountStatus,
+  enablePortalAccess,
+  disablePortalAccess
+} = await import('./memberService');
+const { supabase } = await import('./supabaseClient');
 
 beforeEach(() => {
   memoryStorage.clear();
 });
 
-describe('Membership record integration', () => {
-  test('creates a membership record linked to an existing portal profile', async () => {
-    const member = await ensureLinkedMemberRecord({
-      id: 'usr-new-member',
-      branch_id: 'branch-1',
-      first_name: 'Ada',
-      last_name: 'Kamara',
-      email: 'ada@example.org',
-      phone: '+232000000',
-      primary_role: 'member',
-      created_at: new Date().toISOString(),
-      is_baptized: true,
-      baptism_date: '2024-05-12'
-    }, 'female');
-
-    expect(member.profile_id).toBe('usr-new-member');
-    expect(member.branch_id).toBe('branch-1');
-    expect(member.gender).toBe('female');
-    expect(member.status).toBe('active');
-    expect(member.is_baptized).toBe(true);
-    expect((await getMembers()).some(row => row.id === member.id)).toBe(true);
-  });
-
-  test('is idempotent and does not create duplicate membership rows for one profile', async () => {
-    const profile = {
-      id: 'usr-idempotent',
-      branch_id: 'branch-1',
-      first_name: 'John',
-      last_name: 'Conteh',
-      email: 'john@example.org',
-      phone: '',
-      primary_role: 'member' as const,
-      created_at: new Date().toISOString()
-    };
-
-    const first = await ensureLinkedMemberRecord(profile);
-    const second = await ensureLinkedMemberRecord({ ...profile, first_name: 'Jonathan' });
-
-    expect(second.id).toBe(first.id);
-    expect(second.first_name).toBe('Jonathan');
-    expect((await getMembers()).filter(row => row.profile_id === profile.id)).toHaveLength(1);
-  });
-
-  test('concurrent profile linking still creates exactly one membership record', async () => {
-    const profile = {
-      id: 'usr-concurrent-link',
-      branch_id: 'branch-1',
-      first_name: 'Fatmata',
-      last_name: 'Jalloh',
-      email: 'fatmata@example.org',
-      phone: '',
-      primary_role: 'member' as const,
-      created_at: new Date().toISOString()
-    };
-    const [first, second] = await Promise.all([
-      ensureLinkedMemberRecord(profile),
-      ensureLinkedMemberRecord(profile)
-    ]);
-    expect(first.id).toBe(second.id);
-    expect((await getMembers()).filter(row => row.profile_id === profile.id)).toHaveLength(1);
-  });
-
-  test('validates and normalizes linked profile details before updating membership', async () => {
-    await ensureLinkedMemberRecord({
-      id: 'usr-linked-validation',
-      branch_id: 'branch-1',
-      first_name: 'Mabinty',
-      last_name: 'Koroma',
-      email: 'mabinty@example.org',
-      phone: '',
-      primary_role: 'member',
-      created_at: new Date().toISOString()
-    });
-
-    await expect(updateLinkedMemberDetails('usr-linked-validation', {
-      first_name: 'Mabinty',
-      last_name: 'Koroma',
-      email: 'invalid-email'
-    })).rejects.toThrow('Enter a valid email address.');
-
-    await expect(updateLinkedMemberDetails('usr-linked-validation', {
-      first_name: 'Mabinty',
-      last_name: 'Koroma',
-      is_baptized: false,
-      baptism_date: '2020-01-01'
-    })).rejects.toThrow('A baptism date cannot be set when the member is not baptized.');
-
-    await updateLinkedMemberDetails('usr-linked-validation', {
-      first_name: 'Mabinty',
-      last_name: 'Koroma',
-      email: '  MABINTY@EXAMPLE.ORG  '
-    });
-    const linked = (await getMembers()).find(row => row.profile_id === 'usr-linked-validation');
-    expect(linked?.email).toBe('mabinty@example.org');
-  });
-
-  test('updates shared profile details without changing membership status', async () => {
-    await ensureLinkedMemberRecord({
-      id: 'usr-update',
-      branch_id: 'branch-1',
-      first_name: 'Mary',
-      last_name: 'Koroma',
-      email: 'mary@example.org',
-      phone: '',
-      primary_role: 'member',
-      created_at: new Date().toISOString()
-    });
-
-    await updateLinkedMemberDetails('usr-update', {
-      first_name: 'Maryam',
-      last_name: 'Koroma',
-      email: 'maryam@example.org',
-      phone: '+232111111'
-    });
-
-    const member = (await getMembers()).find(row => row.profile_id === 'usr-update');
-    expect(member?.first_name).toBe('Maryam');
-    expect(member?.email).toBe('maryam@example.org');
-    expect(member?.phone).toBe('+232111111');
-    expect(member?.status).toBe('active');
-  });
-
-  test('rejects incomplete profile identity before writing a membership record', async () => {
-    await expect(ensureLinkedMemberRecord({
-      id: 'usr-invalid',
-      branch_id: 'branch-1',
-      first_name: ' ',
-      last_name: 'Missing',
-      email: '',
-      phone: '',
-      primary_role: 'member',
-      created_at: new Date().toISOString()
-    })).rejects.toThrow('First name and last name are required.');
-
-    expect((await getMembers()).some(row => row.profile_id === 'usr-invalid')).toBe(false);
-  });
-});
-
-
-describe('Standalone church membership registration', () => {
-  test('registers a member without creating a portal profile or login', async () => {
-    const beforeMembers = await getMembers();
-    const member = await registerChurchMember({
+describe('Unified canonical Member Directory (profiles)', () => {
+  test('registers a directory-only member without email or portal auth user', async () => {
+    const before = await getMembers();
+    const result = await registerUnifiedMember({
       first_name: 'Kadiatu',
       last_name: 'Sesay',
       branch_id: 'branch-1',
       membership_date: '2026-11-12',
       gender: 'female',
-      email: 'kadiatu@example.org',
-      phone: '+23276000000',
+      phone: '+23276000001',
       is_baptized: true,
-      baptism_date: '2022-04-10'
+      baptism_date: '2022-04-10',
+      enable_portal_access: false
     });
 
-    expect(member.profile_id ?? null).toBeNull();
-    expect(member.status).toBe('active');
-    expect(member.membership_date).toBe('2026-11-12');
-    expect(member.is_baptized).toBe(true);
-    expect((await getMembers()).length).toBe(beforeMembers.length + 1);
+    expect(result.portalInvite).toBeUndefined();
+    expect(result.profile.auth_user_id ?? null).toBeNull();
+    expect(hasPortalAccess(result.profile)).toBe(false);
+    expect(result.profile.membership_status).toBe('active');
+    expect(result.profile.membership_date).toBe('2026-11-12');
+    expect(result.profile.is_baptized).toBe(true);
+    expect((await getMembers()).length).toBe(before.length + 1);
 
-    const { supabase } = await import('./supabaseClient');
-    const { data: profiles } = await supabase.from('profiles').select('*').eq('email', 'kadiatu@example.org');
-    expect(profiles).toHaveLength(0);
+    const rawUsers = JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}');
+    expect(Object.values(rawUsers).some((u: any) => u.id === result.profile.id)).toBe(false);
   });
 
-  test('updates membership details and status without changing portal profile data', async () => {
-    const { supabase } = await import('./supabaseClient');
-    const profile = {
-      id: 'usr-independent-status',
-      branch_id: 'branch-1',
-      first_name: 'Aminata',
+  test('provisions optional portal access via setup token without storing passwords on profiles', async () => {
+    await expect(registerUnifiedMember({
+      first_name: 'Samuel',
       last_name: 'Bangura',
-      email: 'aminata@example.org',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      enable_portal_access: true
+    })).rejects.toThrow('A valid email address is required when Portal Access is enabled.');
+
+    const result = await registerUnifiedMember({
+      first_name: 'Samuel',
+      last_name: 'Bangura',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      email: '  SAMUEL.BANGURA@Example.ORG  ',
+      primary_role: 'leader',
+      enable_portal_access: true
+    });
+
+    expect(result.portalInvite).toBeDefined();
+    expect(result.profile.auth_user_id).toBe(result.portalInvite?.authUserId);
+    expect(result.profile.email).toBe('samuel.bangura@example.org');
+    expect(result.profile.primary_role).toBe('leader');
+    expect(hasPortalAccess(result.profile)).toBe(true);
+
+    const rawDb = JSON.parse(memoryStorage.getItem('faithconnect_db_v2') || '{}');
+    const savedRow = rawDb.profiles.find((p: any) => p.id === result.profile.id);
+    expect(savedRow.temporary_password).toBeUndefined();
+    expect(savedRow.login_email).toBeUndefined();
+    expect(savedRow.has_login_credentials).toBeUndefined();
+
+    // Cannot sign in until the activation setup link is completed
+    const preActivationSignIn = await supabase.auth.signInWithPassword({
+      email: 'samuel.bangura@example.org',
+      password: 'AnyPassword123!'
+    });
+    expect(preActivationSignIn.error?.message).toContain('Portal invitation pending activation');
+
+    // Complete password setup and sign in cleanly
+    const activation = await supabase.auth.completePasswordSetup({
+      email: result.portalInvite!.email,
+      setupToken: result.portalInvite!.setupToken,
+      newPassword: 'MyNewPassword123!'
+    });
+    expect(activation.error).toBeNull();
+    expect(activation.data.user?.id).toBe(result.profile.auth_user_id);
+
+    await supabase.auth.signOut();
+    const postActivationSignIn = await supabase.auth.signInWithPassword({
+      email: 'samuel.bangura@example.org',
+      password: 'MyNewPassword123!'
+    });
+    expect(postActivationSignIn.error).toBeNull();
+    expect(postActivationSignIn.data.user?.id).toBe(result.profile.auth_user_id);
+  });
+
+  test('enforces unique non-null auth_user_id across profiles', async () => {
+    const first = await registerUnifiedMember({
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      email: 'joseph.turay@example.org',
+      enable_portal_access: true
+    });
+
+    const duplicateInsert = await supabase.from('profiles').insert({
+      id: 'per-duplicate-auth',
+      auth_user_id: first.profile.auth_user_id,
+      branch_id: 'branch-1',
+      first_name: 'Other',
+      last_name: 'Person',
+      email: 'other.person@example.org',
       phone: '',
-      primary_role: 'member' as const,
+      primary_role: 'member',
+      status: 'active',
+      membership_status: 'active',
       created_at: new Date().toISOString()
-    };
-    await supabase.from('profiles').insert(profile);
-    const member = await registerChurchMember({
+    });
+    expect(duplicateInsert.error?.code).toBe('23505');
+  });
+
+  test('enabling and revoking portal access clears auth_user_id without deleting church membership', async () => {
+    const created = await registerUnifiedMember({
+      first_name: 'Mariama',
+      last_name: 'Koroma',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      email: 'mariama.koroma@example.org',
+      enable_portal_access: false
+    });
+    expect(hasPortalAccess(created.profile)).toBe(false);
+
+    const enabled = await enablePortalAccess(created.profile.id);
+    expect(hasPortalAccess(enabled.profile)).toBe(true);
+    expect(enabled.portalInvite?.authUserId).toBeTruthy();
+
+    const afterDisable = await disablePortalAccess(created.profile.id);
+    expect(afterDisable.id).toBe(created.profile.id);
+    expect(afterDisable.auth_user_id ?? null).toBeNull();
+    expect(afterDisable.membership_status).toBe('active');
+
+    // Re-enable then delete auth user directly via supabase.auth.deleteUser
+    const reEnabled = await enablePortalAccess(created.profile.id);
+    const authId = reEnabled.profile.auth_user_id!;
+    await supabase.auth.deleteUser({ id: authId });
+
+    const { data: persisted } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', created.profile.id)
+      .single();
+    expect(persisted).toBeTruthy();
+    expect(persisted.auth_user_id ?? null).toBeNull();
+    expect(persisted.membership_status).toBe('active');
+  });
+
+  test('keeps membership lifecycle and portal-account lifecycle independent', async () => {
+    const created = await registerUnifiedMember({
       first_name: 'Aminata',
       last_name: 'Bangura',
       branch_id: 'branch-1',
       membership_date: '2025-03-01',
-      profile_id: profile.id
+      email: 'aminata.bangura@example.org',
+      enable_portal_access: true
     });
 
-    const updated = await updateChurchMemberRecord(member.id, {
-      first_name: 'Aminata',
-      last_name: 'Kamara',
-      email: 'aminata.kamara@example.org',
-      phone: '+23276000000',
-      gender: 'female',
-      membership_date: '2025-03-02',
-      status: 'inactive',
-      is_baptized: true,
-      baptism_date: '2024-08-10'
+    await supabase.auth.completePasswordSetup({
+      email: created.portalInvite!.email,
+      setupToken: created.portalInvite!.setupToken,
+      newPassword: 'Password123!'
     });
+    await supabase.auth.signOut();
 
-    expect(updated.last_name).toBe('Kamara');
-    expect(updated.status).toBe('inactive');
-    expect(updated.is_baptized).toBe(true);
-    const storedMember = (await getMembers()).find(row => row.id === member.id);
-    expect(storedMember?.status).toBe('inactive');
-    const { data: storedProfile } = await supabase.from('profiles').select('*').eq('id', profile.id).single();
-    expect(storedProfile?.status ?? 'active').toBe('active');
-    expect(storedProfile?.last_name).toBe('Bangura');
+    // Suspend portal account: sign-in is blocked, membership stays active
+    const suspendedPortal = await updatePortalAccountStatus(created.profile.id, 'suspended');
+    expect(suspendedPortal.status).toBe('suspended');
+    expect(suspendedPortal.membership_status).toBe('active');
+    expect(suspendedPortal.auth_user_id).toBe(created.profile.auth_user_id);
+
+    const blockedSignIn = await supabase.auth.signInWithPassword({
+      email: 'aminata.bangura@example.org',
+      password: 'Password123!'
+    });
+    expect(blockedSignIn.error?.message).toContain('suspended or archived');
+
+    // Restore portal account, then mark church membership inactive: portal link stays intact
+    await updatePortalAccountStatus(created.profile.id, 'active');
+    const inactiveMember = await updateMembershipStatus(created.profile.id, 'inactive');
+    expect(inactiveMember.membership_status).toBe('inactive');
+    expect(inactiveMember.status).toBe('active');
+    expect(inactiveMember.auth_user_id).toBe(created.profile.auth_user_id);
   });
 
-  test('rejects invalid membership updates before writing', async () => {
-    const member = await registerChurchMember({
-      first_name: 'Ibrahim',
-      last_name: 'Sesay',
-      branch_id: 'branch-1',
-      membership_date: '2026-11-12'
-    });
-    await expect(updateChurchMemberRecord(member.id, {
-      first_name: 'Ibrahim',
-      last_name: 'Sesay',
-      gender: 'male',
-      membership_date: 'invalid',
-      status: 'active'
-    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
-    await expect(updateChurchMemberRecord(member.id, {
-      first_name: 'Ibrahim',
-      last_name: 'Sesay',
-      gender: 'male',
-      membership_date: '2026-02-30',
-      status: 'active'
-    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
-    await expect(updateChurchMemberRecord(member.id, {
-      first_name: ' ',
-      last_name: 'Sesay',
-      gender: 'male',
-      membership_date: '2026-11-12',
-      status: 'active'
-    })).rejects.toThrow('First name and last name are required.');
-    expect((await getMembers()).find(row => row.id === member.id)?.membership_date).toBe('2026-11-12');
-  });
-
-  test('requires names, branch and a valid membership date', async () => {
-    await expect(registerChurchMember({
+  test('validates names, branch, dates, enums, duplicate contacts, and email normalization', async () => {
+    await expect(registerUnifiedMember({
       first_name: ' ',
       last_name: 'Sesay',
       branch_id: 'branch-1',
       membership_date: '2026-11-12'
     })).rejects.toThrow('First name and last name are required.');
 
-    await expect(registerChurchMember({
+    await expect(registerUnifiedMember({
       first_name: 'Kadiatu',
       last_name: 'Sesay',
       branch_id: 'missing-branch',
       membership_date: '2026-11-12'
     })).rejects.toThrow('The selected branch does not exist.');
 
-    await expect(registerChurchMember({
-      first_name: 'Kadiatu',
-      last_name: 'Sesay',
-      branch_id: 'branch-1',
-      membership_date: 'not-a-date'
-    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
-    await expect(registerChurchMember({
+    await expect(registerUnifiedMember({
       first_name: 'Kadiatu',
       last_name: 'Sesay',
       branch_id: 'branch-1',
       membership_date: '2026-02-30'
     })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
-  });
 
-  test('validates optional dates, member attributes and normalized email addresses', async () => {
     const base = {
-      first_name: 'Mariama',
+      first_name: 'Ibrahim',
       last_name: 'Kamara',
       branch_id: 'branch-1',
       membership_date: '2026-11-12'
     };
-    await expect(registerChurchMember({ ...base, date_of_birth: '2026-02-30' }))
+    await expect(registerUnifiedMember({ ...base, date_of_birth: '2026-02-30' }))
       .rejects.toThrow('Date of birth must be a valid date in YYYY-MM-DD format.');
-    await expect(registerChurchMember({ ...base, date_of_birth: '2999-01-01' }))
+    await expect(registerUnifiedMember({ ...base, date_of_birth: '2999-01-01' }))
       .rejects.toThrow('Date of birth cannot be in the future.');
-    await expect(registerChurchMember({ ...base, baptism_date: 'not-a-date' }))
+    await expect(registerUnifiedMember({ ...base, baptism_date: 'not-a-date' }))
       .rejects.toThrow('Baptism date must be a valid date in YYYY-MM-DD format.');
-    await expect(registerChurchMember({ ...base, is_baptized: false, baptism_date: '2020-01-01' }))
+    await expect(registerUnifiedMember({ ...base, is_baptized: false, baptism_date: '2020-01-01' }))
       .rejects.toThrow('A baptism date cannot be set when the member is not baptized.');
-    await expect(registerChurchMember({ ...base, gender: 'unknown' as any }))
+    await expect(registerUnifiedMember({ ...base, gender: 'unknown' as any }))
       .rejects.toThrow('Invalid gender value.');
-    await expect(registerChurchMember({ ...base, marital_status: 'Complicated' as any }))
+    await expect(registerUnifiedMember({ ...base, marital_status: 'Complicated' as any }))
       .rejects.toThrow('Invalid marital status.');
-    await expect(registerChurchMember({ ...base, email: 'not-an-email' }))
+    await expect(registerUnifiedMember({ ...base, email: 'not-an-email' }))
       .rejects.toThrow('Enter a valid email address.');
 
-    const normalized = await registerChurchMember({ ...base, email: '  Mariama@Example.ORG  ' });
-    expect(normalized.email).toBe('mariama@example.org');
+    const saved = await registerUnifiedMember({
+      ...base,
+      email: '  Ibrahim.Kamara@Example.ORG  ',
+      phone: '+23277000123'
+    });
+    expect(saved.profile.email).toBe('ibrahim.kamara@example.org');
+
+    await expect(registerUnifiedMember({
+      ...base,
+      first_name: 'Duplicate',
+      email: 'ibrahim.kamara@example.org'
+    })).rejects.toThrow('already registered');
+
+    await expect(updateUnifiedMember(saved.profile.id, {
+      first_name: 'Ibrahim',
+      last_name: 'Kamara',
+      membership_date: '2026-02-30'
+    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
   });
 
-  test('links only an existing same-branch profile and prevents duplicate links', async () => {
-    const profile = {
-      id: 'usr-explicit-link',
-      branch_id: 'branch-1',
-      first_name: 'Joseph',
-      last_name: 'Turay',
-      email: 'joseph@example.org',
-      phone: '',
-      primary_role: 'member' as const,
-      created_at: new Date().toISOString()
-    };
-    const { supabase } = await import('./supabaseClient');
-    await supabase.from('profiles').insert(profile);
+  test('migrates legacy members table and strips temporary_password cleanly on load', async () => {
+    memoryStorage.setItem('faithconnect_db_v2', JSON.stringify({
+      church_branches: [{ id: 'branch-1', name: 'Grace Cathedral' }],
+      profiles: [{
+        id: 'usr-member-1',
+        branch_id: 'branch-1',
+        first_name: 'Grace',
+        last_name: 'Campbell',
+        email: 'member@faithconnect.church',
+        phone: '+1 (555) 456-7890',
+        primary_role: 'member',
+        temporary_password: 'legacy-plaintext-password',
+        login_email: 'member@faithconnect.church',
+        has_login_credentials: true,
+        created_at: '2026-01-01T00:00:00.000Z'
+      }],
+      members: [
+        {
+          id: 'mem-5',
+          profile_id: 'usr-member-1',
+          branch_id: 'branch-1',
+          first_name: 'Grace',
+          last_name: 'Campbell',
+          gender: 'female',
+          status: 'active',
+          membership_date: '2024-02-15',
+          is_baptized: true,
+          baptism_date: '2022-10-17'
+        },
+        {
+          id: 'mem-standalone-legacy',
+          profile_id: null,
+          branch_id: 'branch-1',
+          first_name: 'Legacy',
+          last_name: 'Standalone',
+          gender: 'male',
+          status: 'inactive',
+          membership_date: '2025-05-01',
+          email: '',
+          phone: '+23279000999'
+        }
+      ],
+      member_transfers: [{ id: 'tr-legacy', member_id: 'mem-5', from_branch_id: 'branch-1', to_branch_id: 'branch-2', status: 'pending' }],
+      event_registrations: [{ id: 'reg-legacy', event_id: 'evt-1', member_id: 'mem-5', member_name: 'Grace Campbell', email: 'member@faithconnect.church', status: 'confirmed' }]
+    }));
 
-    const member = await registerChurchMember({
-      first_name: 'Joseph',
-      last_name: 'Turay',
-      branch_id: 'branch-1',
-      membership_date: '2026-11-12',
-      profile_id: profile.id
-    });
-    expect(member.profile_id).toBe(profile.id);
+    const members = await getMembers();
+    const linked = members.find(p => p.id === 'usr-member-1');
+    const standalone = members.find(p => p.id === 'mem-standalone-legacy');
 
-    const duplicateInsert = await supabase.from('members').insert({
-      profile_id: profile.id,
-      branch_id: 'branch-1',
-      first_name: 'Joseph',
-      last_name: 'Turay',
-      gender: 'male',
-      status: 'active',
-      membership_date: '2026-11-12'
-    });
-    expect(duplicateInsert.error?.code).toBe('23505');
+    expect(linked).toBeDefined();
+    expect(linked?.auth_user_id).toBe('usr-member-1');
+    expect(linked?.membership_date).toBe('2024-02-15');
+    expect((linked as any).temporary_password).toBeUndefined();
+    expect((linked as any).login_email).toBeUndefined();
 
-    await expect(registerChurchMember({
-      first_name: 'Joseph',
-      last_name: 'Turay',
-      branch_id: 'branch-1',
-      membership_date: '2026-11-12',
-      profile_id: profile.id
-    })).rejects.toThrow('This portal profile is already linked to a membership record.');
+    expect(standalone).toBeDefined();
+    expect(standalone?.auth_user_id ?? null).toBeNull();
+    expect(standalone?.membership_status).toBe('inactive');
 
-    await expect(registerChurchMember({
-      first_name: 'Joseph',
-      last_name: 'Turay',
-      branch_id: 'branch-2',
-      membership_date: '2026-11-12',
-      profile_id: profile.id
-    })).rejects.toThrow('The member and linked portal profile must belong to the same branch.');
+    const { data: transfers } = await supabase.from('member_transfers').select('*').eq('id', 'tr-legacy');
+    expect(transfers?.[0]?.member_id).toBe('usr-member-1');
+
+    const { data: regs } = await supabase.from('event_registrations').select('*').eq('id', 'reg-legacy');
+    expect(regs?.[0]?.member_id).toBe('usr-member-1');
+
+    const migratedDb = JSON.parse(memoryStorage.getItem('faithconnect_db_v2') || '{}');
+    expect(migratedDb.members).toBeUndefined();
   });
 });
