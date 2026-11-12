@@ -22,7 +22,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
-import { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails, updateChurchMemberRecord } from './memberService';
+import { ensureLinkedMemberRecord, getMembers, registerChurchMember, updateLinkedMemberDetails, updateChurchMemberRecord } from './memberService';
 import { syncLinkedMemberProfile } from './memberProfileSyncService';
 import { 
   getMemberContributions, 
@@ -1478,17 +1478,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       temporary_password: formPassword || 'FaithConnect2026!'
     };
 
-    const previousStatus = (editingPerson as any).status || 'active';
-    try {
-      await syncLinkedMemberStatus(editingPerson.id, formStatus as 'active' | 'suspended' | 'archived');
-    } catch (syncError) {
-      console.error('Unable to synchronize membership status:', syncError);
-      return;
-    }
-
+    // Portal-account status belongs to profiles; membership status is managed separately.
     const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
     if (error) {
-      await syncLinkedMemberStatus(editingPerson.id, previousStatus as 'active' | 'suspended' | 'archived');
       console.error('Unable to update profile:', error);
       return;
     }
@@ -1529,36 +1521,24 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     const previousStatus = (person as any).status || 'active';
     const newStatus = previousStatus === 'suspended' ? 'active' : 'suspended';
 
-    try {
-      await syncLinkedMemberStatus(person.id, newStatus);
-      const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-      if (error) {
-        await syncLinkedMemberStatus(person.id, previousStatus);
-        console.error('Unable to update profile status:', error);
-        return;
-      }
-      setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
-    } catch (error) {
-      console.error('Unable to synchronize suspension status:', error);
+    const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
+    if (error) {
+      console.error('Unable to update portal account status:', error);
+      return;
     }
+    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
   };
 
   const handleSoftDelete = async (person: Profile) => {
     const previousStatus = (person as any).status || 'active';
     const newStatus = previousStatus === 'archived' ? 'active' : 'archived';
 
-    try {
-      await syncLinkedMemberStatus(person.id, newStatus);
-      const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
-      if (error) {
-        await syncLinkedMemberStatus(person.id, previousStatus);
-        console.error('Unable to update profile archive status:', error);
-        return;
-      }
-      setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
-    } catch (error) {
-      console.error('Unable to synchronize archive status:', error);
+    const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', person.id);
+    if (error) {
+      console.error('Unable to update portal account archive status:', error);
+      return;
     }
+    setProfiles(prev => prev.map(p => p.id === person.id ? { ...p, status: newStatus } as any : p));
   };
 
   const filteredMembershipRecords = membershipRecords.filter(member => {
