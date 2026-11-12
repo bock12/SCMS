@@ -22,7 +22,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
-import { ensureLinkedMemberRecord, getMembers, syncLinkedMemberStatus, updateLinkedMemberDetails } from './memberService';
+import { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails } from './memberService';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
@@ -1186,6 +1186,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [membershipRecords, setMembershipRecords] = useState<Member[]>([]);
+  const [standaloneModalOpen, setStandaloneModalOpen] = useState(false);
+  const [standaloneFirstName, setStandaloneFirstName] = useState('');
+  const [standaloneLastName, setStandaloneLastName] = useState('');
+  const [standaloneEmail, setStandaloneEmail] = useState('');
+  const [standalonePhone, setStandalonePhone] = useState('');
+  const [standaloneGender, setStandaloneGender] = useState<Member['gender']>('other');
+  const [standaloneMembershipDate, setStandaloneMembershipDate] = useState(new Date().toISOString().slice(0, 10));
+  const [standaloneProfileId, setStandaloneProfileId] = useState('');
+  const [standaloneIsBaptized, setStandaloneIsBaptized] = useState(false);
+  const [standaloneBaptismDate, setStandaloneBaptismDate] = useState('');
+  const [standaloneError, setStandaloneError] = useState('');
+  const [standaloneSaving, setStandaloneSaving] = useState(false);
 
   // Modals state
   const [viewingPerson, setViewingPerson] = useState<Profile | null>(null);
@@ -1226,9 +1239,57 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const loadDirectory = async () => {
     setLoading(true);
-    const { data } = await supabase.from('profiles').select('*');
+    const [{ data }, members] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      getMembers()
+    ]);
     if (data) setProfiles(data as Profile[]);
+    setMembershipRecords(members);
     setLoading(false);
+  };
+
+  const openStandaloneRegistration = () => {
+    setStandaloneFirstName('');
+    setStandaloneLastName('');
+    setStandaloneEmail('');
+    setStandalonePhone('');
+    setStandaloneGender('other');
+    setStandaloneMembershipDate(new Date().toISOString().slice(0, 10));
+    setStandaloneProfileId('');
+    setStandaloneIsBaptized(false);
+    setStandaloneBaptismDate('');
+    setStandaloneError('');
+    setStandaloneModalOpen(true);
+  };
+
+  const handleStandaloneRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile?.branch_id) {
+      setStandaloneError('Your account is not assigned to a branch.');
+      return;
+    }
+    setStandaloneSaving(true);
+    setStandaloneError('');
+    try {
+      const saved = await registerChurchMember({
+        first_name: standaloneFirstName,
+        last_name: standaloneLastName,
+        branch_id: profile.branch_id,
+        membership_date: standaloneMembershipDate,
+        gender: standaloneGender,
+        email: standaloneEmail,
+        phone: standalonePhone,
+        profile_id: standaloneProfileId || null,
+        is_baptized: standaloneIsBaptized,
+        baptism_date: standaloneIsBaptized ? standaloneBaptismDate : undefined
+      });
+      setMembershipRecords(previous => [saved, ...previous]);
+      setStandaloneModalOpen(false);
+    } catch (error) {
+      setStandaloneError(error instanceof Error ? error.message : 'Unable to register this member.');
+    } finally {
+      setStandaloneSaving(false);
+    }
   };
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1470,6 +1531,15 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           {isAdminOrPastor && (
             <button
               type="button"
+              onClick={openStandaloneRegistration}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <UserPlus size={16} /> Register Member (No Login)
+            </button>
+          )}
+          {isAdminOrPastor && (
+            <button
+              type="button"
               onClick={openAddModal}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-100 flex items-center gap-1.5 transition-all cursor-pointer"
             >
@@ -1478,6 +1548,38 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           )}
         </div>
       </div>
+
+      {isAdminOrPastor && (
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900">Church Membership Register</h3>
+              <p className="text-xs text-slate-500">Membership records are separate from portal login accounts.</p>
+            </div>
+            <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">{membershipRecords.length} records</span>
+          </div>
+          {membershipRecords.length === 0 ? (
+            <p className="p-5 text-sm text-slate-500">No membership records found.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {membershipRecords.map(member => (
+                <div key={member.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">{member.first_name} {member.last_name}</p>
+                    <p className="text-xs text-slate-500">{member.email || 'No email'} · {member.phone || 'No phone'} · Joined {member.membership_date}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-600">{member.status}</span>
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${member.profile_id ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                      {member.profile_id ? 'Portal linked' : 'No login account'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Filter, Search & Archive Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-3">
@@ -2010,6 +2112,71 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setAddModalOpen(false)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">Cancel</button>
                 <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Create Member</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- Standalone Church Membership Registration --- */}
+      {standaloneModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-start justify-center p-3 sm:p-6 pt-16 overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 my-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900">Register Church Member</h3>
+                <p className="text-xs text-slate-500 mt-1">This creates a membership record only—not a login account.</p>
+              </div>
+              <button type="button" onClick={() => setStandaloneModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleStandaloneRegistration} className="space-y-3 pt-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="font-bold text-slate-600">First name
+                  <input required value={standaloneFirstName} onChange={e => setStandaloneFirstName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+                <label className="font-bold text-slate-600">Last name
+                  <input required value={standaloneLastName} onChange={e => setStandaloneLastName(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="font-bold text-slate-600">Email (optional)
+                  <input type="email" value={standaloneEmail} onChange={e => setStandaloneEmail(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+                <label className="font-bold text-slate-600">Phone (optional)
+                  <input value={standalonePhone} onChange={e => setStandalonePhone(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl font-normal" />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="font-bold text-slate-600">Gender
+                  <select value={standaloneGender} onChange={e => setStandaloneGender(e.target.value as Member['gender'])} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl">
+                    <option value="other">Not specified</option><option value="female">Female</option><option value="male">Male</option>
+                  </select>
+                </label>
+                <label className="font-bold text-slate-600">Membership date
+                  <input required type="date" value={standaloneMembershipDate} onChange={e => setStandaloneMembershipDate(e.target.value)} className="mt-1 w-full p-2.5 bg-slate-50 border rounded-xl" />
+                </label>
+              </div>
+              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100 space-y-2">
+                <label className="font-bold text-indigo-900 block">Link an existing portal account (optional)</label>
+                <select value={standaloneProfileId} onChange={e => setStandaloneProfileId(e.target.value)} className="w-full p-2.5 bg-white border rounded-xl">
+                  <option value="">Do not link — membership only</option>
+                  {profiles.map(existing => <option key={existing.id} value={existing.id}>{existing.first_name} {existing.last_name} · {existing.email}</option>)}
+                </select>
+                <p className="text-[10px] text-indigo-700">Only existing accounts are listed. No account or credentials will be created.</p>
+              </div>
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 space-y-2">
+                <label className="flex items-center gap-2 font-bold text-amber-900">
+                  <input type="checkbox" checked={standaloneIsBaptized} onChange={e => setStandaloneIsBaptized(e.target.checked)} />
+                  Baptized
+                </label>
+                {standaloneIsBaptized && <label className="block font-bold text-slate-600">Baptism date
+                  <input type="date" value={standaloneBaptismDate} onChange={e => setStandaloneBaptismDate(e.target.value)} className="mt-1 w-full p-2.5 bg-white border rounded-xl" />
+                </label>}
+              </div>
+              {standaloneError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{standaloneError}</p>}
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setStandaloneModalOpen(false)} className="px-4 py-2 font-bold text-slate-500">Cancel</button>
+                <button type="submit" disabled={standaloneSaving} className="px-5 py-2.5 bg-emerald-600 disabled:opacity-50 text-white font-bold rounded-xl">{standaloneSaving ? 'Saving…' : 'Register Member'}</button>
               </div>
             </form>
           </div>
