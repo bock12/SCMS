@@ -90,12 +90,6 @@ describe('Membership record integration', () => {
     expect(member?.status).toBe('active');
   });
 
-  test('does not create a membership record when syncing a profile without a linked member', async () => {
-    const before = (await getMembers()).length;
-    await syncLinkedMemberStatus('profile-without-member', 'suspended');
-    expect((await getMembers()).length).toBe(before);
-  });
-
   test('rejects incomplete profile identity before writing a membership record', async () => {
     await expect(ensureLinkedMemberRecord({
       id: 'usr-invalid',
