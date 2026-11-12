@@ -220,6 +220,13 @@ describe('Standalone church membership registration', () => {
       status: 'active'
     })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
     await expect(updateChurchMemberRecord(member.id, {
+      first_name: 'Ibrahim',
+      last_name: 'Sesay',
+      gender: 'male',
+      membership_date: '2026-02-30',
+      status: 'active'
+    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
+    await expect(updateChurchMemberRecord(member.id, {
       first_name: ' ',
       last_name: 'Sesay',
       gender: 'male',
