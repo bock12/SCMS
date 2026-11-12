@@ -86,7 +86,14 @@ CREATE POLICY "Read published public resources"
 
 CREATE POLICY "Read published member resources"
   ON public.church_resources FOR SELECT TO authenticated
-  USING (status = 'published' AND visibility = 'members_only');
+  USING (
+    status = 'published'
+    AND visibility = 'members_only'
+    AND EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.profile_id = auth.uid() AND m.status = 'active'
+    )
+  );
 
 CREATE POLICY "Resource managers manage resources"
   ON public.church_resources FOR ALL TO authenticated
@@ -101,7 +108,13 @@ CREATE POLICY "Resource managers manage resources"
 
 CREATE POLICY "Read published event surveys"
   ON public.event_surveys FOR SELECT TO authenticated
-  USING (status = 'published');
+  USING (
+    status = 'published'
+    AND EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.profile_id = auth.uid() AND m.status = 'active'
+    )
+  );
 
 CREATE POLICY "Survey managers manage surveys"
   ON public.event_surveys FOR ALL TO authenticated
@@ -116,10 +129,16 @@ CREATE POLICY "Survey managers manage surveys"
 
 CREATE POLICY "Read questions for published surveys"
   ON public.event_survey_questions FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM public.event_surveys s
-    WHERE s.id = survey_id AND s.status = 'published'
-  ));
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.event_surveys s
+      WHERE s.id = survey_id AND s.status = 'published'
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.profile_id = auth.uid() AND m.status = 'active'
+    )
+  );
 
 CREATE POLICY "Survey managers manage questions"
   ON public.event_survey_questions FOR ALL TO authenticated
@@ -194,6 +213,20 @@ CREATE POLICY "Members submit answers to own responses"
       AND s.status = 'published'
       AND (s.opens_at IS NULL OR s.opens_at <= now())
       AND (s.closes_at IS NULL OR s.closes_at > now())
+      AND m.status = 'active'
+      AND (
+        s.respondent_scope = 'all_members'
+        OR EXISTS (
+          SELECT 1
+          FROM public.event_registrations er
+          WHERE er.event_id = s.event_id
+            AND er.member_id = m.id
+            AND (
+              (s.respondent_scope = 'registrants' AND er.status IN ('confirmed', 'checked_in', 'attended', 'absent'))
+              OR (s.respondent_scope = 'attendees' AND er.status IN ('checked_in', 'attended'))
+            )
+        )
+      )
       AND EXISTS (
         SELECT 1 FROM public.event_survey_questions q
         WHERE q.id = event_survey_answers.question_id AND q.survey_id = s.id
