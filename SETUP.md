@@ -12,7 +12,7 @@ A separate Supabase client is available for controlled online integration and au
 2. In **Project Settings → API**, copy the Project URL and the publishable/anon client key.
 3. Copy `.env.example` to `.env.local`.
 4. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`.
-5. Keep `VITE_DATA_BACKEND=mock` until the specific module has been migrated and tested. To enable the explicitly exported online client for integration work, set `VITE_DATA_BACKEND=supabase`.
+5. Keep `VITE_SUPABASE_INTEGRATION=disabled` until the specific module has been migrated and tested. To enable the explicitly exported online client for integration work, set `VITE_SUPABASE_INTEGRATION=enabled`.
 6. Restart the Vite development server after changing environment variables.
 
 Only a public/publishable client key belongs in frontend environment variables. **Never put a Supabase service-role key or database password in a VITE_ variable, browser code, or a committed file.**
