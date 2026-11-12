@@ -9,7 +9,7 @@ import {
   Building2, Layers, Church, Gift, FileText, Download, Check, ShieldAlert, Award, Trophy, Star,
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
-import { supabase, isConfigured, resetLocalDatabase } from './supabaseClient';
+import { supabase, resetLocalDatabase } from './supabaseClient';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Member, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
