@@ -165,15 +165,27 @@ export async function updateLinkedMemberDetails(
   details: LinkedMemberDetails
 ): Promise<void> {
   if (!profileId.trim()) throw new Error('A profile ID is required.');
+  const firstName = details.first_name?.trim() || '';
+  const lastName = details.last_name?.trim() || '';
+  if (!firstName || !lastName) throw new Error('First name and last name are required.');
+
+  const email = details.email !== undefined ? normalizeEmail(details.email) : undefined;
+  validateMemberAttributes({
+    is_baptized: details.is_baptized,
+    baptism_date: details.baptism_date || undefined,
+    date_of_birth: details.date_of_birth || undefined,
+    marital_status: details.marital_status || undefined,
+    marriage_date: details.marriage_date || undefined
+  });
 
   const { error } = await supabase
     .from('members')
     .update({
-      first_name: details.first_name.trim(),
-      last_name: details.last_name.trim(),
-      ...(details.email !== undefined ? { email: details.email.trim() } : {}),
-      ...(details.phone !== undefined ? { phone: details.phone.trim() } : {}),
-      ...(details.avatar_url !== undefined ? { avatar_url: details.avatar_url } : {}),
+      first_name: firstName,
+      last_name: lastName,
+      ...(email !== undefined ? { email } : {}),
+      ...(details.phone !== undefined ? { phone: details.phone.trim() || null } : {}),
+      ...(details.avatar_url !== undefined ? { avatar_url: details.avatar_url || null } : {}),
       ...(details.is_baptized !== undefined ? { is_baptized: details.is_baptized } : {}),
       ...(details.baptism_date !== undefined ? { baptism_date: details.baptism_date || null } : {}),
       ...(details.baptized_by !== undefined ? { baptized_by: details.baptized_by || null } : {}),
