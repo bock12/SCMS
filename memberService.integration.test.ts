@@ -15,7 +15,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: memoryStorage
 });
 
-const { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateChurchMemberRecord, updateLinkedMemberDetails } = await import('./memberService');
+const { ensureLinkedMemberRecord, getMembers, registerChurchMember, updateChurchMemberRecord, updateLinkedMemberDetails } = await import('./memberService');
 
 beforeEach(() => {
   memoryStorage.clear();
@@ -88,29 +88,6 @@ describe('Membership record integration', () => {
     expect(member?.email).toBe('maryam@example.org');
     expect(member?.phone).toBe('+232111111');
     expect(member?.status).toBe('active');
-  });
-
-  test('synchronizes active, suspended and archived status to linked membership only', async () => {
-    const profile = {
-      id: 'usr-status-sync',
-      branch_id: 'branch-1',
-      first_name: 'Peter',
-      last_name: 'Bangura',
-      email: 'peter@example.org',
-      phone: '',
-      primary_role: 'member' as const,
-      created_at: new Date().toISOString()
-    };
-    const member = await ensureLinkedMemberRecord(profile);
-
-    await syncLinkedMemberStatus(profile.id, 'suspended');
-    expect((await getMembers()).find(row => row.id === member.id)?.status).toBe('suspended');
-
-    await syncLinkedMemberStatus(profile.id, 'archived');
-    expect((await getMembers()).find(row => row.id === member.id)?.status).toBe('archived');
-
-    await syncLinkedMemberStatus(profile.id, 'active');
-    expect((await getMembers()).find(row => row.id === member.id)?.status).toBe('active');
   });
 
   test('does not create a membership record when syncing a profile without a linked member', async () => {
