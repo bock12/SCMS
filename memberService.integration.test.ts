@@ -15,7 +15,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: memoryStorage
 });
 
-const { ensureLinkedMemberRecord, getMembers, syncLinkedMemberStatus, updateLinkedMemberDetails } = await import('./memberService');
+const { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails } = await import('./memberService');
 
 beforeEach(() => {
   memoryStorage.clear();
@@ -132,5 +132,96 @@ describe('Membership record integration', () => {
     })).rejects.toThrow('First name and last name are required.');
 
     expect((await getMembers()).some(row => row.profile_id === 'usr-invalid')).toBe(false);
+  });
+});
+
+
+describe('Standalone church membership registration', () => {
+  test('registers a member without creating a portal profile or login', async () => {
+    const beforeMembers = await getMembers();
+    const member = await registerChurchMember({
+      first_name: 'Kadiatu',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      gender: 'female',
+      email: 'kadiatu@example.org',
+      phone: '+23276000000',
+      is_baptized: true,
+      baptism_date: '2022-04-10'
+    });
+
+    expect(member.profile_id ?? null).toBeNull();
+    expect(member.status).toBe('active');
+    expect(member.membership_date).toBe('2026-11-12');
+    expect(member.is_baptized).toBe(true);
+    expect((await getMembers()).length).toBe(beforeMembers.length + 1);
+
+    const { supabase } = await import('./supabaseClient');
+    const { data: profiles } = await supabase.from('profiles').select('*').eq('email', 'kadiatu@example.org');
+    expect(profiles).toHaveLength(0);
+  });
+
+  test('requires names, branch and a valid membership date', async () => {
+    await expect(registerChurchMember({
+      first_name: ' ',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12'
+    })).rejects.toThrow('First name and last name are required.');
+
+    await expect(registerChurchMember({
+      first_name: 'Kadiatu',
+      last_name: 'Sesay',
+      branch_id: 'missing-branch',
+      membership_date: '2026-11-12'
+    })).rejects.toThrow('The selected branch does not exist.');
+
+    await expect(registerChurchMember({
+      first_name: 'Kadiatu',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: 'not-a-date'
+    })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
+  });
+
+  test('links only an existing same-branch profile and prevents duplicate links', async () => {
+    const profile = {
+      id: 'usr-explicit-link',
+      branch_id: 'branch-1',
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      email: 'joseph@example.org',
+      phone: '',
+      primary_role: 'member' as const,
+      created_at: new Date().toISOString()
+    };
+    const { supabase } = await import('./supabaseClient');
+    await supabase.from('profiles').insert(profile);
+
+    const member = await registerChurchMember({
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      profile_id: profile.id
+    });
+    expect(member.profile_id).toBe(profile.id);
+
+    await expect(registerChurchMember({
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12',
+      profile_id: profile.id
+    })).rejects.toThrow('This portal profile is already linked to a membership record.');
+
+    await expect(registerChurchMember({
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      branch_id: 'branch-2',
+      membership_date: '2026-11-12',
+      profile_id: profile.id
+    })).rejects.toThrow('The member and linked portal profile must belong to the same branch.');
   });
 });
