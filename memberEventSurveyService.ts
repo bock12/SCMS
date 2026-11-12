@@ -2,6 +2,7 @@ import type { EventSurvey, EventSurveyQuestion, EventSurveyResponse, Member, Eve
 import { supabase } from './supabaseClient';
 import type { EventSurveyWithQuestions } from './eventSurveyService';
 import { submitEventSurveyResponse } from './eventSurveyService';
+import { isMemberEligibleForSurvey } from './eventSurveyEligibility';
 
 export interface MemberEventSurvey extends EventSurveyWithQuestions {
   event_title: string;
@@ -39,17 +40,13 @@ export async function getMemberAvailableEventSurveys(profileId: string): Promise
   const events = new Map(((eventsResult.data || []) as ChurchEvent[]).map(event => [event.id, event]));
   const registrations = (registrationsResult.data || []) as EventRegistration[];
   const submitted = new Set((responsesResult.data || []).map((row: { survey_id: string }) => row.survey_id));
-  const now = Date.now();
   const available: MemberEventSurvey[] = [];
 
   for (const survey of published) {
     const event = events.get(survey.event_id);
-    if (!event || (survey.opens_at && new Date(survey.opens_at).getTime() > now) || (survey.closes_at && new Date(survey.closes_at).getTime() <= now)) continue;
+    if (!event) continue;
     const registration = registrations.find(row => row.event_id === survey.event_id);
-    const eligible = survey.respondent_scope === 'all_members'
-      || (survey.respondent_scope === 'registrants' && Boolean(registration && ['confirmed', 'checked_in', 'attended', 'absent'].includes(registration.status)))
-      || (survey.respondent_scope === 'attendees' && Boolean(registration && ['checked_in', 'attended'].includes(registration.status)));
-    if (!eligible) continue;
+    if (!isMemberEligibleForSurvey(survey, registration)) continue;
 
     const { data: questions, error: questionError } = await supabase
       .from('event_survey_questions').select('*').eq('survey_id', survey.id).order('sort_order', { ascending: true });
