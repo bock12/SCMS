@@ -20,8 +20,6 @@ const { saveEventSurvey, getEventSurveys, getEventSurveyResponseReport } = await
 const { getMemberAvailableEventSurveys, submitMemberEventSurvey } = await import('./memberEventSurveyService');
 const { supabase } = await import('./supabaseClient');
 
-const now = '2026-11-12T12:00:00.000Z';
-
 beforeEach(() => {
   memoryStorage.clear();
 });
