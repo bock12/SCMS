@@ -178,7 +178,7 @@ export async function registerChurchMember(
 
   if (!firstName || !lastName) throw new Error('First name and last name are required.');
   if (!branchId) throw new Error('A branch is required.');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(membershipDate) || Number.isNaN(Date.parse(membershipDate))) {
+  if (!isValidIsoDate(membershipDate)) {
     throw new Error('A valid membership date is required (YYYY-MM-DD).');
   }
 
@@ -261,7 +261,7 @@ export async function updateChurchMemberRecord(
   const firstName = input.first_name?.trim() || '';
   const lastName = input.last_name?.trim() || '';
   if (!firstName || !lastName) throw new Error('First name and last name are required.');
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(input.membership_date) || Number.isNaN(Date.parse(input.membership_date))) {
+  if (!isValidIsoDate(input.membership_date)) {
     throw new Error('A valid membership date is required (YYYY-MM-DD).');
   }
   const allowedStatuses: Member['status'][] = ['active', 'inactive', 'suspended', 'transferred', 'archived'];
