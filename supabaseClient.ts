@@ -1,11 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
 import type { Profile, District, ChurchBranch, Member, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
 
 // Storage keys
 const DB_STORAGE_KEY = 'faithconnect_db_v2';
 const SESSION_STORAGE_KEY = 'faithconnect_auth_session_v2';
 const USERS_STORAGE_KEY = 'faithconnect_auth_users_v2';
-const CONFIG_KEY = 'faithconnect_supabase_config_v2';
 
 // Initial pre-seeded mock database
 const initialDistricts: District[] = [
@@ -1138,15 +1136,6 @@ const localAuth = {
     return { error: null };
   }
 };
-
-// Check if a real Supabase client is configured by user
-function getSupabaseConfig() {
-  try {
-    const stored = localStorage.getItem(CONFIG_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch (e) {}
-  return null;
-}
 
 // Resilient universal client
 export const supabase = {
