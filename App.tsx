@@ -2240,7 +2240,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setAddModalOpen(false)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">Cancel</button>
-                <button type="submit" disabled={profileEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">{profileEditSaving ? 'Saving…' : 'Save Changes'}Create Member</button>
+                <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Create Member</button>
               </div>
             </form>
           </div>
@@ -2567,8 +2567,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setEditingPerson(null)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">Cancel</button>
-                <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Save Member Changes</button>
+                <button type="button" disabled={profileEditSaving} onClick={() => setEditingPerson(null)} className="px-4 py-2 font-bold text-slate-500 disabled:opacity-50 cursor-pointer">Cancel</button>
+                <button type="submit" disabled={profileEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">{profileEditSaving ? 'Saving…' : 'Save Member Changes'}</button>
               </div>
             </form>
           </div>
