@@ -22,8 +22,7 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
-import { getMembers } from './memberService';
-import { syncLinkedMemberProfile } from './memberProfileSyncService';
+import { ensureLinkedMemberRecord, getMembers, updateLinkedMemberDetails } from './memberService';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
@@ -1309,7 +1308,21 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     (newProfile as any).login_email = formEmail.trim();
     (newProfile as any).temporary_password = formPassword || 'FaithConnect2026!';
 
-    await supabase.from('profiles').insert(newProfile);
+    const { error: profileInsertError } = await supabase.from('profiles').insert(newProfile);
+    if (profileInsertError) {
+      console.error('Unable to create member profile:', profileInsertError);
+      return;
+    }
+
+    try {
+      await ensureLinkedMemberRecord(newProfile, 'other');
+    } catch (membershipError) {
+      // Keep profile and membership data consistent in the mock workflow.
+      await supabase.from('profiles').delete().eq('id', newProfile.id);
+      console.error('Unable to create the linked church membership record:', membershipError);
+      return;
+    }
+
     setProfiles(prev => [newProfile, ...prev]);
     window.dispatchEvent(new CustomEvent('profile-updated', { detail: newProfile }));
     setAddModalOpen(false);
@@ -1356,12 +1369,21 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     }
 
     try {
-      await syncLinkedMemberProfile(editingPerson.id, {
+      await updateLinkedMemberDetails(editingPerson.id, {
         first_name: updatedData.first_name,
-        last_name: updatedData.last_name
+        last_name: updatedData.last_name,
+        email: updatedData.email,
+        phone: updatedData.phone,
+        avatar_url: updatedData.avatar_url,
+        is_baptized: updatedData.is_baptized,
+        baptism_date: updatedData.baptism_date,
+        baptized_by: updatedData.baptized_by,
+        date_of_birth: updatedData.date_of_birth,
+        marital_status: updatedData.marital_status,
+        marriage_date: updatedData.marriage_date
       });
     } catch (syncError) {
-      console.error('Profile saved, but linked membership identity could not be synchronized:', syncError);
+      console.error('Profile saved, but linked membership details could not be synchronized:', syncError);
     }
 
     setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
