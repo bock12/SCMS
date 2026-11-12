@@ -374,15 +374,18 @@ const StatsCard = ({ title, value, icon: Icon, color, subtitle }: any) => (
 );
 
 const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) => {
-  const [stats, setStats] = useState({ members: 0, ministries: 6, streams: 0, donations: 2580 });
+  const [stats, setStats] = useState({ members: 0, ministries: 6, streams: 0, donations: 2580, resources: 0, publishedSurveys: 0, surveyResponses: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
-      const [members, streams, financials] = await Promise.all([
+      const [members, streams, financials, resources, surveys, surveyResponses] = await Promise.all([
         supabase.from('members').select('*', { count: 'exact', head: true }).eq('status', 'active'),
         supabase.from('streams').select('*', { count: 'exact', head: true }),
-        supabase.from('financial_records').select('*')
+        supabase.from('financial_records').select('*'),
+        supabase.from('church_resources').select('*', { count: 'exact', head: true }).eq('status', 'published'),
+        supabase.from('event_surveys').select('*', { count: 'exact', head: true }).eq('status', 'published'),
+        supabase.from('event_survey_responses').select('*', { count: 'exact', head: true })
       ]);
       
       const totalGiving = financials.data 
@@ -393,7 +396,10 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
         members: members.count ?? 0,
         ministries: 6,
         streams: streams.count || 4,
-        donations: totalGiving
+        donations: totalGiving,
+        resources: resources.count ?? 0,
+        publishedSurveys: surveys.count ?? 0,
+        surveyResponses: surveyResponses.count ?? 0
       });
       setLoading(false);
     };
@@ -407,9 +413,27 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <StatsCard title="Active Congregants" value={stats.members} subtitle="Registered church members" icon={Users} color="bg-indigo-600" />
         <StatsCard title="Active Ministries" value={stats.ministries} subtitle="Worship, Youth, Media, Ushers" icon={Building2} color="bg-emerald-600" />
-        <StatsCard title="Month-To-Date Giving" value={`$${stats.donations.toLocaleString()}`} subtitle="Tithes, Offering, Building" icon={DollarSign} color="bg-amber-600" />
+        <StatsCard title="Month-To-Date Giving" value={`${stats.donations.toLocaleString()}`} subtitle="Tithes, Offering, Building" icon={DollarSign} color="bg-amber-600" />
         <StatsCard title="Sanctuary Broadcasts" value={stats.streams} subtitle="Live and scheduled services" icon={Video} color="bg-rose-600" />
       </div>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Resources & Event Feedback</h3>
+          <p className="text-xs text-slate-500 mt-1">Live totals from the local development database</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
+          <button type="button" onClick={() => onSwitchTab('resources')} className="text-left">
+            <StatsCard title="Published Resources" value={stats.resources} subtitle="Available in the member portal" icon={FileText} color="bg-cyan-600" />
+          </button>
+          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left">
+            <StatsCard title="Published Surveys" value={stats.publishedSurveys} subtitle="Available for member feedback" icon={ClipboardList} color="bg-violet-600" />
+          </button>
+          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left">
+            <StatsCard title="Survey Responses" value={stats.surveyResponses} subtitle="Submissions received" icon={MessageSquare} color="bg-rose-600" />
+          </button>
+        </div>
+      </section>
 
       {/* Quick Administration Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
