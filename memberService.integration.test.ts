@@ -83,6 +83,40 @@ describe('Membership record integration', () => {
     expect((await getMembers()).filter(row => row.profile_id === profile.id)).toHaveLength(1);
   });
 
+  test('validates and normalizes linked profile details before updating membership', async () => {
+    await ensureLinkedMemberRecord({
+      id: 'usr-linked-validation',
+      branch_id: 'branch-1',
+      first_name: 'Mabinty',
+      last_name: 'Koroma',
+      email: 'mabinty@example.org',
+      phone: '',
+      primary_role: 'member',
+      created_at: new Date().toISOString()
+    });
+
+    await expect(updateLinkedMemberDetails('usr-linked-validation', {
+      first_name: 'Mabinty',
+      last_name: 'Koroma',
+      email: 'invalid-email'
+    })).rejects.toThrow('Enter a valid email address.');
+
+    await expect(updateLinkedMemberDetails('usr-linked-validation', {
+      first_name: 'Mabinty',
+      last_name: 'Koroma',
+      is_baptized: false,
+      baptism_date: '2020-01-01'
+    })).rejects.toThrow('A baptism date cannot be set when the member is not baptized.');
+
+    await updateLinkedMemberDetails('usr-linked-validation', {
+      first_name: 'Mabinty',
+      last_name: 'Koroma',
+      email: '  MABINTY@EXAMPLE.ORG  '
+    });
+    const linked = (await getMembers()).find(row => row.profile_id === 'usr-linked-validation');
+    expect(linked?.email).toBe('mabinty@example.org');
+  });
+
   test('updates shared profile details without changing membership status', async () => {
     await ensureLinkedMemberRecord({
       id: 'usr-update',
