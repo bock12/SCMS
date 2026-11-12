@@ -1187,6 +1187,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [membershipRecords, setMembershipRecords] = useState<Member[]>([]);
+  const [membershipStatusFilter, setMembershipStatusFilter] = useState('all');
+  const [portalAccessFilter, setPortalAccessFilter] = useState('all');
   const [standaloneModalOpen, setStandaloneModalOpen] = useState(false);
   const [standaloneFirstName, setStandaloneFirstName] = useState('');
   const [standaloneLastName, setStandaloneLastName] = useState('');
@@ -1506,6 +1508,22 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     }
   };
 
+  const filteredMembershipRecords = membershipRecords.filter(member => {
+    const linkedProfile = member.profile_id
+      ? profiles.find(person => person.id === member.profile_id)
+      : undefined;
+    const matchesSearch = `${member.first_name} ${member.last_name} ${member.email || ''} ${member.phone || ''}`
+      .toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = membershipStatusFilter === 'all' || member.status === membershipStatusFilter;
+    const hasPortalAccess = Boolean(linkedProfile && ((linkedProfile as any).has_login_credentials ?? true));
+    const matchesPortalAccess = portalAccessFilter === 'all'
+      || (portalAccessFilter === 'linked' && Boolean(linkedProfile))
+      || (portalAccessFilter === 'unlinked' && !linkedProfile)
+      || (portalAccessFilter === 'enabled' && hasPortalAccess)
+      || (portalAccessFilter === 'disabled' && Boolean(linkedProfile) && !hasPortalAccess);
+    return matchesSearch && matchesStatus && matchesPortalAccess;
+  });
+
   const filtered = profiles.filter(p => {
     const personStatus = (p as any).status || 'active';
     if (!showArchived && personStatus === 'archived') return false;
@@ -1551,31 +1569,89 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
       {isAdminOrPastor && (
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold text-slate-900">Church Membership Register</h3>
-              <p className="text-xs text-slate-500">Membership records are separate from portal login accounts.</p>
+          <div className="px-5 py-4 border-b border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="font-bold text-slate-900">Unified Church Membership Directory</h3>
+                <p className="text-xs text-slate-500">Every church member appears here, whether or not they have a portal account.</p>
+              </div>
+              <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">
+                {filteredMembershipRecords.length} of {membershipRecords.length} members
+              </span>
             </div>
-            <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">{membershipRecords.length} records</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <select
+                aria-label="Filter by membership status"
+                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
+                value={membershipStatusFilter}
+                onChange={e => setMembershipStatusFilter(e.target.value)}
+              >
+                <option value="all">All membership statuses</option>
+                <option value="active">Active members</option>
+                <option value="inactive">Inactive members</option>
+                <option value="suspended">Suspended members</option>
+                <option value="transferred">Transferred members</option>
+                <option value="archived">Archived members</option>
+              </select>
+              <select
+                aria-label="Filter by portal access"
+                className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
+                value={portalAccessFilter}
+                onChange={e => setPortalAccessFilter(e.target.value)}
+              >
+                <option value="all">All portal access states</option>
+                <option value="linked">Linked to a portal profile</option>
+                <option value="unlinked">No portal profile</option>
+                <option value="enabled">Portal login enabled</option>
+                <option value="disabled">Portal login disabled</option>
+              </select>
+            </div>
           </div>
-          {membershipRecords.length === 0 ? (
-            <p className="p-5 text-sm text-slate-500">No membership records found.</p>
+          {loading ? (
+            <p className="p-5 text-sm text-slate-500">Loading membership records...</p>
+          ) : filteredMembershipRecords.length === 0 ? (
+            <p className="p-5 text-sm text-slate-500">No members match the selected search and filters.</p>
           ) : (
-            <div className="divide-y divide-slate-100">
-              {membershipRecords.map(member => (
-                <div key={member.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">{member.first_name} {member.last_name}</p>
-                    <p className="text-xs text-slate-500">{member.email || 'No email'} · {member.phone || 'No phone'} · Joined {member.membership_date}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-600">{member.status}</span>
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${member.profile_id ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                      {member.profile_id ? 'Portal linked' : 'No login account'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-bold">Member</th>
+                    <th className="px-5 py-3 font-bold">Membership</th>
+                    <th className="px-5 py-3 font-bold">Portal account</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredMembershipRecords.map(member => {
+                    const linkedProfile = member.profile_id
+                      ? profiles.find(person => person.id === member.profile_id)
+                      : undefined;
+                    const loginEnabled = Boolean(linkedProfile && ((linkedProfile as any).has_login_credentials ?? true));
+                    return (
+                      <tr key={member.id} className="align-top">
+                        <td className="px-5 py-3">
+                          <p className="text-sm font-bold text-slate-800">{member.first_name} {member.last_name}</p>
+                          <p className="text-xs text-slate-500">{member.email || 'No email'} · {member.phone || 'No phone'}</p>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span className="inline-flex text-[10px] uppercase font-bold px-2 py-1 rounded-md bg-slate-100 text-slate-700">{member.status}</span>
+                          <p className="text-xs text-slate-500 mt-1">Joined {member.membership_date}</p>
+                        </td>
+                        <td className="px-5 py-3">
+                          {linkedProfile ? (
+                            <>
+                              <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-indigo-50 text-indigo-700">Profile linked</span>
+                              <p className="text-xs text-slate-500 mt-1">{loginEnabled ? 'Login enabled' : 'Login disabled'} · {(linkedProfile as any).status || 'active'}</p>
+                            </>
+                          ) : (
+                            <span className="inline-flex text-[10px] font-bold px-2 py-1 rounded-md bg-amber-50 text-amber-700">No portal account</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
@@ -1619,6 +1695,13 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           </button>
         )}
       </div>
+
+      {isAdminOrPastor && (
+        <div className="pt-2">
+          <h3 className="text-lg font-bold text-slate-900">Portal Accounts & Role Management</h3>
+          <p className="text-xs text-slate-500">Manage sign-in profiles, roles, and account status here. Church membership status is managed separately above.</p>
+        </div>
+      )}
 
       {/* Member Cards Grid */}
       {loading ? (
