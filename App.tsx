@@ -1219,6 +1219,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [viewingPerson, setViewingPerson] = useState<Profile | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editingPerson, setEditingPerson] = useState<Profile | null>(null);
+  const [profileEditError, setProfileEditError] = useState('');
+  const [profileEditSaving, setProfileEditSaving] = useState(false);
 
   // Add / Edit Form State
   const [formFirstName, setFormFirstName] = useState('');
@@ -1379,6 +1381,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const openEditModal = (p: Profile) => {
+    setProfileEditError('');
     setEditingPerson(p);
     setFormFirstName(p.first_name);
     setFormLastName(p.last_name);
@@ -1456,6 +1459,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPerson) return;
+    setProfileEditSaving(true);
+    setProfileEditError('');
 
     const updatedData = {
       first_name: formFirstName.trim(),
@@ -1479,13 +1484,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     };
 
     // Portal-account status belongs to profiles; membership status is managed separately.
-    const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
-    if (error) {
-      console.error('Unable to update profile:', error);
-      return;
-    }
-
     try {
+      const { error } = await supabase.from('profiles').update(updatedData).eq('id', editingPerson.id);
+      if (error) throw error;
+
       await updateLinkedMemberDetails(editingPerson.id, {
         first_name: updatedData.first_name,
         last_name: updatedData.last_name,
@@ -1493,19 +1495,25 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
         phone: updatedData.phone,
         avatar_url: updatedData.avatar_url,
         is_baptized: updatedData.is_baptized,
-        baptism_date: updatedData.baptism_date,
-        baptized_by: updatedData.baptized_by,
-        date_of_birth: updatedData.date_of_birth,
+        // Empty values explicitly clear previously stored optional membership details.
+        baptism_date: updatedData.baptism_date || '',
+        baptized_by: updatedData.baptized_by || '',
+        date_of_birth: updatedData.date_of_birth || '',
         marital_status: updatedData.marital_status,
-        marriage_date: updatedData.marriage_date
+        marriage_date: updatedData.marriage_date || ''
       });
-    } catch (syncError) {
-      console.error('Profile saved, but linked membership details could not be synchronized:', syncError);
+    } catch (saveError) {
+      setProfileEditError(saveError instanceof Error
+        ? `Unable to save all profile and linked membership details: ${saveError.message}`
+        : 'Unable to save all profile and linked membership details. Please retry.');
+      setProfileEditSaving(false);
+      return;
     }
 
     setProfiles(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...updatedData } : p));
     window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: editingPerson.id, ...updatedData } }));
     setEditingPerson(null);
+    setProfileEditSaving(false);
 
     if (formCreateCredentials) {
       setCreatedCredsModal({
@@ -2232,7 +2240,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setAddModalOpen(false)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">Cancel</button>
-                <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Create Member</button>
+                <button type="submit" disabled={profileEditSaving} className="px-5 py-2.5 bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">{profileEditSaving ? 'Saving…' : 'Save Changes'}Create Member</button>
               </div>
             </form>
           </div>
@@ -2371,12 +2379,13 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center pb-2 border-b border-slate-100">
               <h3 className="font-bold text-slate-900 text-base">Edit Member Details</h3>
-              <button onClick={() => setEditingPerson(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button type="button" disabled={profileEditSaving} onClick={() => setEditingPerson(null)} className="text-slate-400 hover:text-slate-600 disabled:opacity-50 cursor-pointer">
                 <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
+              {profileEditError && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">{profileEditError}</p>}
               {/* Profile Pic Upload Input */}
               <div>
                 <label className="text-xs font-bold text-slate-600 uppercase block mb-1">Update Profile Photo</label>
