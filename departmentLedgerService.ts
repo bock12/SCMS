@@ -88,13 +88,15 @@ export const saveDepartmentLedgerRecord = (record: DepartmentLedgerRecord): void
   }
 };
 
-export const deleteDepartmentLedgerRecord = (recordId: string, deptName: string): void => {
+export const deleteDepartmentLedgerRecord = (recordId: string, deptName?: string): void => {
   try {
-    const key = getStorageKey(deptName);
-    const existing = getDepartmentLedgerRecords(deptName);
-    const updated = existing.filter(r => r.id !== recordId);
-    localStorage.setItem(key, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('dept_ledger_updated', { detail: { department: deptName } }));
+    if (deptName) {
+      const key = getStorageKey(deptName);
+      const existing = getDepartmentLedgerRecords(deptName);
+      const updated = existing.filter(r => r.id !== recordId);
+      localStorage.setItem(key, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('dept_ledger_updated', { detail: { department: deptName } }));
+    }
   } catch (e) {
     console.error('Error deleting department ledger record:', e);
   }

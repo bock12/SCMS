@@ -23,6 +23,7 @@ import type { DepartmentLedgerRecord } from './types';
 import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { ensureLinkedMemberRecord, getMembers, registerChurchMember, syncLinkedMemberStatus, updateLinkedMemberDetails } from './memberService';
+import { syncLinkedMemberProfile } from './memberProfileSyncService';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
@@ -2506,9 +2507,9 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   // Derive categories from data + default list including Men & Women
-  const categoriesInDb = Array.from(new Set(ministries.map(m => m.category)));
-  const defaultCategories = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
-  const categoriesList = Array.from(new Set([...defaultCategories, ...categoriesInDb]));
+  const categoriesInDb: string[] = Array.from(new Set(ministries.map(m => String(m.category || '')))).filter(Boolean) as string[];
+  const defaultCategories: string[] = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
+  const categoriesList: string[] = Array.from(new Set([...defaultCategories, ...categoriesInDb])) as string[];
 
   const socialCount = ministries.filter(m => m.type === 'social_fellowship').length;
   const serviceCount = ministries.filter(m => (m.type || 'service_department') === 'service_department').length;
@@ -2545,8 +2546,8 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
               className="bg-transparent font-bold text-xs text-slate-800 outline-none cursor-pointer w-full pr-1 truncate"
             >
               <option value="All">All Categories ({ministries.length})</option>
-              {categoriesList.map(cat => {
-                const count = ministries.filter(m => m.category.toLowerCase() === cat.toLowerCase()).length;
+              {categoriesList.map((cat: string) => {
+                const count = ministries.filter(m => (m.category || '').toLowerCase() === cat.toLowerCase()).length;
                 return (
                   <option key={cat} value={cat}>
                     {cat} ({count})
@@ -4583,7 +4584,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             <button
                               type="button"
                               onClick={() => {
-                                deleteDepartmentLedgerRecord(rec.id);
+                                deleteDepartmentLedgerRecord(rec.id, activeDept);
                                 setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
                               }}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
@@ -4645,7 +4646,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <button
                             type="button"
                             onClick={() => {
-                              deleteDepartmentLedgerRecord(rec.id);
+                              deleteDepartmentLedgerRecord(rec.id, activeDept);
                               setDeptLedgerRecords(getDepartmentLedgerRecords(activeDept));
                             }}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"

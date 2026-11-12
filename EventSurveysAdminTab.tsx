@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { ChurchEvent, EventSurveyQuestionType, EventSurveyRespondentScope } from './types';
 import type { Profile } from './types';
 import { getEventSurveys, saveEventSurvey, getEventSurveyResponseReport } from './eventSurveyService';
-import type { EventSurveyWithQuestions as SurveyWithQuestions, EventSurveyReportRow } from './eventSurveyService';
+import type { EventSurveyWithQuestions, EventSurveyWithQuestions as SurveyWithQuestions, EventSurveyReportRow } from './eventSurveyService';
 
 type DraftQuestion = {
   question_text: string;

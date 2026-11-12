@@ -74,6 +74,10 @@ const PermissionRestrictedCard = ({ requiredPermission, profile }: { requiredPer
   );
 };
 
+interface AdminDashboardProps {
+  profile: Profile;
+}
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = (searchParams.get('tab') as any) || 'overview';
@@ -6256,6 +6260,8 @@ const EventsAdminTab = () => {
   // Manual Roster Add State
   const [manualMemberId, setManualMemberId] = useState('');
   const [manualName, setManualName] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualPhone, setManualPhone] = useState('');
   // Recurrence Toast & Advancement State
   const [recurrenceToast, setRecurrenceToast] = useState<string | null>(null);
 
@@ -8651,7 +8657,9 @@ const EventsAdminTab = () => {
                   const tempEvt: ChurchEvent = {
                     id: editingEvent?.id || 'temp_preview',
                     title: formTitle || 'Preview Event',
+                    description: formDescription || '',
                     category: formCategory,
+                    status: 'upcoming',
                     start_time: new Date(formStartTime).toISOString(),
                     end_time: new Date(formEndTime || formStartTime).toISOString(),
                     location: formLocation,

@@ -1,4 +1,4 @@
-import { EventAccount, EventFundingTransaction, EventRecurrence, ChurchEvent } from './types';
+import { EventAccount, EventFundingTransaction, EventRecurrence, ChurchEvent, EventOccurrence, OccurrenceOverride } from './types';
 import { supabase } from './supabaseClient';
 
 const EVENT_ACCOUNTS_STORAGE_KEY = 'faithconnect_event_accounts_v1';

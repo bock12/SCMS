@@ -32,7 +32,7 @@ describe('Resources and post-event surveys mock-database integration', () => {
       category: 'Leadership',
       resource_type: 'document',
       resource_url: 'https://example.org/leadership.pdf',
-      visibility: 'members',
+      visibility: 'members_only',
       status: 'draft'
     });
 
@@ -46,7 +46,7 @@ describe('Resources and post-event surveys mock-database integration', () => {
       category: 'Leadership',
       resource_type: 'document',
       resource_url: 'https://example.org/leadership-v2.pdf',
-      visibility: 'members',
+      visibility: 'members_only',
       status: 'published'
     });
 
@@ -151,7 +151,7 @@ describe('Resources and post-event surveys mock-database integration', () => {
       category: 'General',
       resource_type: 'document',
       resource_url: 'https://example.org/guide.pdf',
-      visibility: 'members',
+      visibility: 'members_only',
       status: 'published'
     });
     await saveChurchResource({
@@ -160,7 +160,7 @@ describe('Resources and post-event surveys mock-database integration', () => {
       category: 'General',
       resource_type: 'document',
       resource_url: 'https://example.org/draft.pdf',
-      visibility: 'members',
+      visibility: 'members_only',
       status: 'draft'
     });
     const survey = await saveEventSurvey({

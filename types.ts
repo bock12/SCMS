@@ -272,6 +272,8 @@ export interface MonthRecurrenceOverride {
   is_skipped?: boolean;
 }
 
+export type EventRecurrence = 'one_time' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'nth_weekday_monthly' | 'quarterly' | 'yearly';
+
 export interface EventRecurrenceRuleConfig {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'YEARLY' | 'CUSTOM';
   interval?: number; // Repeat interval e.g. every 1 month or 3 months
@@ -293,7 +295,7 @@ export interface EventOccurrence {
   occurrence_date: string; // YYYY-MM-DD
   start_time: string; // ISO string
   end_time: string; // ISO string
-  status: 'scheduled' | 'cancelled' | 'completed' | 'rescheduled';
+  status: 'scheduled' | 'cancelled' | 'completed' | 'rescheduled' | 'upcoming' | 'ongoing';
   is_modified?: boolean;
   modified_notes?: string;
   override_time?: string;
@@ -315,44 +317,6 @@ export interface OccurrenceOverride {
   new_end_time?: string;
   new_location?: string;
   notes?: string;
-}
-
-export interface ChurchEvent {
-  id: string;
-  branch_id?: string;
-  title: string;
-  description: string;
-  category: EventCategory;
-  start_time: string;
-  end_time: string;
-  location: string;
-  is_virtual?: boolean;
-  virtual_link?: string;
-  featured_image?: string;
-  organizer_name?: string;
-  target_audience?: EventTargetAudience;
-  registration_required?: boolean;
-  max_attendees?: number;
-  registered_count?: number;
-  status: 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
-  created_at?: string;
-  // Recurrence Program support
-  recurrence?: EventRecurrence;
-  recurrence_pattern?: string;
-  recurrence_end_date?: string;
-  next_occurrence?: string;
-  recurring_funding_allowance?: number;
-  recurrence_nth?: number; // 1 = 1st, 2 = 2nd, 3 = 3rd, 4 = 4th, -1 = last
-  recurrence_weekday?: number; // 0 = Sun, 1 = Mon, ..., 6 = Sat
-  excluded_months?: number[]; // Array of 0-indexed month numbers to skip (e.g. [0] for January)
-  recurrence_config?: EventRecurrenceRuleConfig;
-  // Dedicated Event Account Link
-  has_funding_account?: boolean;
-  account_number?: string;
-  account_balance?: number;
-  // Combined Service & Schedule Preemption
-  is_combined_service?: boolean;
-  preempts_regular_service?: boolean;
 }
 
 export interface EventFundingTransaction {
@@ -441,12 +405,16 @@ export interface EventScheduleItem {
 
 export interface EventExpense {
   id: string;
-  event_id: string;
-  item_name: string;
+  event_id?: string;
+  item_name?: string;
   category: string;
-  estimated_cost: number;
-  actual_cost: number;
-  status: 'planned' | 'paid' | 'pending';
+  estimated_cost?: number;
+  actual_cost?: number;
+  status?: 'planned' | 'paid' | 'pending';
+  description?: string;
+  quantity?: number;
+  unit_price?: number;
+  total_price?: number;
 }
 
 export type RequisitionStatus = 
@@ -607,6 +575,7 @@ export interface DepartmentLedgerRecord {
   contribution_category?: ContributionCategory;
   welfare_reason?: WelfareReason;
   welfare_card_number?: string;
+  drive_id?: string;
 }
 
 export type PermissionKey = 

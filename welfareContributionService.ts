@@ -249,6 +249,7 @@ export const getMemberWelfareCard = (memberId: string, memberName: string, deptN
 
 export const getDeptWelfareSummary = (deptName: string) => {
   const contribs = getMemberContributions(deptName);
+  const campaigns = getWelfareCampaigns(deptName);
   const totalWelfare = contribs.filter(c => c.category === 'welfare').reduce((s, c) => s + Number(c.amount), 0);
   const totalMonthlyDues = contribs.filter(c => c.category === 'monthly_dues').reduce((s, c) => s + Number(c.amount), 0);
   const totalSpecialSupport = contribs.filter(c => c.category === 'special_support').reduce((s, c) => s + Number(c.amount), 0);
@@ -258,7 +259,8 @@ export const getDeptWelfareSummary = (deptName: string) => {
     totalWelfare,
     totalMonthlyDues,
     totalSpecialSupport,
-    recordCount: contribs.length
+    recordCount: contribs.length,
+    activeCampaignsCount: campaigns.filter(c => c.status === 'active').length
   };
 };
 
