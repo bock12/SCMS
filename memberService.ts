@@ -1,6 +1,13 @@
 import type { Member, Profile } from './types';
 import { supabase } from './supabaseClient';
 
+/** Accepts only real calendar dates in the canonical YYYY-MM-DD format. */
+function isValidIsoDate(value: string): boolean {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export type LinkedMemberDetails = Pick<Profile, 'first_name' | 'last_name'> & Partial<Pick<
   Profile,
   'email' | 'phone' | 'avatar_url' | 'is_baptized' | 'baptism_date' | 'baptized_by' | 'date_of_birth' | 'marital_status' | 'marriage_date'
