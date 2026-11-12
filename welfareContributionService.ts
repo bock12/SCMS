@@ -275,3 +275,199 @@ export const getCampaignProgress = (campaign: WelfareCampaignDrive, deptName: st
     contribs
   };
 };
+
+export interface MemberReciprocityStanding {
+  member_id: string;
+  member_name: string;
+  total_drives_count: number;
+  drives_participated_count: number;
+  participation_rate: number;
+  standing_label: string;
+  badge_color: string;
+  welfare_eligibility_note: string;
+  outstanding_drives: WelfareCampaignDrive[];
+}
+
+export const getMemberReciprocityRating = (
+  memberId: string,
+  memberName: string,
+  deptName: string
+): MemberReciprocityStanding => {
+  const campaigns = getWelfareCampaigns(deptName);
+  const contribs = getMemberContributions(deptName);
+
+  // Filter out drives where this member themselves is the beneficiary
+  const applicableDrives = campaigns.filter(
+    c => c.beneficiary_member_id !== memberId && c.beneficiary_member_name.toLowerCase() !== memberName.toLowerCase()
+  );
+
+  let drivesParticipated = 0;
+  const outstandingDrives: WelfareCampaignDrive[] = [];
+
+  applicableDrives.forEach(camp => {
+    const memberPaid = contribs
+      .filter(c => (c.campaign_id === camp.id || c.welfare_reason === camp.reason) && (c.member_id === memberId || c.member_name.toLowerCase() === memberName.toLowerCase()))
+      .reduce((s, c) => s + Number(c.amount), 0);
+
+    if (memberPaid >= camp.expected_amount_per_member) {
+      drivesParticipated++;
+    } else {
+      outstandingDrives.push(camp);
+    }
+  });
+
+  const totalDrives = applicableDrives.length;
+  const rate = totalDrives > 0 ? Math.round((drivesParticipated / totalDrives) * 100) : 100;
+
+  let standingLabel = 'Exemplary Contributor (100%)';
+  let badgeColor = 'bg-emerald-100 text-emerald-900 border-emerald-300';
+  let eligibilityNote = 'Full 100% Welfare Drive Allowance Authorized';
+
+  if (rate >= 80 && rate < 100) {
+    standingLabel = `Good Standing (${rate}%)`;
+    badgeColor = 'bg-teal-100 text-teal-900 border-teal-300';
+    eligibilityNote = 'Standard 100% Welfare Support Authorized';
+  } else if (rate >= 50 && rate < 80) {
+    standingLabel = `Partial Standing (${rate}%)`;
+    badgeColor = 'bg-amber-100 text-amber-900 border-amber-300';
+    eligibilityNote = 'Pro-Rated Support (Past participation advisory notice)';
+  } else if (rate < 50 && totalDrives > 0) {
+    standingLabel = `Restricted Standing (${rate}%)`;
+    badgeColor = 'bg-rose-100 text-rose-900 border-rose-300';
+    eligibilityNote = 'Requires Board Review: Member participated in few past drives';
+  }
+
+  return {
+    member_id: memberId,
+    member_name: memberName,
+    total_drives_count: totalDrives,
+    drives_participated_count: drivesParticipated,
+    participation_rate: rate,
+    standing_label: standingLabel,
+    badge_color: badgeColor,
+    welfare_eligibility_note: eligibilityNote,
+    outstanding_drives: outstandingDrives
+  };
+};
+
+export interface MemberWidgetTask {
+  id: string;
+  member_id: string;
+  member_name: string;
+  task_type: 'pending_contribution' | 'duty_reminder' | 'profile_completion' | 'volunteer_assignment';
+  title: string;
+  description: string;
+  due_date?: string;
+  amount?: number;
+  campaign_id?: string;
+  priority: 'urgent' | 'high' | 'normal';
+  badge_color: string;
+}
+
+export const getMemberActionableTasks = (
+  deptName: string,
+  deptRoster: { id: string; name: string; role?: string; email?: string; phone?: string; duty?: string }[],
+  volunteers: { id: string; name: string; note?: string }[] = []
+): MemberWidgetTask[] => {
+  const campaigns = getWelfareCampaigns(deptName);
+  const contribs = getMemberContributions(deptName);
+  const tasks: MemberWidgetTask[] = [];
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // 1. Check for Pending Welfare Contributions / Past Deadlines
+  deptRoster.forEach(member => {
+    campaigns.forEach(camp => {
+      if (camp.beneficiary_member_id === member.id || camp.beneficiary_member_name.toLowerCase() === member.name.toLowerCase()) return;
+
+      const paidSum = contribs
+        .filter(c => (c.campaign_id === camp.id || c.welfare_reason === camp.reason) && (c.member_id === member.id || c.member_name.toLowerCase() === member.name.toLowerCase()))
+        .reduce((s, c) => s + Number(c.amount), 0);
+
+      if (paidSum < camp.expected_amount_per_member) {
+        const isPastDeadline = camp.deadline < todayStr;
+        const remaining = camp.expected_amount_per_member - paidSum;
+
+        tasks.push({
+          id: `task-contrib-${member.id}-${camp.id}`,
+          member_id: member.id,
+          member_name: member.name,
+          task_type: 'pending_contribution',
+          title: isPastDeadline ? `🚨 Past Deadline Contribution: ${camp.title}` : `💰 Drive Contribution Due: ${camp.title}`,
+          description: `Outstanding balance of SLE ${remaining.toLocaleString()} for ${camp.beneficiary_member_name}'s welfare drive.`,
+          due_date: camp.deadline,
+          amount: remaining,
+          campaign_id: camp.id,
+          priority: isPastDeadline ? 'urgent' : 'high',
+          badge_color: isPastDeadline ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+        });
+      }
+    });
+
+    // 2. Check for Monthly Membership Dues
+    const duesPaid = contribs
+      .filter(c => c.category === 'monthly_dues' && (c.member_id === member.id || c.member_name.toLowerCase() === member.name.toLowerCase()))
+      .reduce((s, c) => s + Number(c.amount), 0);
+
+    if (duesPaid <= 0) {
+      tasks.push({
+        id: `task-dues-${member.id}`,
+        member_id: member.id,
+        member_name: member.name,
+        task_type: 'pending_contribution',
+        title: '📅 November 2026 Monthly Dues Pending',
+        description: `Regular monthly membership dues of SLE 200 pending for ${member.name}.`,
+        due_date: '2026-11-30',
+        amount: 200,
+        priority: 'normal',
+        badge_color: 'bg-emerald-100 text-emerald-800'
+      });
+    }
+
+    // 3. Check for Duty Reminders
+    if (member.duty && member.duty !== 'Department Member') {
+      tasks.push({
+        id: `task-duty-${member.id}`,
+        member_id: member.id,
+        member_name: member.name,
+        task_type: 'duty_reminder',
+        title: `🎙️ Upcoming Duty: ${member.duty}`,
+        description: `Scheduled roster duty assignment for upcoming Sunday Sanctuary Service.`,
+        due_date: '2026-11-15',
+        priority: 'normal',
+        badge_color: 'bg-indigo-100 text-indigo-800'
+      });
+    }
+
+    // 4. Check for Profile Incompleteness
+    if (!member.email || !member.phone) {
+      tasks.push({
+        id: `task-profile-${member.id}`,
+        member_id: member.id,
+        member_name: member.name,
+        task_type: 'profile_completion',
+        title: '📋 Missing Contact Information',
+        description: `Member roster profile is missing ${!member.email ? 'email address' : 'phone number'}.`,
+        priority: 'normal',
+        badge_color: 'bg-slate-100 text-slate-700'
+      });
+    }
+  });
+
+  // 5. Check for Volunteer Inquiries
+  volunteers.forEach(vol => {
+    tasks.push({
+      id: `task-vol-${vol.id}`,
+      member_id: vol.id,
+      member_name: vol.name,
+      task_type: 'volunteer_assignment',
+      title: '🤝 Volunteer Application Awaiting Appointment',
+      description: vol.note ? `"${vol.note}"` : 'Applied to join ministry roster.',
+      priority: 'high',
+      badge_color: 'bg-purple-100 text-purple-800'
+    });
+  });
+
+  return tasks;
+};
+

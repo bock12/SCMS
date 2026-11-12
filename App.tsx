@@ -34,7 +34,9 @@ import {
   generateWelfareCardNumber,
   getWelfareCampaigns,
   saveWelfareCampaign,
-  getCampaignProgress
+  getCampaignProgress,
+  getMemberReciprocityRating,
+  getMemberActionableTasks
 } from './welfareContributionService';
 import type { MemberContribution, MemberWelfareCard, WelfareCampaignDrive, ContributionCategory, WelfareReason } from './types';
 import {
@@ -2513,6 +2515,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [deptNotifications, setDeptNotifications] = useState<InAppNotification[]>(() => getDepartmentNotifications(activeDept));
   const [showInAppNotifModal, setShowInAppNotifModal] = useState(false);
 
+  // Member Tasks Widget State
+  const [memberTaskFilter, setMemberTaskFilter] = useState<'all' | 'pending_contrib' | 'duty' | 'profile'>('all');
+  const [dismissedTaskIds, setDismissedTaskIds] = useState<string[]>([]);
+
   useEffect(() => {
     setMemberContributions(getMemberContributions(activeDept));
     setWelfareCampaigns(getWelfareCampaigns(activeDept));
@@ -3622,6 +3628,211 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
         </button>
       </div>
 
+      {/* MEMBER TASKS & ACTION ITEMS WIDGET */}
+      {(() => {
+        const allTasks = getMemberActionableTasks(activeDept, deptRoster, volunteers)
+          .filter(t => !dismissedTaskIds.includes(t.id));
+        const urgentCount = allTasks.filter(t => t.priority === 'urgent' || t.priority === 'high').length;
+
+        const filteredTasks = allTasks.filter(t => {
+          if (memberTaskFilter === 'pending_contrib') return t.task_type === 'pending_contribution';
+          if (memberTaskFilter === 'duty') return t.task_type === 'duty_reminder';
+          if (memberTaskFilter === 'profile') return t.task_type === 'profile_completion' || t.task_type === 'volunteer_assignment';
+          return true;
+        });
+
+        return (
+          <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-bold shrink-0">
+                  <ClipboardList size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-black text-slate-900">Member Tasks & Action Items</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-100 text-indigo-900">
+                      {allTasks.length} Pending
+                    </span>
+                    {urgentCount > 0 && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-100 text-rose-800 animate-pulse">
+                        {urgentCount} Urgent / Past Due
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Aggregated pending action items per member across contributions, roster duties, and profile completions.
+                  </p>
+                </div>
+              </div>
+
+              {/* Task Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                {[
+                  { id: 'all', label: `All (${allTasks.length})` },
+                  { id: 'pending_contrib', label: 'Contributions & Dues' },
+                  { id: 'duty', label: 'Duty Reminders' },
+                  { id: 'profile', label: 'Profiles & Volunteers' }
+                ].map(f => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setMemberTaskFilter(f.id as any)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold cursor-pointer transition-all ${
+                      memberTaskFilter === f.id ? 'bg-white text-indigo-900 shadow-2xs font-black' : 'text-slate-600'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tasks List */}
+            {filteredTasks.length === 0 ? (
+              <div className="p-6 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                🎉 All member action items up to date for {activeDept}! No pending tasks requiring leader attention.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
+                {filteredTasks.map(task => (
+                  <div
+                    key={task.id}
+                    className="p-3.5 bg-slate-50 hover:bg-white hover:shadow-xs transition-all rounded-2xl border border-slate-200 space-y-2 text-xs flex flex-col justify-between"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-7 h-7 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                            {task.member_name[0]}
+                          </span>
+                          <div>
+                            <h4 className="font-extrabold text-slate-900 text-xs">{task.member_name}</h4>
+                            <span className={`inline-block px-2 py-0.2 rounded-full text-[9px] font-extrabold uppercase border ${task.badge_color}`}>
+                              {task.priority.toUpperCase()} • {task.task_type.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {task.due_date && (
+                          <span className="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                            Due: {task.due_date}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="pt-1">
+                        <h5 className="font-bold text-slate-800 text-xs">{task.title}</h5>
+                        <p className="text-slate-500 text-[11px] leading-tight mt-0.5">{task.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Action Controls */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
+                      <div className="flex items-center gap-1.5">
+                        {task.task_type === 'pending_contribution' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                sendInAppNotification({
+                                  department_name: activeDept,
+                                  recipient_member_id: task.member_id,
+                                  recipient_member_name: task.member_name,
+                                  type: 'welfare_reminder',
+                                  title: task.title,
+                                  message: task.description,
+                                  sent_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+                                });
+                                setProposalSuccessToast(`🔔 Sent in-app reminder to ${task.member_name}`);
+                                setTimeout(() => setProposalSuccessToast(null), 3000);
+                              }}
+                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                            >
+                              <Bell size={11} /> Remind
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setContribMemberId(task.member_id);
+                                setContribMemberName(task.member_name);
+                                setContribAmount(task.amount || '');
+                                setShowRecordContribModal(true);
+                              }}
+                              className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                            >
+                              <Plus size={11} /> Log Payment
+                            </button>
+                          </>
+                        )}
+
+                        {task.task_type === 'duty_reminder' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              sendInAppNotification({
+                                department_name: activeDept,
+                                recipient_member_id: task.member_id,
+                                recipient_member_name: task.member_name,
+                                type: 'general_notice',
+                                title: task.title,
+                                message: `Friendly reminder for ${task.member_name}: You have been assigned for roster duty: ${task.description}. Thank you for your faithful service!`,
+                                sent_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader'
+                              });
+                              setProposalSuccessToast(`🔔 Duty reminder sent to ${task.member_name}`);
+                              setTimeout(() => setProposalSuccessToast(null), 3000);
+                            }}
+                            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <Bell size={11} /> Remind Duty
+                          </button>
+                        )}
+
+                        {task.task_type === 'volunteer_assignment' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleApproveVolunteer(task.member_id);
+                              setDismissedTaskIds(prev => [...prev, task.id]);
+                            }}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <Check size={11} /> Approve & Add
+                          </button>
+                        )}
+
+                        {task.task_type === 'profile_completion' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const found = deptRoster.find(r => r.id === task.member_id);
+                              if (found) openEditRosterMember(found);
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          >
+                            <Edit size={11} /> Update Profile
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setDismissedTaskIds(prev => [...prev, task.id])}
+                        className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer font-extrabold"
+                        title="Dismiss Task"
+                      >
+                        ✓ Mark Done
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Success Notification Banner */}
       {proposalSuccessToast && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in">
@@ -4646,7 +4857,20 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                                       {m.name[0]}
                                     </div>
                                     <div>
-                                      <span className="font-extrabold text-slate-900">{m.name}</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-extrabold text-slate-900">{m.name}</span>
+                                        {(() => {
+                                          const standing = getMemberReciprocityRating(m.id, m.name, activeDept);
+                                          return (
+                                            <span 
+                                              className={`px-1.5 py-0.2 rounded-full text-[8px] font-black border uppercase ${standing.badge_color}`}
+                                              title={`Lifetime Drive Reciprocity: ${standing.standing_label} — ${standing.welfare_eligibility_note}`}
+                                            >
+                                              {standing.standing_label}
+                                            </span>
+                                          );
+                                        })()}
+                                      </div>
                                       <span className="text-[10px] text-slate-400 block">{m.role}</span>
                                     </div>
                                   </div>
