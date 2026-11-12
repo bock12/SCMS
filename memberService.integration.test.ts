@@ -236,6 +236,32 @@ describe('Standalone church membership registration', () => {
     })).rejects.toThrow('A valid membership date is required (YYYY-MM-DD).');
   });
 
+  test('validates optional dates, member attributes and normalized email addresses', async () => {
+    const base = {
+      first_name: 'Mariama',
+      last_name: 'Kamara',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-12'
+    };
+    await expect(registerChurchMember({ ...base, date_of_birth: '2026-02-30' }))
+      .rejects.toThrow('Date of birth must be a valid date in YYYY-MM-DD format.');
+    await expect(registerChurchMember({ ...base, date_of_birth: '2999-01-01' }))
+      .rejects.toThrow('Date of birth cannot be in the future.');
+    await expect(registerChurchMember({ ...base, baptism_date: 'not-a-date' }))
+      .rejects.toThrow('Baptism date must be a valid date in YYYY-MM-DD format.');
+    await expect(registerChurchMember({ ...base, is_baptized: false, baptism_date: '2020-01-01' }))
+      .rejects.toThrow('A baptism date cannot be set when the member is not baptized.');
+    await expect(registerChurchMember({ ...base, gender: 'unknown' as any }))
+      .rejects.toThrow('Invalid gender value.');
+    await expect(registerChurchMember({ ...base, marital_status: 'Complicated' as any }))
+      .rejects.toThrow('Invalid marital status.');
+    await expect(registerChurchMember({ ...base, email: 'not-an-email' }))
+      .rejects.toThrow('Enter a valid email address.');
+
+    const normalized = await registerChurchMember({ ...base, email: '  Mariama@Example.ORG  ' });
+    expect(normalized.email).toBe('mariama@example.org');
+  });
+
   test('links only an existing same-branch profile and prevents duplicate links', async () => {
     const profile = {
       id: 'usr-explicit-link',
@@ -258,6 +284,17 @@ describe('Standalone church membership registration', () => {
       profile_id: profile.id
     });
     expect(member.profile_id).toBe(profile.id);
+
+    const duplicateInsert = await supabase.from('members').insert({
+      profile_id: profile.id,
+      branch_id: 'branch-1',
+      first_name: 'Joseph',
+      last_name: 'Turay',
+      gender: 'male',
+      status: 'active',
+      membership_date: '2026-11-12'
+    });
+    expect(duplicateInsert.error?.code).toBe('23505');
 
     await expect(registerChurchMember({
       first_name: 'Joseph',
