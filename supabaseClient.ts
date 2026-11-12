@@ -826,6 +826,23 @@ class LocalQueryBuilder {
 
     // 3. INSERT
     if (this.pendingInsertData) {
+      if (this.tableName === 'members') {
+        const incomingProfileIds = this.pendingInsertData
+          .map((item: any) => item.profile_id)
+          .filter((profileId: string | null | undefined): profileId is string => Boolean(profileId));
+        const hasDuplicateIncoming = new Set(incomingProfileIds).size !== incomingProfileIds.length;
+        const hasExistingLink = incomingProfileIds.some(profileId => rows.some(row => row.profile_id === profileId));
+        if (hasDuplicateIncoming || hasExistingLink) {
+          resolve({
+            data: null,
+            error: {
+              code: '23505',
+              message: 'duplicate key value violates unique constraint "idx_members_profile_id_unique"'
+            }
+          });
+          return;
+        }
+      }
       const inserted = this.pendingInsertData.map((item: any) => ({
         id: item.id || `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         created_at: item.created_at || new Date().toISOString(),
