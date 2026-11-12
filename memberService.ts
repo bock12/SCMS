@@ -136,6 +136,23 @@ export async function ensureLinkedMemberRecord(
     .select('*')
     .single();
 
+  if (error?.code === '23505') {
+    // A concurrent request may have created the unique profile link after our lookup.
+    const { data: racedMember, error: racedLookupError } = await supabase
+      .from('members')
+      .select('*')
+      .eq('profile_id', profile.id)
+      .maybeSingle();
+    if (racedLookupError) throw racedLookupError;
+    if (racedMember) {
+      const { error: refreshError } = await supabase
+        .from('members')
+        .update(details)
+        .eq('id', racedMember.id);
+      if (refreshError) throw refreshError;
+      return { ...(racedMember as Member), ...details } as Member;
+    }
+  }
   if (error) throw error;
   const saved = Array.isArray(data) ? data[0] : data;
   if (!saved) throw new Error('The membership record was not created.');
