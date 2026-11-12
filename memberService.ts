@@ -111,3 +111,29 @@ export async function updateLinkedMemberDetails(
 
   if (error) throw error;
 }
+
+/**
+ * Mirrors directory account status to an existing church membership record.
+ * Does not create a membership record and does not alter portal credentials.
+ */
+export async function syncLinkedMemberStatus(
+  profileId: string,
+  status: 'active' | 'suspended' | 'archived'
+): Promise<void> {
+  if (!profileId.trim()) throw new Error('A profile ID is required.');
+
+  const { data, error: lookupError } = await supabase
+    .from('members')
+    .select('id')
+    .eq('profile_id', profileId);
+
+  if (lookupError) throw lookupError;
+  if (!data?.length) return;
+
+  const { error } = await supabase
+    .from('members')
+    .update({ status })
+    .eq('profile_id', profileId);
+
+  if (error) throw error;
+}
