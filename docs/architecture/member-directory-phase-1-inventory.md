@@ -193,3 +193,103 @@ The migration must be forward-only, transactional where supported, idempotent or
 ## 8. Inventory limitations
 
 This document records references confirmed in the files inspected for this phase. It is not yet a claim that every repository consumer has been found. GitHub code search did not return usable indexed results during this review, so the remaining repository-wide search and test discovery are explicit blockers rather than assumed complete work.
+
+
+## 9. Completed repository-wide audit (2026-11-13)
+
+The initial inventory above has now been checked against the current repository tree and implementation at main commit `01ee1fcdedff88192cd4497ade7433e9f9319966`. The repository tree contained 74 tracked paths at the time of review. Relevant application, service, test, schema, migration, and workflow files were inspected; the findings below supersede the earlier statement that repository-wide search and test discovery were still pending.
+
+### 9.1 Canonical-model implementation already present on main
+
+The current main branch already contains a substantial first implementation of ADR-0001:
+
+- `types.ts` defines `Profile.auth_user_id?`, `MembershipStatus`, and `PortalAccountStatus`, with identity and membership fields on `Profile`.
+- `memberService.ts` reads and writes the directory through `profiles`; it provides person registration, editing, independent membership and portal status updates, portal enable/disable, and invitation/setup handling.
+- `memberDirectoryService.ts` reads canonical profiles only.
+- `memberProfileSyncService.ts` is now a compatibility no-op rather than a second write path.
+- `App.tsx`'s main Member Directory uses one profile list, one registration/edit flow, and a portal-access toggle that defaults off.
+- `ministryMemberService.ts`, event-survey services, and the ministry/role screens resolve their member references against canonical profile IDs.
+- `supabaseClient.ts` normalizes legacy browser-local records from `members` into `profiles` and remaps selected legacy member IDs.
+- `memberService.integration.test.ts` covers directory-only registration, optional portal provisioning, unique auth links, portal revocation/deletion, independent lifecycles, validation, legacy conversion, and transfer/event-registration ID remapping.
+
+This is application/mock-database implementation evidence only. It does not prove that a remote Supabase database has been migrated.
+
+### 9.2 Complete migration inventory and schema-baseline finding
+
+The repository contains seven SQL migrations:
+
+1. `20261110000100_expand_member_records.sql`
+2. `20261111000100_align_event_registration_attendance.sql`
+3. `20261111000200_create_ministry_membership.sql`
+4. `20261111000300_create_resources_and_event_surveys.sql`
+5. `20261112000100_add_atomic_event_survey_submission.sql`
+6. `20261112000200_enforce_unique_member_profile_link.sql`
+7. `20261112000300_unify_profiles_member_directory.sql`
+
+The first six migrations assume that `public.members` exists. They add member columns, add member foreign keys, create event-survey references to members, query members in RLS/RPC logic, and enforce uniqueness on `members.profile_id`. The final migration decouples `profiles.id` from auth identity, adds `auth_user_id`, merges member rows, remaps the four SQL dependent tables (`ministry_members`, `member_transfers`, `event_registrations`, and `event_survey_responses`), updates policies/RPC logic, and drops `public.members`.
+
+**Schema-baseline blocker:** the current root `schema.sql` is already a canonical-profile schema: it defines `profiles.auth_user_id` and membership fields, and its ministry/transfer/event-registration foreign keys point to `profiles`. It does not define the legacy `members` table expected by migrations 1–6. Therefore, `schema.sql` cannot safely be treated as the pre-migration baseline for replaying the full seven-file migration history. The project must explicitly document whether a fresh Supabase setup uses the current consolidated `schema.sql` as the complete target schema (without replaying historical migrations), or uses a separately versioned legacy baseline followed by all migrations. Do not apply both paths together.
+
+### 9.3 Dependent application and mock-data references
+
+The audit confirmed these current contracts:
+
+- Ministry roster rows use `ministry_members.member_id` as a canonical `profiles.id`; roster reads join to profiles.
+- Transfers resolve their `member_id` against canonical profiles.
+- Event registrations use canonical person IDs for `member_id`; the auth identity belongs in `user_id` only when an authenticated user exists.
+- Event survey eligibility and response services resolve the signed-in person through `auth_user_id` and store canonical profile IDs.
+- Role assignments retain both `member_id` and `profile_id` compatibility fields in parts of the UI/mock model; both currently represent the canonical person ID and should be normalized in a later dependent-module cleanup.
+- Welfare contributions, welfare cards, campaign beneficiaries, and department-ledger links are currently browser-local data structures, not SQL foreign keys in the inspected migration set. Their IDs must still be preserved/remapped when browser-local legacy data is normalized. Name-based matching remains a legacy fallback and must not become the canonical identity rule.
+- `types.ts` still contains a legacy `Member` interface and compatibility member/profile ID fields. Their eventual removal is a later cleanup after all imports and serialized data have been reconciled.
+
+### 9.4 Remaining implementation and deployment risks
+
+The source review identified follow-up work for Phase 2:
+
+1. The root auth-profile resolver first queries `profiles.auth_user_id`, but still falls back to `profiles.id = auth user id` and fabricates a client-side profile if no row is found. The fallback is contrary to the new identity contract and should be removed once auth-trigger/provisioning behavior is verified.
+2. The mock `signInWithPassword` path still auto-creates an account when an email is unknown. A failed sign-in must not create an identity; account creation must remain explicit.
+3. Mock sign-up/provisioning and SQL `handle_new_user` contain email-based linking behavior. The production linking flow must be protected against unverified or unauthorized email-based account claiming; a secure invitation/verified-email flow is required.
+4. The final SQL migration drops all foreign keys referencing `public.members` dynamically, but explicitly remaps/recreates only the four currently known SQL dependent tables. Add a preflight assertion that fails if any unrecognized FK still references `members`, and verify dependent row counts before/after remapping.
+5. The final SQL migration resolves linked-profile field conflicts by precedence rules in the update statement; it does not persist a conflict report or require review for conflicting non-empty identity/membership values. This needs a reviewed reconciliation design before any production execution.
+6. The existing `docs/testing/membership-workflow-acceptance.md` still describes the superseded dual-form workflow (including “Register Member (No Login)” and linking a separate portal profile). It must be rewritten to match ADR-0001.
+7. No live Supabase connection, migration history, or production dataset was available during this audit. Whether a production database exists and which migrations have been applied remains unverified. This is a deployment gate, not a blocker to local/mock Phase 2 code work.
+
+### 9.5 Automated test coverage and gaps
+
+Confirmed automated coverage in `memberService.integration.test.ts` includes:
+
+- person registration without email or auth;
+- optional portal invitation/setup and sign-in after activation;
+- uniqueness of non-null `auth_user_id`;
+- unlinking/deleting auth without deleting the person;
+- independent portal and membership lifecycles;
+- validation and duplicate-contact checks;
+- migration of legacy `members` browser data, including a transfer and event-registration reference.
+
+Additional event-survey tests exist in `eventSurveyEligibility.test.ts` and `resourcesSurveysMockIntegration.test.ts`. The package test command is `bun test`.
+
+Gaps: there is no test that executes the SQL migration against a disposable PostgreSQL/Supabase-compatible database; no test proves unknown-email sign-in is rejected without side effects; no security test proves an unverified signup cannot claim an existing person's record; and the existing legacy migration test should be expanded to cover ministry roster and event-survey response references plus orphan/duplicate conflict cases.
+
+### 9.6 Phase 1 exit decision
+
+- [x] Accepted target model and ADR recorded.
+- [x] Main directory, registration/edit, service, mock-auth, and dependent-module paths inventoried.
+- [x] All seven repository SQL migrations inspected and their historical dependency chain recorded.
+- [x] Existing membership tests and acceptance documentation located.
+- [x] Browser-local legacy ID migration behavior reviewed.
+- [x] Phase 2 implementation risks and acceptance gaps recorded.
+- [ ] Remote Supabase migration state and production data baseline verified — unavailable without project-owner connection/access.
+
+**Phase 1 is complete for repository/source-code scope.** The remote database baseline remains explicitly unverified and is a hard gate for any database migration or deployment. Phase 2 may proceed against the application and mock implementation, without executing SQL or connecting to Supabase.
+
+## 10. Phase 2 entry scope
+
+Phase 2 begins with hardening the canonical person/auth identity boundary:
+
+1. Remove auth-user-ID fallbacks that treat a person ID as an auth ID.
+2. Make unknown-email sign-in fail without creating an account.
+3. Make auth/profile linking explicit and resistant to unverified email-based account claiming.
+4. Add regression tests for these invariants.
+5. Review and correct the final SQL migration's preflight, conflict reporting, and dependent-reference assertions before it can be considered production-ready.
+
+The existing canonical directory work is a starting implementation, not evidence that these Phase 2 safeguards are complete.
