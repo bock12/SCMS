@@ -1,8 +1,8 @@
-# Membership Workflow Acceptance Checklist
+# Unified Member Directory — Acceptance Checklist
 
-**Scope:** MEM-INT-007 — membership register and portal-account workflow  
+**Scope:** ADR-0001 unified person directory with optional portal access  
 **Environment:** local mock authentication and local mock database only  
-**Supabase:** must remain disconnected; do not run migrations or use live credentials  
+**Supabase:** keep disconnected for this checklist; do not run migrations or use live credentials  
 **Test roles:** administrator or pastor, plus a standard member account for access-boundary checks
 
 ## Preconditions
@@ -10,106 +10,108 @@
 - Start the application using the repository's documented local development command.
 - Sign in with the mock administrator or pastor account.
 - Confirm the app is using the local mock database and that no Supabase project credentials are configured.
-- Use clearly identifiable test records prefixed with `MEM-INT-007`; do not use real congregant information.
-- Record the starting membership and portal-account counts so cleanup can be verified.
+- Use clearly identifiable test records; do not use real congregant information.
+- Record starting directory and portal-account counts so cleanup can be verified.
 
 ## Acceptance scenarios
 
-### 1. Register a church member without portal access
+### 1. Register a person without portal access
 
-1. Open **Member Directory** and choose **Register Member (No Login)**.
-2. Enter first name, last name, a valid membership date, gender, and optional contact details.
-3. Leave **Link an existing portal account** set to **Do not link — membership only**.
-4. Submit the form.
+1. Open **Member Directory** and choose **Add New Member**.
+2. Enter the required name, branch, and membership date; add optional contact and membership details.
+3. Leave portal access disabled and submit.
 
 **Expected**
-- A membership record appears in the unified membership directory.
-- The record has no linked portal profile.
-- No profile or login identity is created.
+- Exactly one canonical person record is created in `profiles`.
+- `auth_user_id` remains null; no auth account or credentials are created.
+- The person appears in the directory and can be searched by name and available contact details.
 - Membership status defaults to Active.
-- The new record is searchable by name, email, and phone.
 
-### 2. Link an existing portal account
+### 2. Register a person with optional portal access
 
-1. Create or identify a portal profile in the same branch that is not already linked to a membership record.
-2. Register a church member and select that existing profile in the optional link selector.
-3. Submit.
+1. Open **Add New Member**.
+2. Enter the required person and membership details, a valid email address, and enable portal access.
+3. Submit and inspect the invitation/setup result.
 
 **Expected**
-- The new membership record references the selected profile.
-- No second portal profile or credentials are created.
-- The linked account appears as linked in the directory.
-- Attempting to link the same profile again is rejected with a clear validation message.
-- Profiles from a different branch are not accepted.
+- Exactly one canonical person record is created.
+- Portal provisioning explicitly links the created auth identity to that person's stable profile ID.
+- The setup token is required to activate the portal account; no plaintext password is stored in `profiles`.
+- The linked identity is unique and is not selected by matching email alone.
 
-### 3. Edit membership details
+### 3. Prevent unauthorized identity claiming
 
-1. Find a membership record and open **Edit Membership**.
-2. Change the name, contact details, gender, membership date, and baptism fields.
+1. Create a directory person with portal access disabled.
+2. Attempt public sign-up using that person's email address.
+3. Attempt sign-in with an unknown email address.
+
+**Expected**
+- Public sign-up cannot claim or link the existing directory person by email.
+- Unknown-email sign-in fails without creating an auth account or directory person.
+- An auth account without trusted provisioning metadata remains unlinked and cannot enter the member portal.
+- A trusted provisioning request must identify the exact profile ID and the email must match that profile.
+
+### 4. Edit a person and validate data
+
+1. Find a directory person and open the single edit flow.
+2. Change name, contact details, gender, membership date, and baptism fields.
 3. Save and reopen the record.
 
 **Expected**
-- Changes persist in the membership record.
+- Changes persist on the same canonical profile ID.
 - Email is normalized to lowercase and surrounding whitespace is removed.
-- Clearing a previously set baptism date removes the stored date when baptism is unchecked.
 - Invalid dates, impossible calendar dates, invalid email addresses, and missing names are rejected.
-- Validation errors are visible in the form and the modal remains open.
+- Validation errors remain visible and do not silently close the form.
 
-### 4. Change membership status independently of portal access
+### 5. Change membership and portal status independently
 
-1. Select a record linked to a portal profile.
-2. Change its membership status to Inactive, Suspended, Transferred, or Archived and save.
-3. Reopen the linked portal account and inspect its account status and role.
-4. If possible, separately suspend or reactivate the portal account.
-
-**Expected**
-- Membership status changes only on the membership record.
-- Portal account status, role, and login access do not change when membership status changes.
-- Portal account suspension or archival does not silently change membership status.
-- The directory's membership-status filter reflects the membership status only.
-
-### 5. Search and filter membership records
-
-1. Search by full name, partial name, email, and phone.
-2. Apply each membership-status filter.
-3. Apply portal access filters: linked, unlinked, enabled, and disabled.
-4. Combine search and filters, then clear them.
+1. Select a record linked to a portal account.
+2. Change membership status to Inactive, Suspended, Transferred, or Archived.
+3. Separately suspend or reactivate portal access where supported.
 
 **Expected**
-- Search is case-insensitive and matches the member's name/contact fields.
-- Membership-status filters operate on the membership record.
-- Portal filters operate on the existence/status of the linked profile, not membership status.
-- Clearing filters restores the full set of records.
+- Membership status changes only the church-membership lifecycle.
+- Portal status and auth linkage remain independent of membership status.
+- Suspending or archiving portal access does not silently alter membership status.
 
-### 6. Error handling and integrity
+### 6. Search, filters, and integrity
 
-- Submit blank names and malformed dates.
-- Try an invalid email.
-- Try a duplicate profile link.
-- Try a profile from a different branch.
-- Simulate or inspect a failed save and confirm the user receives a visible error rather than a silent console-only failure.
-- Confirm a failed membership synchronization does not close the edit form or falsely report a complete save.
+- Search by full name, partial name, email, and phone.
+- Apply membership-status and portal-access filters separately and together.
+- Attempt duplicate email/phone registration and duplicate auth-user linking.
+- Simulate a failed save and confirm the error is visible and actionable.
+- Verify ministry, transfer, event-registration, and survey references still resolve to the same canonical person IDs.
 
 **Expected**
-- Invalid writes are rejected before changing stored data.
-- Errors are visible and actionable.
-- No duplicate membership row is created for a portal profile.
-- Membership and portal-account lifecycle remain independent.
+- Search and filters operate on the unified directory and the correct independent lifecycle fields.
+- Duplicate contacts and duplicate non-null `auth_user_id` values are rejected.
+- Failed writes do not leave duplicate or partially linked records.
+- Dependent module references remain intact.
 
 ## Evidence record
 
 | Scenario | Pass / Fail | Notes or screenshot reference |
 |---|---|---|
-| Standalone registration | | |
-| Existing profile linking | | |
-| Membership editing and validation | | |
+| Directory-only registration | | |
+| Optional portal provisioning | | |
+| Unauthorized identity-claim prevention | | |
+| Person editing and validation | | |
 | Independent membership / portal status | | |
-| Search and filters | | |
-| Error handling and integrity | | |
+| Search, filters, and dependent references | | |
 
 ## Completion criteria
 
 - All six scenarios pass in the local mock environment.
 - Automated membership service tests and the production build pass in CI.
-- Any failed scenario is recorded and fixed before acceptance.
-- Browser acceptance is marked complete only after a human tester executes the scenarios above; CI success alone does not count as browser acceptance.
+- SQL trigger behavior is verified against a disposable Supabase-compatible PostgreSQL test project before any production deployment.
+- Production migration history and schema baseline are confirmed by the project owner before applying migrations.
+- Browser acceptance is marked complete only after a human tester executes the scenarios; CI success alone does not count as browser acceptance.
+
+## Deployment dependency
+
+The SQL trigger now expects trusted portal provisioning to set
+`auth.users.raw_app_meta_data.provisioned_profile_id` using a server-side
+service-role operation. The current browser mock implements a simulated
+provisioning flow; it is not a production service-role implementation. Do not
+enable live Supabase portal invitations until that server-side operation exists
+and is tested.
