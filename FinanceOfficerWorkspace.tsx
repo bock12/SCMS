@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
@@ -17,8 +18,30 @@ interface FinanceOfficerWorkspaceProps {
   profile: Profile | null;
 }
 
+type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways';
+
+const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways'];
+
 export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
-  const [workspaceTab, setWorkspaceTab] = useState<'ledger' | 'requisitions' | 'event_budgets' | 'gateways'>('ledger');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const resolveTabFromSearch = (search: string): FinanceWorkspaceTab => {
+    const raw = new URLSearchParams(search).get('tab') as FinanceWorkspaceTab | null;
+    return raw && VALID_FINANCE_TABS.includes(raw) ? raw : 'ledger';
+  };
+  const [workspaceTab, setWorkspaceTabState] = useState<FinanceWorkspaceTab>(() =>
+    resolveTabFromSearch(location.search)
+  );
+
+  useEffect(() => {
+    const nextTab = resolveTabFromSearch(location.search);
+    setWorkspaceTabState(prev => (prev === nextTab ? prev : nextTab));
+  }, [location.search]);
+
+  const setWorkspaceTab = (tab: FinanceWorkspaceTab) => {
+    setWorkspaceTabState(tab);
+    navigate(`/portal/finance?tab=${tab}`, { replace: true });
+  };
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
@@ -2868,7 +2891,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       )}
 
       {/* MOBILE & TABLET BOTTOM NAV BAR (Fixed at bottom on < lg screens) */}
-      <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-[95] bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
+      <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
         <div className="grid grid-cols-4 gap-1 max-w-lg mx-auto">
           <button
             onClick={() => setWorkspaceTab('ledger')}

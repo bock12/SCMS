@@ -9,13 +9,11 @@ import {
   CheckCheck,
   ChevronDown,
   ClipboardList,
-  DollarSign,
   Landmark,
   LayoutDashboard,
   LogOut,
   Radio,
   RefreshCw,
-  Settings,
   ShieldCheck,
   User,
   X
@@ -30,6 +28,19 @@ import {
   SYSTEM_NOTIFICATIONS_UPDATED_EVENT,
   type SystemNotificationItem
 } from './systemNotificationService';
+
+export type ConsoleKey = 'member' | 'admin' | 'finance' | 'leader';
+
+export function getActiveConsoleForRoute(pathname: string, search: string): ConsoleKey {
+  if (pathname.startsWith('/portal/admin')) {
+    const tab = new URLSearchParams(search).get('tab');
+    if (tab === 'financials') return 'finance';
+    return 'admin';
+  }
+  if (pathname.startsWith('/portal/finance')) return 'finance';
+  if (pathname.startsWith('/portal/leader')) return 'leader';
+  return 'member';
+}
 
 function formatRelativeTime(timestamp: string): string {
   const ms = Date.parse(timestamp);
@@ -399,6 +410,8 @@ export const HeaderNotificationBell: React.FC<HeaderNotificationBellProps> = ({
 interface HeaderUserMenuProps {
   profile: Profile;
   unreadCount: number;
+  activeConsole: ConsoleKey;
+  onSelectConsole: (consoleKey: ConsoleKey) => void;
   isOpen: boolean;
   onToggle: () => void;
   onClose: () => void;
@@ -409,6 +422,8 @@ interface HeaderUserMenuProps {
 export const HeaderUserMenu: React.FC<HeaderUserMenuProps> = ({
   profile,
   unreadCount,
+  activeConsole,
+  onSelectConsole,
   isOpen,
   onToggle,
   onClose,
@@ -433,9 +448,66 @@ export const HeaderUserMenu: React.FC<HeaderUserMenuProps> = ({
     ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) ||
     Boolean(profile.assigned_department || profile.department_name);
 
-  const navigateAndClose = (to: string) => {
+  const availableConsoles: {
+    key: ConsoleKey;
+    label: string;
+    subtitle: string;
+    route: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+    iconClass: string;
+    activeBg: string;
+  }[] = [
+    {
+      key: 'member',
+      label: 'Member Portal',
+      subtitle: 'Congregation life & profile',
+      route: '/portal',
+      icon: LayoutDashboard,
+      iconClass: 'text-indigo-600',
+      activeBg: 'bg-indigo-50 text-indigo-800'
+    }
+  ];
+
+  if (isAdminOrPastor) {
+    availableConsoles.push({
+      key: 'admin',
+      label: 'Pastoral & Admin Console',
+      subtitle: 'Church management & settings',
+      route: '/portal/admin?tab=overview',
+      icon: ShieldCheck,
+      iconClass: 'text-indigo-600',
+      activeBg: 'bg-indigo-50 text-indigo-800'
+    });
+  }
+
+  if (canAccessFinance) {
+    availableConsoles.push({
+      key: 'finance',
+      label: 'Finance & Treasury Console',
+      subtitle: 'Ledger, budgets & requisitions',
+      route: '/portal/finance',
+      icon: Landmark,
+      iconClass: 'text-emerald-600',
+      activeBg: 'bg-emerald-50 text-emerald-800'
+    });
+  }
+
+  if (isLeaderOrStaff) {
+    availableConsoles.push({
+      key: 'leader',
+      label: 'Ministry Leader Console',
+      subtitle: 'Department roster, dues & funds',
+      route: '/portal/leader',
+      icon: Award,
+      iconClass: 'text-amber-600',
+      activeBg: 'bg-amber-50 text-amber-800'
+    });
+  }
+
+  const handleChooseConsole = (item: (typeof availableConsoles)[number]) => {
+    onSelectConsole(item.key);
     onClose();
-    navigate(to);
+    navigate(item.route);
   };
 
   return (
@@ -517,28 +589,46 @@ export const HeaderUserMenu: React.FC<HeaderUserMenuProps> = ({
             </div>
           </div>
 
-          {/* Primary Account Controls */}
+          {/* Console Switcher (Controls which console's menus show in the Sidebar) */}
           <div className="p-1.5 space-y-0.5">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => navigateAndClose('/portal/profile')}
-              className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-            >
-              <User size={15} className="text-slate-500 shrink-0" />
-              <span className="truncate">My Profile & Credentials</span>
-            </button>
+            <p className="px-3 pt-1.5 pb-1 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+              {availableConsoles.length > 1 ? 'Switch Console' : 'Active Console'}
+            </p>
+            {availableConsoles.map(item => {
+              const isSelected = activeConsole === item.key;
+              const IconComp = item.icon;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isSelected}
+                  onClick={() => handleChooseConsole(item)}
+                  className={`w-full min-h-[44px] flex items-center justify-between gap-2.5 px-3 py-2 rounded-xl text-left transition-colors cursor-pointer ${
+                    isSelected
+                      ? item.activeBg
+                      : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <IconComp size={16} className={`${item.iconClass} shrink-0`} />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold leading-tight truncate">
+                        {item.label}
+                      </span>
+                      <span className="block text-[10px] text-slate-500 leading-tight truncate mt-0.5">
+                        {item.subtitle}
+                      </span>
+                    </span>
+                  </span>
+                  {isSelected && <Check size={14} className="shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
 
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => navigateAndClose('/portal')}
-              className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-            >
-              <LayoutDashboard size={15} className="text-slate-500 shrink-0" />
-              <span className="truncate">Church Overview</span>
-            </button>
-
+          {/* Account Controls (Notifications) */}
+          <div className="p-1.5 border-t border-slate-100 space-y-0.5">
             <button
               type="button"
               role="menuitem"
@@ -550,94 +640,13 @@ export const HeaderUserMenu: React.FC<HeaderUserMenuProps> = ({
             >
               <span className="flex items-center gap-2.5 min-w-0">
                 <Bell size={15} className="text-slate-500 shrink-0" />
-                <span className="truncate">System Notifications</span>
+                <span className="truncate">Notifications</span>
               </span>
               {unreadCount > 0 && (
                 <span className="text-[11px] font-extrabold text-rose-600 tabular-nums shrink-0">
                   {unreadCount}
                 </span>
               )}
-            </button>
-          </div>
-
-          {/* Role-Specific Workspaces */}
-          {(isAdminOrPastor || canAccessFinance || isLeaderOrStaff) && (
-            <div className="p-1.5 border-t border-slate-100 space-y-0.5">
-              {isAdminOrPastor && (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => navigateAndClose('/portal/admin')}
-                    className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-                  >
-                    <ShieldCheck size={15} className="text-indigo-600 shrink-0" />
-                    <span className="truncate">Admin & Pastoral Console</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => navigateAndClose('/portal/admin?tab=settings')}
-                    className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-                  >
-                    <Settings size={15} className="text-slate-500 shrink-0" />
-                    <span className="truncate">Church Settings</span>
-                  </button>
-                </>
-              )}
-              {canAccessFinance && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => navigateAndClose('/portal/finance')}
-                  className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors cursor-pointer text-left"
-                >
-                  <Landmark size={15} className="text-emerald-600 shrink-0" />
-                  <span className="truncate">Finance Console</span>
-                </button>
-              )}
-              {isLeaderOrStaff && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => navigateAndClose('/portal/leader')}
-                  className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-amber-50 hover:text-amber-700 transition-colors cursor-pointer text-left"
-                >
-                  <Award size={15} className="text-amber-600 shrink-0" />
-                  <span className="truncate">Ministry Leader Console</span>
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Member Quick Links */}
-          <div className="p-1.5 border-t border-slate-100 space-y-0.5">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => navigateAndClose('/portal/calendar')}
-              className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-            >
-              <Calendar size={15} className="text-slate-500 shrink-0" />
-              <span className="truncate">Events & Calendar</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => navigateAndClose('/portal/giving')}
-              className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-            >
-              <DollarSign size={15} className="text-slate-500 shrink-0" />
-              <span className="truncate">Giving & Tithes</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => navigateAndClose('/portal/surveys')}
-              className="w-full min-h-[40px] flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-indigo-700 transition-colors cursor-pointer text-left"
-            >
-              <ClipboardList size={15} className="text-slate-500 shrink-0" />
-              <span className="truncate">Event Feedback</span>
             </button>
           </div>
 

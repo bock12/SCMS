@@ -200,7 +200,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION BAR (Fixed at bottom on < md screens) */}
-      <nav className="block md:hidden fixed bottom-0 inset-x-0 z-[90] bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-2xl px-1 py-1.5">
+      <nav className="block md:hidden fixed bottom-0 inset-x-0 z-20 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-2xl px-1 py-1.5">
         <div className="flex items-center justify-around max-w-lg mx-auto">
           {tabs.filter(t => primaryMobileTabs.includes(t.id)).map(t => {
             const Icon = t.icon;

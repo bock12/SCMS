@@ -12,7 +12,13 @@ import {
 import { supabase, resetLocalDatabase } from './supabaseClient';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
-import { HeaderNotificationBell, HeaderUserMenu, useSystemNotifications } from './HeaderControls';
+import {
+  getActiveConsoleForRoute,
+  HeaderNotificationBell,
+  HeaderUserMenu,
+  useSystemNotifications,
+  type ConsoleKey
+} from './HeaderControls';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { MemberResourcesPage } from './MemberResourcesPage';
 import { MemberEventSurveysPage } from './MemberEventSurveysPage';
@@ -95,6 +101,31 @@ const getPortalPageMeta = (pathname: string, search: string): { section: string;
       title: tabTitles[tab] || 'Admin Dashboard'
     };
   }
+  if (pathname === '/portal/finance') {
+    const tab = new URLSearchParams(search).get('tab') || 'ledger';
+    const financeTabTitles: Record<string, string> = {
+      ledger: 'Financial Ledger',
+      requisitions: 'Ministry Proposals',
+      event_budgets: 'Event Budgets',
+      gateways: 'Gateways & Funds'
+    };
+    return {
+      section: 'Finance & Treasury',
+      title: financeTabTitles[tab] || 'Financial Officer Console'
+    };
+  }
+  if (pathname === '/portal/leader') {
+    const tab = new URLSearchParams(search).get('tab') || 'finance';
+    const leaderTabTitles: Record<string, string> = {
+      finance: 'Department Financials',
+      roster: 'Team Roster',
+      welfare: 'Welfare & Dues'
+    };
+    return {
+      section: 'Department Leadership',
+      title: leaderTabTitles[tab] || 'Ministry Leader Console'
+    };
+  }
   const routeTitles: Record<string, { section: string; title: string }> = {
     '/portal': { section: 'Member Portal', title: 'Church Overview' },
     '/portal/directory': { section: 'Member Portal', title: 'Member Directory' },
@@ -105,9 +136,7 @@ const getPortalPageMeta = (pathname: string, search: string): { section: string;
     '/portal/streaming': { section: 'Member Portal', title: 'Live Sanctuary' },
     '/portal/giving': { section: 'Member Portal', title: 'Giving & Tithes' },
     '/portal/prayer': { section: 'Member Portal', title: 'Prayer Wall' },
-    '/portal/profile': { section: 'Member Portal', title: 'My Profile' },
-    '/portal/leader': { section: 'Department Leadership', title: 'Ministry Leader Console' },
-    '/portal/finance': { section: 'Finance & Treasury', title: 'Financial Officer Console' }
+    '/portal/profile': { section: 'Member Portal', title: 'My Profile' }
   };
   return routeTitles[pathname] || { section: 'Portal', title: 'FaithConnect' };
 };
@@ -118,12 +147,16 @@ const Navbar = ({
   profile, 
   onOpenAuth,
   onToggleMobileMenu,
-  inPortal = false
+  inPortal = false,
+  activeConsole,
+  onSelectConsole
 }: { 
   profile: Profile | null;
   onOpenAuth?: (isSignUp?: boolean) => void;
   onToggleMobileMenu?: () => void;
   inPortal?: boolean;
+  activeConsole?: ConsoleKey;
+  onSelectConsole?: (consoleKey: ConsoleKey) => void;
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -131,6 +164,7 @@ const Navbar = ({
   const [activeMenu, setActiveMenu] = useState<'notifications' | 'user' | null>(null);
   const menusContainerRef = useRef<HTMLDivElement>(null);
   const portalMeta = getPortalPageMeta(location.pathname, location.search);
+  const resolvedConsole = activeConsole ?? getActiveConsoleForRoute(location.pathname, location.search);
   const { notifications, unreadCount, loading: notificationsLoading, refresh: refreshNotifications } =
     useSystemNotifications(profile);
 
@@ -236,13 +270,15 @@ const Navbar = ({
       <div ref={menusContainerRef} className="flex items-center gap-2 sm:gap-3 shrink-0">
         {profile ? (
           <>
-            <Link 
-              to="/portal" 
-              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors whitespace-nowrap shrink-0"
-            >
-              <LayoutDashboard size={14} />
-              <span>Overview</span>
-            </Link>
+            {!inPortal && (
+              <Link 
+                to="/portal" 
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors whitespace-nowrap shrink-0"
+              >
+                <LayoutDashboard size={14} />
+                <span>Open Portal</span>
+              </Link>
+            )}
 
             <HeaderNotificationBell
               profile={profile}
@@ -264,6 +300,8 @@ const Navbar = ({
             <HeaderUserMenu
               profile={profile}
               unreadCount={unreadCount}
+              activeConsole={resolvedConsole}
+              onSelectConsole={(consoleKey) => onSelectConsole?.(consoleKey)}
               isOpen={activeMenu === 'user'}
               onToggle={() => setActiveMenu(prev => (prev === 'user' ? null : 'user'))}
               onClose={() => setActiveMenu(null)}
@@ -302,17 +340,17 @@ const Navbar = ({
 interface SidebarProps {
   role: string;
   profile?: Profile | null;
+  activeConsole: ConsoleKey;
   mobileOpen?: boolean;
   onClose?: () => void;
   desktopCollapsed?: boolean;
   onToggleDesktopCollapse?: () => void;
 }
 
-type SidebarSectionKey = 'church' | 'finance' | 'leader' | 'admin';
-
 const Sidebar: React.FC<SidebarProps> = ({
   role,
   profile,
+  activeConsole,
   mobileOpen = false,
   onClose,
   desktopCollapsed = false,
@@ -330,83 +368,115 @@ const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('church-profile-updated', handleUpdate);
   }, []);
 
-  const isLeaderOrStaff = ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) || Boolean(profile?.assigned_department || profile?.department_name);
+  const isLeaderOrStaff =
+    ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) ||
+    Boolean(profile?.assigned_department || profile?.department_name);
   const isAdminOrPastor = ['admin', 'super_admin', 'pastor', 'district_admin'].includes(role);
   const isFinanceOfficer = role === 'finance_officer';
   const canAccessFinance = isFinanceOfficer || isAdminOrPastor;
-  const hasMultipleRoleSections = isLeaderOrStaff || canAccessFinance || isAdminOrPastor;
 
-  const getActiveSectionForRoute = (pathname: string, search: string): SidebarSectionKey => {
-    if (pathname.startsWith('/portal/admin')) {
-      const tab = new URLSearchParams(search).get('tab');
-      if (tab === 'financials') return 'finance';
-      return 'admin';
-    }
-    if (pathname === '/portal/finance') return 'finance';
-    if (pathname === '/portal/leader') return 'leader';
-    return 'church';
-  };
-
-  const [openSections, setOpenSections] = useState<Record<SidebarSectionKey, boolean>>(() => {
-    const active = getActiveSectionForRoute(location.pathname, location.search);
-    return {
-      church: active === 'church' || !hasMultipleRoleSections,
-      finance: active === 'finance' || (isFinanceOfficer && !isAdminOrPastor),
-      leader: active === 'leader' || (isLeaderOrStaff && !isAdminOrPastor),
-      admin: active === 'admin'
-    };
-  });
-
-  useEffect(() => {
-    const active = getActiveSectionForRoute(location.pathname, location.search);
-    setOpenSections(prev => (prev[active] ? prev : { ...prev, [active]: true }));
-  }, [location.pathname, location.search]);
-
-  const toggleSection = (section: SidebarSectionKey) => {
-    setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
+  const effectiveConsole: ConsoleKey =
+    activeConsole === 'admin' && isAdminOrPastor
+      ? 'admin'
+      : activeConsole === 'finance' && canAccessFinance
+      ? 'finance'
+      : activeConsole === 'leader' && isLeaderOrStaff
+      ? 'leader'
+      : 'member';
 
   const churchLifeLinks = [
-    { to: '/portal', icon: Home, label: 'Church Overview' },
-    { to: '/portal/directory', icon: Users, label: 'Member Directory' },
-    { to: '/portal/ministries', icon: Building2, label: 'Ministries & Teams' },
-    { to: '/portal/calendar', icon: Calendar, label: 'Events & Calendar' },
-    { to: '/portal/resources', icon: BookOpen, label: 'Church Resources' },
-    { to: '/portal/surveys', icon: ClipboardList, label: 'Event Feedback' },
-    { to: '/portal/streaming', icon: Video, label: 'Live Sanctuary' },
-    { to: '/portal/giving', icon: DollarSign, label: 'Giving & Tithes' },
-    { to: '/portal/prayer', icon: Heart, label: 'Prayer Wall' },
-    { to: '/portal/profile', icon: User, label: 'My Profile' }
+    { to: '/portal', icon: Home, label: 'Church Overview', isDefault: false },
+    { to: '/portal/directory', icon: Users, label: 'Member Directory', isDefault: false },
+    { to: '/portal/ministries', icon: Building2, label: 'Ministries & Teams', isDefault: false },
+    { to: '/portal/calendar', icon: Calendar, label: 'Events & Calendar', isDefault: false },
+    { to: '/portal/resources', icon: BookOpen, label: 'Church Resources', isDefault: false },
+    { to: '/portal/surveys', icon: ClipboardList, label: 'Event Feedback', isDefault: false },
+    { to: '/portal/streaming', icon: Video, label: 'Live Sanctuary', isDefault: false },
+    { to: '/portal/giving', icon: DollarSign, label: 'Giving & Tithes', isDefault: false },
+    { to: '/portal/prayer', icon: Heart, label: 'Prayer Wall', isDefault: false },
+    { to: '/portal/profile', icon: User, label: 'My Profile', isDefault: false }
   ];
 
-  const leaderLinks = isLeaderOrStaff ? [
-    { to: '/portal/leader', icon: Award, label: 'Ministry Leader Console' }
-  ] : [];
+  const leaderLinks = [
+    { to: '/portal/leader?tab=finance', icon: Landmark, label: 'Department Financials', isDefault: true },
+    { to: '/portal/leader?tab=roster', icon: Users, label: 'Team Roster', isDefault: false },
+    { to: '/portal/leader?tab=welfare', icon: Heart, label: 'Welfare & Dues', isDefault: false }
+  ];
 
-  const financeLinks = canAccessFinance ? [
-    { to: '/portal/finance', icon: Landmark, label: 'Financial Officer Console' },
-    { to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger' }
-  ] : [];
+  const financeLinks = [
+    { to: '/portal/finance?tab=ledger', icon: Landmark, label: 'Financial Ledger', isDefault: true },
+    { to: '/portal/finance?tab=requisitions', icon: ShoppingCart, label: 'Ministry Proposals', isDefault: false },
+    { to: '/portal/finance?tab=event_budgets', icon: Calendar, label: 'Event Budgets', isDefault: false },
+    { to: '/portal/finance?tab=gateways', icon: CreditCard, label: 'Gateways & Funds', isDefault: false },
+    { to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger', isDefault: false }
+  ];
 
-  const adminLinks = isAdminOrPastor ? [
-    { to: '/portal/admin?tab=overview', icon: LayoutDashboard, label: 'Admin Overview' },
-    { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar' },
-    { to: '/portal/admin?tab=resources', icon: FileText, label: 'Church Resources' },
-    { to: '/portal/admin?tab=surveys', icon: ClipboardList, label: 'Post-Event Surveys' },
-    { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster' },
-    { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance' },
-    { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams' },
-    { to: '/portal/admin?tab=streaming', icon: Video, label: 'Broadcast Studio' },
-    { to: '/portal/admin?tab=multitenant', icon: Layers, label: 'Multi-Tenant Roadmap' },
-    { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings' }
-  ] : [];
+  const adminLinks = [
+    { to: '/portal/admin?tab=overview', icon: LayoutDashboard, label: 'Admin Overview', isDefault: true },
+    { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar', isDefault: false },
+    { to: '/portal/admin?tab=resources', icon: FileText, label: 'Church Resources', isDefault: false },
+    { to: '/portal/admin?tab=surveys', icon: ClipboardList, label: 'Post-Event Surveys', isDefault: false },
+    { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster', isDefault: false },
+    { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance', isDefault: false },
+    { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams', isDefault: false },
+    { to: '/portal/admin?tab=streaming', icon: Video, label: 'Broadcast Studio', isDefault: false },
+    { to: '/portal/admin?tab=multitenant', icon: Layers, label: 'Multi-Tenant Roadmap', isDefault: false },
+    { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings', isDefault: false }
+  ];
+
+  const consoleConfig: Record<
+    ConsoleKey,
+    {
+      label: string;
+      headerTextClass: string;
+      activeLinkClass: string;
+      hoverLinkClass: string;
+      links: typeof churchLifeLinks;
+      basePath: string;
+    }
+  > = {
+    member: {
+      label: 'Member Portal',
+      headerTextClass: 'text-slate-500',
+      activeLinkClass: 'bg-indigo-600 text-white shadow-md shadow-indigo-100',
+      hoverLinkClass: 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600',
+      links: churchLifeLinks,
+      basePath: '/portal'
+    },
+    admin: {
+      label: 'Pastoral & Admin',
+      headerTextClass: 'text-indigo-700',
+      activeLinkClass: 'bg-indigo-600 text-white shadow-md shadow-indigo-100',
+      hoverLinkClass: 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600',
+      links: adminLinks,
+      basePath: '/portal/admin'
+    },
+    finance: {
+      label: 'Finance & Treasury',
+      headerTextClass: 'text-emerald-700',
+      activeLinkClass: 'bg-emerald-600 text-white shadow-md shadow-emerald-100',
+      hoverLinkClass: 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700',
+      links: financeLinks,
+      basePath: '/portal/finance'
+    },
+    leader: {
+      label: 'Department Leadership',
+      headerTextClass: 'text-amber-700',
+      activeLinkClass: 'bg-amber-600 text-white shadow-md shadow-amber-100',
+      hoverLinkClass: 'text-slate-600 hover:bg-amber-50 hover:text-amber-700',
+      links: leaderLinks,
+      basePath: '/portal/leader'
+    }
+  };
+
+  const activeConfig = consoleConfig[effectiveConsole];
 
   const renderContent = (isCollapsed: boolean) => (
     <div className="flex flex-col h-full bg-white">
       {/* Unified Top Brand Row (Exact h-16 height to merge seamlessly with Portal Header) */}
       <div className={`${isCollapsed ? 'px-2 justify-center gap-1' : 'px-4 justify-between gap-2'} h-16 shrink-0 border-b border-slate-200 flex items-center`}>
         <Link
-          to="/portal"
+          to={activeConfig.basePath}
           onClick={onClose}
           title={churchProfile.main_title || 'FaithConnect'}
           className="flex items-center gap-2.5 min-w-0"
@@ -454,190 +524,43 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      <div className={`${isCollapsed ? 'p-2.5 space-y-3' : 'p-3.5 space-y-3'} flex-1 overflow-y-auto`}>
-        {/* Pastoral & Administration Category (Admin, Super Admin, Pastor ONLY) */}
-        {isAdminOrPastor && (
-          <div className="space-y-1">
-            {!isCollapsed && (
-              <button
-                type="button"
-                onClick={() => toggleSection('admin')}
-                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-indigo-700 uppercase tracking-widest flex items-center justify-between hover:bg-indigo-50/70 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span>Pastoral & Admin</span>
-                  <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-black">Staff</span>
-                </span>
-                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.admin ? 'rotate-0' : '-rotate-90'}`} />
-              </button>
-            )}
-            {(isCollapsed || openSections.admin) && (
-              <div className="space-y-1 pt-0.5">
-                {adminLinks.map((link) => {
-                  const currentFull = location.pathname + location.search;
-                  const isActive = currentFull === link.to || (link.to.includes('tab=overview') && location.pathname === '/portal/admin' && !location.search);
-                  return (
-                    <Link
-                      key={link.to}
-                      to={link.to}
-                      onClick={onClose}
-                      title={isCollapsed ? link.label : undefined}
-                      aria-label={link.label}
-                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
-                        isActive
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
-                      }`}
-                    >
-                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
-                      {!isCollapsed && <span className="truncate">{link.label}</span>}
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+      {/* Single Active Console Menu List */}
+      <div className={`${isCollapsed ? 'p-2.5' : 'p-3.5'} flex-1 overflow-y-auto`}>
+        {!isCollapsed && (
+          <p className={`px-3 text-[10px] font-extrabold uppercase tracking-widest mb-2 ${activeConfig.headerTextClass}`}>
+            {activeConfig.label}
+          </p>
         )}
-
-        {/* Finance & Treasury Category (Finance Officer, Pastor, Admin) */}
-        {canAccessFinance && (
-          <div className={`space-y-1 ${isAdminOrPastor ? 'pt-3 border-t border-slate-100' : ''}`}>
-            {!isCollapsed && (
-              <button
-                type="button"
-                onClick={() => toggleSection('finance')}
-                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-emerald-700 uppercase tracking-widest flex items-center justify-between hover:bg-emerald-50/70 transition-colors cursor-pointer"
+        <div className="space-y-1">
+          {activeConfig.links.map((link) => {
+            const currentFull = location.pathname + location.search;
+            const hasQuery = link.to.includes('?');
+            const isActive = hasQuery
+              ? currentFull === link.to || (link.isDefault && location.pathname === activeConfig.basePath && !location.search)
+              : location.pathname === link.to && !location.search;
+            return (
+              <Link
+                key={link.to}
+                to={link.to}
+                onClick={onClose}
+                title={isCollapsed ? link.label : undefined}
+                aria-label={link.label}
+                className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
+                  isActive ? activeConfig.activeLinkClass : activeConfig.hoverLinkClass
+                }`}
               >
-                <span className="flex items-center gap-1.5">
-                  <span>Finance & Treasury</span>
-                  <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-black">Treasury</span>
-                </span>
-                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.finance ? 'rotate-0' : '-rotate-90'}`} />
-              </button>
-            )}
-            {(isCollapsed || openSections.finance) && (
-              <div className="space-y-1 pt-0.5">
-                {financeLinks.map((link) => {
-                  const currentFull = location.pathname + location.search;
-                  const isActive = currentFull === link.to;
-                  return (
-                    <Link
-                      key={link.to}
-                      to={link.to}
-                      onClick={onClose}
-                      title={isCollapsed ? link.label : undefined}
-                      aria-label={link.label}
-                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
-                        isActive
-                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100'
-                          : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
-                      }`}
-                    >
-                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
-                      {!isCollapsed && <span className="truncate">{link.label}</span>}
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Ministry Leadership Category (Leader, Worker, Pastor, Admin) */}
-        {isLeaderOrStaff && (
-          <div className={`space-y-1 ${(isAdminOrPastor || canAccessFinance) ? 'pt-3 border-t border-slate-100' : ''}`}>
-            {!isCollapsed && (
-              <button
-                type="button"
-                onClick={() => toggleSection('leader')}
-                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-amber-700 uppercase tracking-widest flex items-center justify-between hover:bg-amber-50/70 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span>Department Leadership</span>
-                  <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-black">Leaders</span>
-                </span>
-                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.leader ? 'rotate-0' : '-rotate-90'}`} />
-              </button>
-            )}
-            {(isCollapsed || openSections.leader) && (
-              <div className="space-y-1 pt-0.5">
-                {leaderLinks.map((link) => {
-                  const isActive = location.pathname === link.to;
-                  return (
-                    <Link
-                      key={link.to}
-                      to={link.to}
-                      onClick={onClose}
-                      title={isCollapsed ? link.label : undefined}
-                      aria-label={link.label}
-                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
-                        isActive
-                          ? 'bg-amber-600 text-white shadow-md shadow-amber-100'
-                          : 'text-slate-600 hover:bg-amber-50 hover:text-amber-700'
-                      }`}
-                    >
-                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
-                      {!isCollapsed && <span className="truncate">{link.label}</span>}
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Church Life / Member Portal Category (All Roles) */}
-        <div className={`space-y-1 ${hasMultipleRoleSections ? 'pt-3 border-t border-slate-100' : ''}`}>
-          {!isCollapsed && (
-            hasMultipleRoleSections ? (
-              <button
-                type="button"
-                onClick={() => toggleSection('church')}
-                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-slate-500 uppercase tracking-widest flex items-center justify-between hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span>Member Portal</span>
-                  <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-black">Member</span>
-                </span>
-                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.church ? 'rotate-0' : '-rotate-90'}`} />
-              </button>
-            ) : (
-              <p className="px-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">
-                Church Ministry
-              </p>
-            )
-          )}
-          {(isCollapsed || !hasMultipleRoleSections || openSections.church) && (
-            <div className="space-y-1 pt-0.5">
-              {churchLifeLinks.map((link) => {
-                const isActive = location.pathname === link.to && !location.search;
-                return (
-                  <Link
-                    key={link.to}
-                    to={link.to}
-                    onClick={onClose}
-                    title={isCollapsed ? link.label : undefined}
-                    aria-label={link.label}
-                    className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
-                    }`}
-                  >
-                    <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
-                    {!isCollapsed && <span className="truncate">{link.label}</span>}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
+                <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
+                {!isCollapsed && <span className="truncate">{link.label}</span>}
+              </Link>
+            );
+          })}
         </div>
       </div>
 
       {/* Inspirational Footer */}
       {!isCollapsed && (
         <div className="p-4 border-t border-slate-100 bg-slate-50/50 shrink-0">
-          <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs">
+          <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
             <p className="text-[11px] text-slate-700 italic font-serif leading-relaxed">
               "For where two or three gather in my name, there am I with them."
             </p>
@@ -661,9 +584,9 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Mobile Slide-Over Drawer with Backdrop */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden flex">
+        <div className="fixed inset-0 z-[98] md:hidden flex">
           <div 
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" 
             onClick={onClose} 
           />
           <aside className="relative w-72 max-w-[85vw] h-full bg-white shadow-2xl flex flex-col z-10 animate-in slide-in-from-left duration-200">
@@ -2993,6 +2916,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     )
   );
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Only Admins and Pastors have permission to switch between all department consoles
   const canSwitchDepts = Boolean(profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role));
@@ -3000,8 +2924,25 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   // User's specifically assigned department
   const userAssignedDept = (profile as any)?.assigned_department || (profile as any)?.department_name || 'Media & IT Ministry';
 
+  const resolveLeaderTab = (search: string): 'finance' | 'roster' | 'welfare' => {
+    const raw = new URLSearchParams(search).get('tab');
+    return raw === 'roster' || raw === 'welfare' ? raw : 'finance';
+  };
+
   const [activeDept, setActiveDept] = useState(canSwitchDepts ? 'Media & IT Ministry' : userAssignedDept);
-  const [leaderConsoleSubTab, setLeaderConsoleSubTab] = useState<'finance' | 'roster' | 'welfare'>('finance');
+  const [leaderConsoleSubTab, setLeaderConsoleSubTabState] = useState<'finance' | 'roster' | 'welfare'>(() =>
+    resolveLeaderTab(location.search)
+  );
+
+  useEffect(() => {
+    const nextTab = resolveLeaderTab(location.search);
+    setLeaderConsoleSubTabState(prev => (prev === nextTab ? prev : nextTab));
+  }, [location.search]);
+
+  const setLeaderConsoleSubTab = (tab: 'finance' | 'roster' | 'welfare') => {
+    setLeaderConsoleSubTabState(tab);
+    navigate(`/portal/leader?tab=${tab}`, { replace: true });
+  };
   const [financeSectionFilter, setFinanceSectionFilter] = useState<'all' | 'proposals' | 'ledger'>('all');
 
   // Member Welfare & Contributions Module State
@@ -11319,10 +11260,14 @@ const LandingPage = ({
 // --- Main App Root ---
 
 const App = () => {
+  const location = useLocation();
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedConsole, setSelectedConsole] = useState<ConsoleKey>(() =>
+    getActiveConsoleForRoute(location.pathname, location.search)
+  );
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('fc_sidebar_collapsed') === 'true';
@@ -11330,6 +11275,16 @@ const App = () => {
       return false;
     }
   });
+
+  const activeConsole: ConsoleKey = location.pathname.startsWith('/portal')
+    ? getActiveConsoleForRoute(location.pathname, location.search)
+    : selectedConsole;
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/portal')) {
+      setSelectedConsole(getActiveConsoleForRoute(location.pathname, location.search));
+    }
+  }, [location.pathname, location.search]);
 
   const handleToggleDesktopSidebar = () => {
     setDesktopSidebarCollapsed(prev => {
@@ -11446,6 +11401,7 @@ const App = () => {
               <Sidebar 
                 role={profile?.primary_role || 'member'} 
                 profile={profile}
+                activeConsole={activeConsole}
                 mobileOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
                 desktopCollapsed={desktopSidebarCollapsed}
@@ -11455,6 +11411,8 @@ const App = () => {
                 <Navbar 
                   profile={profile} 
                   inPortal
+                  activeConsole={activeConsole}
+                  onSelectConsole={setSelectedConsole}
                   onToggleMobileMenu={() => setMobileMenuOpen(prev => !prev)}
                 />
                 <main className="flex-1 min-w-0 w-full px-4 py-5 sm:px-6 lg:px-8">
