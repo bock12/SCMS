@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -12,6 +12,7 @@ import {
 import { supabase, resetLocalDatabase } from './supabaseClient';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
+import { HeaderNotificationBell, HeaderUserMenu, useSystemNotifications } from './HeaderControls';
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { MemberResourcesPage } from './MemberResourcesPage';
 import { MemberEventSurveysPage } from './MemberEventSurveysPage';
@@ -127,7 +128,11 @@ const Navbar = ({
   const navigate = useNavigate();
   const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
+  const [activeMenu, setActiveMenu] = useState<'notifications' | 'user' | null>(null);
+  const menusContainerRef = useRef<HTMLDivElement>(null);
   const portalMeta = getPortalPageMeta(location.pathname, location.search);
+  const { notifications, unreadCount, loading: notificationsLoading, refresh: refreshNotifications } =
+    useSystemNotifications(profile);
 
   useEffect(() => {
     const handleUpdate = (e: any) => {
@@ -138,8 +143,33 @@ const Navbar = ({
     return () => window.removeEventListener('church-profile-updated', handleUpdate);
   }, []);
 
+  useEffect(() => {
+    setActiveMenu(null);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!activeMenu) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (menusContainerRef.current && !menusContainerRef.current.contains(event.target as Node)) {
+        setActiveMenu(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeMenu]);
+
   const handleSignOut = async () => {
     try {
+      setActiveMenu(null);
       await supabase.auth.signOut();
       navigate('/');
     } catch (e) {
@@ -203,72 +233,60 @@ const Navbar = ({
         )}
       </div>
       
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+      <div ref={menusContainerRef} className="flex items-center gap-2 sm:gap-3 shrink-0">
         {profile ? (
           <>
             <Link 
               to="/portal" 
-              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors shrink-0"
+              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors whitespace-nowrap shrink-0"
             >
               <LayoutDashboard size={14} />
               <span>Overview</span>
             </Link>
 
-            <Link 
-              to="/portal/streaming" 
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors shrink-0"
-              title="Watch Live"
-            >
-              <Radio size={14} className="animate-pulse shrink-0" />
-              <span className="hidden sm:inline">Watch Live</span>
-            </Link>
+            <HeaderNotificationBell
+              profile={profile}
+              notifications={notifications}
+              unreadCount={unreadCount}
+              loading={notificationsLoading}
+              isOpen={activeMenu === 'notifications'}
+              onToggle={() => {
+                setActiveMenu(prev => {
+                  const next = prev === 'notifications' ? null : 'notifications';
+                  if (next === 'notifications') refreshNotifications();
+                  return next;
+                });
+              }}
+              onClose={() => setActiveMenu(null)}
+              onRefresh={refreshNotifications}
+            />
 
-            <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-3 border-l border-slate-200 shrink-0">
-              <div className="text-right hidden lg:block max-w-[160px]">
-                <p className="text-sm font-bold text-slate-900 leading-none truncate">
-                  {profile.first_name} {profile.last_name}
-                </p>
-                <p className="text-xs text-indigo-600 font-semibold capitalize mt-0.5 truncate">
-                  {profile.primary_role?.replace('_', ' ') || 'Member'}
-                </p>
-              </div>
-
-              <Link 
-                to="/portal/profile" 
-                title="View Profile" 
-                className="w-9 h-9 bg-slate-100 rounded-full overflow-hidden border-2 border-indigo-200 hover:border-indigo-600 transition-colors flex items-center justify-center text-slate-600 shrink-0"
-              >
-                {profile.avatar_url ? (
-                  <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <User size={18} />
-                )}
-              </Link>
-
-              <button 
-                type="button"
-                onClick={handleSignOut} 
-                title="Sign Out" 
-                aria-label="Sign Out"
-                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
-              >
-                <LogOut size={18} />
-              </button>
-            </div>
+            <HeaderUserMenu
+              profile={profile}
+              unreadCount={unreadCount}
+              isOpen={activeMenu === 'user'}
+              onToggle={() => setActiveMenu(prev => (prev === 'user' ? null : 'user'))}
+              onClose={() => setActiveMenu(null)}
+              onOpenNotifications={() => {
+                refreshNotifications();
+                setActiveMenu('notifications');
+              }}
+              onSignOut={handleSignOut}
+            />
           </>
         ) : (
           <div className="flex items-center gap-2">
             <button 
               type="button"
               onClick={() => onOpenAuth ? onOpenAuth(false) : navigate('/auth')} 
-              className="px-4 py-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition-colors cursor-pointer"
+              className="px-4 py-2 text-slate-700 hover:text-indigo-600 font-bold text-sm transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               Sign In
             </button>
             <button 
               type="button"
               onClick={() => onOpenAuth ? onOpenAuth(true) : navigate('/auth?signup=true')} 
-              className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 cursor-pointer"
+              className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 cursor-pointer whitespace-nowrap shrink-0"
             >
               Create Account
             </button>
