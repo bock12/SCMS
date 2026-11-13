@@ -251,50 +251,50 @@ CREATE POLICY "Public read chat messages" ON public.stream_chat_messages FOR SEL
 CREATE POLICY "Authenticated users can send chat messages" ON public.stream_chat_messages FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 CREATE POLICY "Authenticated users can read transfers" ON public.member_transfers FOR SELECT USING (auth.role() = 'authenticated');
 
--- 13. AUTOMATIC PROFILE TRIGGER ON SIGN UP
+-- 13. Explicit portal identity linking
+-- A portal account may link to an existing directory person only when a trusted
+-- server-side provisioning flow sets auth.users.raw_app_meta_data.provisioned_profile_id.
+-- raw_app_meta_data is controlled by the Supabase service role; client-editable
+-- user_metadata and matching email addresses are never sufficient authorization.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
 DECLARE
-  v_existing_profile_id UUID;
+  v_profile_id UUID;
 BEGIN
-  IF NEW.email IS NOT NULL AND btrim(NEW.email) <> '' THEN
-    SELECT id INTO v_existing_profile_id
-    FROM public.profiles
-    WHERE lower(btrim(email)) = lower(btrim(NEW.email))
-      AND auth_user_id IS NULL
-    LIMIT 1;
+  IF COALESCE(NEW.raw_app_meta_data->>'provisioned_profile_id', '') = '' THEN
+    -- Unprovisioned sign-ups remain unlinked and cannot access the member portal.
+    RETURN NEW;
   END IF;
 
-  IF v_existing_profile_id IS NOT NULL THEN
-    UPDATE public.profiles
-    SET auth_user_id = NEW.id
-    WHERE id = v_existing_profile_id;
-  ELSE
-    INSERT INTO public.profiles (
-      auth_user_id,
-      first_name,
-      last_name,
-      email,
-      primary_role,
-      status,
-      membership_status,
-      membership_date
-    )
-    VALUES (
-      NEW.id,
-      COALESCE(NEW.raw_user_meta_data->>'first_name', 'Faithful'),
-      COALESCE(NEW.raw_user_meta_data->>'last_name', 'Member'),
-      COALESCE(NEW.email, ''),
-      'member',
-      'active',
-      'active',
-      CURRENT_DATE
-    )
-    ON CONFLICT (auth_user_id) DO NOTHING;
+  BEGIN
+    v_profile_id := (NEW.raw_app_meta_data->>'provisioned_profile_id')::UUID;
+  EXCEPTION
+    WHEN invalid_text_representation THEN
+      RAISE EXCEPTION 'Invalid provisioned profile reference.'
+        USING ERRCODE = '22023';
+  END;
+
+  UPDATE public.profiles
+  SET auth_user_id = NEW.id
+  WHERE id = v_profile_id
+    AND auth_user_id IS NULL
+    AND lower(btrim(email)) = lower(btrim(COALESCE(NEW.email, '')));
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'The requested directory person is unavailable for portal linking.'
+      USING ERRCODE = '23505';
   END IF;
+
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
+
+REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.handle_new_user() FROM anon, authenticated;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
