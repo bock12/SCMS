@@ -11327,44 +11327,28 @@ const App = () => {
 
   const fetchProfile = async (userId: string) => {
     try {
-      let { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('auth_user_id', userId)
         .maybeSingle();
 
+      if (error) throw error;
       if (!data) {
-        const fallback = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        data = fallback.data;
+        console.warn('Authenticated user has no linked directory person; ending the session.');
+        await supabase.auth.signOut();
+        setSession(null);
+        setProfile(null);
+        return;
       }
 
-      if (data) {
-        if (data.status === 'suspended' || data.status === 'archived') {
-          await supabase.auth.signOut();
-          setSession(null);
-          setProfile(null);
-          return;
-        }
-        setProfile(data);
-      } else {
-        setProfile({
-          id: userId,
-          auth_user_id: userId,
-          branch_id: 'branch-1',
-          first_name: 'Faithful',
-          last_name: 'Member',
-          email: session?.user?.email || 'user@faithconnect.church',
-          phone: '',
-          primary_role: 'member',
-          status: 'active',
-          membership_status: 'active',
-          created_at: new Date().toISOString()
-        });
+      if (data.status === 'suspended' || data.status === 'archived') {
+        await supabase.auth.signOut();
+        setSession(null);
+        setProfile(null);
+        return;
       }
+      setProfile(data);
     } catch (e) {
       console.warn("Profile fetch issue", e);
     } finally {

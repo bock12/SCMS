@@ -1219,22 +1219,26 @@ const localAuth = {
     const normalizedEmail = email.trim().toLowerCase();
     const users = getStoredUsers();
 
+    if (!normalizedEmail || !password) {
+      return { data: { user: null, session: null }, error: { message: 'A valid email and password are required.' } };
+    }
+
     if (users[normalizedEmail]) {
-      // User already exists, allow them to sign in or return friendly message
-      const existing = users[normalizedEmail];
-      const session = {
-        access_token: `mock_jwt_${existing.id}`,
-        token_type: 'bearer',
-        expires_in: 3600,
-        user: {
-          id: existing.id,
-          email: existing.email,
-          user_metadata: existing.user_metadata || options?.data
-        }
+      return {
+        data: { user: null, session: null },
+        error: { message: 'An account with this email already exists. Please sign in instead.' }
       };
-      setCurrentSession(session);
-      notifyAuthChange('SIGNED_IN', session);
-      return { data: { user: session.user, session }, error: null };
+    }
+
+    localDb = loadLocalDatabase();
+    const existingDirectoryPerson = (localDb.profiles || []).find(
+      (p: any) => (p.email || '').trim().toLowerCase() === normalizedEmail
+    );
+    if (existingDirectoryPerson) {
+      return {
+        data: { user: null, session: null },
+        error: { message: 'A church directory record already uses this email. Please ask a church administrator to provision portal access.' }
+      };
     }
 
     const newId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -1248,35 +1252,23 @@ const localAuth = {
     users[normalizedEmail] = userData;
     saveStoredUsers(users);
 
-    // Link auth_user_id onto an existing unlinked profile if email matches, otherwise create canonical profile
-    localDb = loadLocalDatabase();
     const firstBranch = localDb.church_branches?.[0]?.id || 'branch-1';
-    const existingUnlinked = (localDb.profiles || []).find(
-      (p: any) => (p.email || '').trim().toLowerCase() === normalizedEmail && !p.auth_user_id
-    );
-
-    if (existingUnlinked) {
-      localDb.profiles = (localDb.profiles || []).map((p: any) =>
-        p.id === existingUnlinked.id ? sanitizeProfileRecord({ ...p, auth_user_id: newId }) : p
-      );
-    } else {
-      const newProfile: Profile = sanitizeProfileRecord({
-        id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        auth_user_id: newId,
-        branch_id: options?.data?.branch_id || firstBranch,
-        first_name: options?.data?.first_name || 'Faithful',
-        last_name: options?.data?.last_name || 'Member',
-        email: normalizedEmail,
-        phone: options?.data?.phone || '',
-        avatar_url: options?.data?.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
-        primary_role: (options?.data?.primary_role as any) || 'member',
-        status: 'active',
-        membership_status: 'active',
-        membership_date: new Date().toISOString().slice(0, 10),
-        created_at: new Date().toISOString()
-      });
-      localDb.profiles = [...(localDb.profiles || []), newProfile];
-    }
+    const newProfile: Profile = sanitizeProfileRecord({
+      id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      auth_user_id: newId,
+      branch_id: options?.data?.branch_id || firstBranch,
+      first_name: options?.data?.first_name || 'Faithful',
+      last_name: options?.data?.last_name || 'Member',
+      email: normalizedEmail,
+      phone: options?.data?.phone || '',
+      avatar_url: options?.data?.avatar_url || `https://picsum.photos/seed/${newId}/100/100`,
+      primary_role: (options?.data?.primary_role as any) || 'member',
+      status: 'active',
+      membership_status: 'active',
+      membership_date: new Date().toISOString().slice(0, 10),
+      created_at: new Date().toISOString()
+    });
+    localDb.profiles = [...(localDb.profiles || []), newProfile];
     saveLocalDatabase(localDb);
 
     const session = {
@@ -1429,9 +1421,12 @@ const localAuth = {
 
     localDb = loadLocalDatabase();
     const profile = (localDb.profiles || []).find(
-      (p: any) => p.auth_user_id === user.id || p.id === user.id
+      (p: any) => p.auth_user_id === user.id
     );
-    if (profile && (profile.status === 'suspended' || profile.status === 'archived')) {
+    if (!profile) {
+      return { data: { user: null, session: null }, error: { message: 'This portal account is not linked to a directory person. Please contact a church administrator.' } };
+    }
+    if (profile.status === 'suspended' || profile.status === 'archived') {
       return { data: { user: null, session: null }, error: { message: 'This portal account is suspended or archived.' } };
     }
 
@@ -1570,17 +1565,10 @@ const localAuth = {
     const user = users[normalizedEmail];
 
     if (!user) {
-      // Auto-create friendly guest session if demo user wants immediate access
-      return this.signUp({
-        email: normalizedEmail,
-        password: password || 'password123',
-        options: {
-          data: {
-            first_name: normalizedEmail.split('@')[0],
-            last_name: 'Member'
-          }
-        }
-      });
+      return {
+        data: { user: null, session: null },
+        error: { message: 'Invalid login credentials. Please check your email and password.' }
+      };
     }
 
     if (user.setup_token && !user.password) {
@@ -1590,18 +1578,24 @@ const localAuth = {
       };
     }
 
-    if (password && user.password && user.password !== password) {
+    if (!password || !user.password || user.password !== password) {
       return {
         data: { user: null, session: null },
-        error: { message: 'Invalid login credentials. Please check your password.' }
+        error: { message: 'Invalid login credentials. Please check your email and password.' }
       };
     }
 
     localDb = loadLocalDatabase();
     const matchingProfile = (localDb.profiles || []).find(
-      (p: any) => p.auth_user_id === user.id || p.id === user.id
+      (p: any) => p.auth_user_id === user.id
     );
-    if (matchingProfile && (matchingProfile.status === 'suspended' || matchingProfile.status === 'archived')) {
+    if (!matchingProfile) {
+      return {
+        data: { user: null, session: null },
+        error: { message: 'This portal account is not linked to a directory person. Please contact a church administrator.' }
+      };
+    }
+    if (matchingProfile.status === 'suspended' || matchingProfile.status === 'archived') {
       return {
         data: { user: null, session: null },
         error: { message: 'Your portal access is currently suspended or archived. Please contact a church administrator.' }

@@ -114,6 +114,70 @@ describe('Unified canonical Member Directory (profiles)', () => {
     expect(postActivationSignIn.data.user?.id).toBe(result.profile.auth_user_id);
   });
 
+  test('rejects unknown-email sign-in without creating an auth user or person', async () => {
+    const beforeMembers = await getMembers();
+
+    const result = await supabase.auth.signInWithPassword({
+      email: 'unknown.person@example.org',
+      password: 'AnyPassword123!'
+    });
+
+    expect(result.error?.message).toContain('Invalid login credentials');
+    expect(result.data.user).toBeNull();
+    expect((await getMembers()).length).toBe(beforeMembers.length);
+    const storedUsers = JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}');
+    expect(storedUsers['unknown.person@example.org']).toBeUndefined();
+  });
+
+  test('does not allow sign-up to claim an existing unlinked directory person by email', async () => {
+    const person = await registerUnifiedMember({
+      first_name: 'Hawa',
+      last_name: 'Kamara',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-13',
+      email: 'hawa.kamara@example.org',
+      enable_portal_access: false
+    });
+
+    const result = await supabase.auth.signUp({
+      email: 'hawa.kamara@example.org',
+      password: 'NewPassword123!',
+      options: { data: { first_name: 'Impostor', last_name: 'Account' } }
+    });
+
+    expect(result.error?.message).toContain('ask a church administrator');
+    expect(result.data.user).toBeNull();
+    const after = (await getMembers()).find(p => p.id === person.profile.id);
+    expect(after?.auth_user_id ?? null).toBeNull();
+    expect(after?.first_name).toBe('Hawa');
+  });
+
+  test('sign-up with an already registered auth email does not authenticate as that user', async () => {
+    const created = await registerUnifiedMember({
+      first_name: 'Musa',
+      last_name: 'Conteh',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-13',
+      email: 'musa.conteh@example.org',
+      enable_portal_access: true
+    });
+    await supabase.auth.completePasswordSetup({
+      email: created.portalInvite!.email,
+      setupToken: created.portalInvite!.setupToken,
+      newPassword: 'OriginalPassword123!'
+    });
+    await supabase.auth.signOut();
+
+    const result = await supabase.auth.signUp({
+      email: 'musa.conteh@example.org',
+      password: 'AttackerPassword123!'
+    });
+
+    expect(result.error?.message).toContain('already exists');
+    expect(result.data.user).toBeNull();
+    expect((await supabase.auth.getSession()).data.session).toBeNull();
+  });
+
   test('enforces unique non-null auth_user_id across profiles', async () => {
     const first = await registerUnifiedMember({
       first_name: 'Joseph',
