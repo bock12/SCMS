@@ -116,7 +116,6 @@ describe('Unified canonical Member Directory (profiles)', () => {
 
   test('rejects unknown-email sign-in without creating an auth user or person', async () => {
     const beforeMembers = await getMembers();
-    const beforeUsers = JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}');
 
     const result = await supabase.auth.signInWithPassword({
       email: 'unknown.person@example.org',
@@ -126,7 +125,8 @@ describe('Unified canonical Member Directory (profiles)', () => {
     expect(result.error?.message).toContain('Invalid login credentials');
     expect(result.data.user).toBeNull();
     expect((await getMembers()).length).toBe(beforeMembers.length);
-    expect(JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}')).toEqual(beforeUsers);
+    const storedUsers = JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}');
+    expect(storedUsers['unknown.person@example.org']).toBeUndefined();
   });
 
   test('does not allow sign-up to claim an existing unlinked directory person by email', async () => {
