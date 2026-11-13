@@ -56,7 +56,6 @@ SELECT
   relation.relforcerowsecurity AS rls_forced,
   policy.polname AS policy_name,
   policy.polcmd AS policy_command,
-  pg_get_userbyid(policy.polowner) AS policy_owner,
   pg_get_expr(policy.polqual, policy.polrelid) AS using_expression,
   pg_get_expr(policy.polwithcheck, policy.polrelid) AS check_expression
 FROM pg_class AS relation
