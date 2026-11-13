@@ -1219,6 +1219,10 @@ const localAuth = {
     const normalizedEmail = email.trim().toLowerCase();
     const users = getStoredUsers();
 
+    if (!normalizedEmail || !password) {
+      return { data: { user: null, session: null }, error: { message: 'A valid email and password are required.' } };
+    }
+
     if (users[normalizedEmail]) {
       return {
         data: { user: null, session: null },
