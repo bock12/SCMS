@@ -3,7 +3,7 @@
 - **Status:** Security design baseline; implementation pending
 - **Date:** 2026-11-13
 - **Scope:** Canonical `public.profiles` member directory
-- **Related decision:** [ADR-0001 — Unified Member Directory](../architecture/ADR-0001-unified-member-directory.md)
+- **Related decisions:** [ADR-0001 — Unified Member Directory](../architecture/ADR-0001-unified-member-directory.md), [ADR-0002 — Server-Side Member Directory Authorization](../architecture/ADR-0002-server-side-member-directory-authorization.md)
 
 ## 1. Purpose
 
@@ -42,10 +42,10 @@ A staff permission must be paired with a server-verifiable scope. A role name al
 
 | Role / scope concept | Intended scope | Current enforcement readiness |
 |---|---|---|
-| `super_admin` | All records in the authorized organization/tenant | Not established by a tenant-aware database scope model |
-| `admin` | Church-wide administration within the authorized organization | Not established as a server-side grant |
-| `district_admin` | Branches belonging to an explicitly assigned district | District-to-branch relationship exists; staff district assignment is not modeled independently |
-| `pastor` | Explicitly assigned branch or branches | Staff branch assignment and authorization grant need verification |
+| `super_admin` | All records in the authorized organization; current single-church schema means the configured church only until tenant isolation exists | Not established as a trusted server-side grant |
+| `admin` | Church-wide administration within the current church | Not established as a server-side grant |
+| `district_admin` | All branches in the district explicitly assigned to the staff member | District-to-branch relationship exists; trusted staff district assignment is not modeled independently |
+| `pastor` | Explicitly assigned branch or branches | Trusted staff branch assignment and authorization grant need verification |
 | `finance_officer` | No general directory access by role alone; only the minimum member identity needed for an authorized finance workflow | Finance role exists; purpose-specific access path is not yet defined |
 | `leader` / `worker` | Own profile by default; any additional access must be a separately granted, ministry-specific capability | Ministry appointments and custom permissions are currently client-side |
 | `member` | Own profile by default | Can be enforced through the authenticated identity link |
