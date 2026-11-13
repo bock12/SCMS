@@ -124,106 +124,34 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
   // Primary bottom mobile tabs (Expanded by 2 to include Roles & Ministries)
   const primaryMobileTabs = ['overview', 'events', 'users', 'financials', 'roles', 'ministries'];
 
+  const activeTabInfo = tabs.find(t => t.id === currentTab) || tabs[0];
+
   return (
-    <div className="min-h-screen pb-24 lg:pb-12 space-y-6">
-      {/* Desktop & Tablet Sidebar Layout Container */}
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        
-        {/* DESKTOP & TABLET SIDEBAR (Visible on md and lg screens) */}
-        <aside className="hidden md:flex flex-col w-60 xl:w-68 shrink-0 bg-white rounded-3xl border border-slate-200 p-5 shadow-xs sticky top-6 space-y-6">
-          {/* Header Brand Lockup */}
-          <div className="space-y-2 pb-4 border-b border-slate-100">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-md shadow-indigo-100 shrink-0">
-                <Church size={18} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-black text-slate-900 leading-tight truncate">Church Admin</h2>
-                <span className="text-[10px] text-slate-400 font-semibold block truncate">FaithConnect Cathedral</span>
-              </div>
-            </div>
-
-            <div className="px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-800 text-[10px] font-black uppercase flex items-center gap-1.5 w-fit">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Single Church Mode</span>
-            </div>
+    <div className="min-h-screen pb-24 md:pb-12 space-y-6">
+      {/* Unified Page Header (Navigation handled by main portal Sidebar) */}
+      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-md shadow-indigo-100 shrink-0">
+            <Church size={20} />
           </div>
-
-          {/* Vertical Sidebar Navigation Links */}
-          <nav className="space-y-1.5 flex-1 overflow-y-auto max-h-[calc(100vh-180px)] pr-1">
-            <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider px-3 block mb-2">
-              Admin Navigation
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight truncate">
+              {activeTabInfo.label}
+            </h1>
+            <span className="text-xs text-slate-500 font-semibold block truncate">
+              Pastoral & Admin • {churchProfile.name || 'FaithConnect Grace Cathedral'}
             </span>
-            {tabs.map(t => {
-              const Icon = t.icon;
-              const isActive = currentTab === t.id;
-              const permKeyMap: Record<string, any> = {
-                events: 'manage_events',
-                resources: 'manage_events',
-                surveys: 'manage_events',
-                users: 'manage_members',
-                roles: 'manage_members',
-                ministries: 'manage_ministries',
-                financials: 'manage_finances',
-                streaming: 'manage_streams'
-              };
-              const reqPerm = permKeyMap[t.id];
-              const isAllowed = !reqPerm || hasPermission(profile, reqPerm);
-
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`w-full px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                    isActive 
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black' 
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Icon size={18} className={isActive ? 'text-white' : 'text-slate-400'} />
-                    <span className="truncate">{t.label}</span>
-                  </div>
-                  {!isAllowed && (
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase flex items-center gap-0.5 shrink-0 ${
-                      isActive ? 'bg-indigo-800 text-indigo-100' : 'bg-amber-100 text-amber-900'
-                    }`} title="Permission Restricted">
-                      <Key size={10} /> Lock
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* User Profile Leader Footer Box */}
-          <div className="pt-4 border-t border-slate-100 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden bg-indigo-100 border border-indigo-200 shrink-0">
-              <img src={profile.avatar_url || `https://picsum.photos/seed/${profile.id}/100`} alt="" className="w-full h-full object-cover" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h4 className="font-extrabold text-slate-900 text-xs truncate">{profile.first_name} {profile.last_name}</h4>
-              <span className="text-[10px] text-indigo-600 font-extrabold uppercase truncate block">{profile.primary_role.replace('_', ' ')}</span>
-            </div>
           </div>
-        </aside>
+        </div>
 
-        {/* MAIN CONTENT AREA */}
-        <main className="flex-1 min-w-0 space-y-6 w-full">
-          {/* Mobile Top Header Banner (Visible on < md) */}
-          <div className="block md:hidden bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-md shadow-indigo-100 shrink-0">
-                  <Church size={20} />
-                </div>
-                <div>
-                  <h1 className="text-xl font-black text-slate-900 tracking-tight">Church Administration</h1>
-                  <span className="text-xs text-slate-400 font-semibold">• {churchProfile.name || 'FaithConnect Grace Cathedral'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-800 text-[10px] font-black uppercase flex items-center gap-1.5 w-fit shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Single Church Mode</span>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      <div className="min-w-0 space-y-6 w-full">
 
           {/* Active Tab Content Render with Permission Enforcement */}
           {currentTab === 'overview' && <OverviewTab onSwitchTab={setTab} />}
@@ -269,7 +197,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'multitenant' && <MultiTenantTab />}
           {currentTab === 'settings' && <ChurchSettingsTab />}
-        </main>
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION BAR (Fixed at bottom on < md screens) */}
@@ -5026,6 +4953,8 @@ const ChurchSettingsTab = () => {
   const [settingsTab, setSettingsTab] = useState<'profile' | 'mobile' | 'funds' | 'bank'>('profile');
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const gatewayFormRef = useRef<HTMLFormElement | null>(null);
 
   // Church Profile State
   const [profileData, setProfileData] = useState<ChurchProfile>(() => getChurchProfile());
@@ -5035,7 +4964,7 @@ const ChurchSettingsTab = () => {
 
   // Mobile Money Provider Form State (Add / Edit)
   const [editingGatewayId, setEditingGatewayId] = useState<string | null>(null);
-  const [showGatewayForm, setShowGatewayForm] = useState(false);
+  const [confirmDeleteGwId, setConfirmDeleteGwId] = useState<string | null>(null);
   const [gwProvider, setGwProvider] = useState('');
   const [gwMerchantNumber, setGwMerchantNumber] = useState('');
   const [gwMerchantName, setGwMerchantName] = useState('');
@@ -5052,20 +4981,27 @@ const ChurchSettingsTab = () => {
   const [bankSwift, setBankSwift] = useState(givingConfig.bank_details.swift_code || '');
 
   const showToast = (msg: string) => {
+    setErrorMsg(null);
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 4000);
+  };
+
+  const showError = (msg: string) => {
+    setToastMsg(null);
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 5000);
   };
 
   const handlePersistConfig = (updated: GivingConfig) => {
     setGivingConfig(updated);
     saveGivingConfig(updated);
-    showToast('✓ Payment Gateway & Fund configurations updated successfully!');
+    showToast('Payment Gateway & Fund configurations updated.');
   };
 
   const handleSaveChurchProfile = (e: React.FormEvent) => {
     e.preventDefault();
     saveChurchProfile(profileData);
-    showToast('✓ Church Profile, Logo & GPS Location settings saved successfully!');
+    showToast('Church Profile, Logo & GPS Location settings saved.');
   };
 
   const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -5073,7 +5009,7 @@ const ChurchSettingsTab = () => {
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      alert("Logo image size should be less than 5MB.");
+      showError('Logo image size must be less than 5MB.');
       return;
     }
 
@@ -5081,7 +5017,7 @@ const ChurchSettingsTab = () => {
     reader.onloadend = () => {
       if (typeof reader.result === 'string') {
         setProfileData(prev => ({ ...prev, logo_url: reader.result as string }));
-        showToast('📷 Church logo updated!');
+        showToast('Church logo image loaded. Save profile settings to publish.');
       }
     };
     reader.readAsDataURL(file);
@@ -5097,13 +5033,14 @@ const ChurchSettingsTab = () => {
         longitude: loc.lng
       }));
       setGpsLoading(false);
-      showToast(loc.source === 'device' 
-        ? '📍 Acquired exact GPS coordinates from your device location!' 
-        : '📍 Acquired regional GPS coordinates from network location!'
+      showToast(
+        loc.source === 'device'
+          ? 'Acquired exact GPS coordinates from your device.'
+          : 'Acquired regional GPS coordinates from network location.'
       );
     } catch (err: any) {
       setGpsLoading(false);
-      alert(`Could not retrieve GPS coordinates: ${err?.message || 'Access denied'}`);
+      showError(`Could not retrieve GPS coordinates: ${err?.message || 'Access denied'}`);
     }
   };
 
@@ -5167,13 +5104,12 @@ const ChurchSettingsTab = () => {
     handlePersistConfig(updated);
   };
 
-  const handleOpenAddGateway = () => {
+  const resetGatewayForm = () => {
     setEditingGatewayId(null);
     setGwProvider('');
     setGwMerchantNumber('');
     setGwMerchantName(profileData.name || 'Grace Cathedral Ministry');
     setGwInstructions('');
-    setShowGatewayForm(true);
   };
 
   const handleOpenEditGateway = (g: any) => {
@@ -5182,7 +5118,10 @@ const ChurchSettingsTab = () => {
     setGwMerchantNumber(g.merchant_number);
     setGwMerchantName(g.merchant_name);
     setGwInstructions(g.dial_code_instructions);
-    setShowGatewayForm(true);
+    setConfirmDeleteGwId(null);
+    setTimeout(() => {
+      gatewayFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
   };
 
   const handleSaveGateway = (e: React.FormEvent) => {
@@ -5210,7 +5149,7 @@ const ChurchSettingsTab = () => {
         provider: gwProvider.trim(),
         merchant_number: gwMerchantNumber.trim(),
         merchant_name: gwMerchantName.trim() || profileData.name || 'Grace Cathedral Ministry',
-        dial_code_instructions: gwInstructions.trim() || `Dial provider USSD -> Pay Merchant -> Enter Code -> Confirm`,
+        dial_code_instructions: gwInstructions.trim() || 'Dial provider USSD -> Pay Merchant -> Enter Code -> Confirm',
         is_active: true
       };
       updatedList.push(newGw);
@@ -5218,13 +5157,16 @@ const ChurchSettingsTab = () => {
 
     const updatedConfig = { ...givingConfig, mobile_gateways: updatedList };
     handlePersistConfig(updatedConfig);
-    setShowGatewayForm(false);
+    resetGatewayForm();
   };
 
   const handleDeleteGateway = (gwIdOrProvider: string) => {
-    if (!confirm("Are you sure you want to delete this Mobile Money provider?")) return;
     const updatedList = givingConfig.mobile_gateways.filter(g => (g.id || g.provider) !== gwIdOrProvider);
     handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
+    if (editingGatewayId === gwIdOrProvider) {
+      resetGatewayForm();
+    }
+    setConfirmDeleteGwId(null);
   };
 
   const handleToggleGateway = (gwIdOrProvider: string) => {
@@ -5237,832 +5179,1075 @@ const ChurchSettingsTab = () => {
     handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
   };
 
+  const activeFundsCount = givingConfig.funds.filter(f => f.is_active).length;
+
   return (
-    <div className="space-y-6">
-      {/* Header Banner */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-              System Settings & Gateway Module
-            </span>
-            <span className="text-xs text-slate-400 font-semibold">• {profileData.name}</span>
+    <div className="space-y-5 sm:space-y-6">
+      {/* Unified Settings Workspace Header & Responsive Segmented Switcher */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 sm:space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-semibold">
+              <span className="text-indigo-700 font-bold">System Settings</span>
+              <span aria-hidden="true">·</span>
+              <span className="truncate">{profileData.name || 'Grace Cathedral'}</span>
+            </div>
+            <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight">
+              Church Profile, GPS & Payment Gateways
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-500 max-w-2xl leading-relaxed">
+              Manage church branding, sanctuary coordinates, weekly worship schedules, offering funds, and payment channels.
+            </p>
           </div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Church Profile, GPS & Payment Gateways</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Setup church profile identity, upload church logo, configure GPS map coordinates, weekly service schedules, giving funds, and mobile money payment gateways.
-          </p>
+
+          {settingsTab === 'profile' && (
+            <button
+              type="submit"
+              form="church-profile-settings-form"
+              className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
+            >
+              <Check size={16} />
+              <span>Save Profile & GPS</span>
+            </button>
+          )}
         </div>
 
-        {/* Sub-Navigation Tabs */}
-        <div className="flex items-center gap-2 border-t border-slate-100 pt-4 overflow-x-auto text-xs font-bold scrollbar-none">
+        {/* Sub-Navigation Segmented Control: 2x2 Grid on Mobile, 4-Col Bar on Tablet/Desktop */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-bold">
           <button
+            type="button"
             onClick={() => setSettingsTab('profile')}
-            className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-              settingsTab === 'profile' ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap ${
+              settingsTab === 'profile'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Church size={15} />
-            <span>Church Profile, Logo & GPS Location</span>
+            <Church size={15} className={`shrink-0 ${settingsTab === 'profile' ? 'text-indigo-600' : ''}`} />
+            <span className="truncate">Profile & GPS</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setSettingsTab('mobile')}
-            className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-              settingsTab === 'mobile' ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap tabular-nums ${
+              settingsTab === 'mobile'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <span>📱 Mobile Money Providers ({givingConfig.mobile_gateways.length})</span>
+            <Smartphone size={15} className={`shrink-0 ${settingsTab === 'mobile' ? 'text-indigo-600' : ''}`} />
+            <span className="truncate">Mobile Money ({givingConfig.mobile_gateways.length})</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setSettingsTab('funds')}
-            className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-              settingsTab === 'funds' ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap tabular-nums ${
+              settingsTab === 'funds'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <span>📁 Giving Funds ({givingConfig.funds.length})</span>
+            <DollarSign size={15} className={`shrink-0 ${settingsTab === 'funds' ? 'text-indigo-600' : ''}`} />
+            <span className="truncate">Giving Funds ({givingConfig.funds.length})</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setSettingsTab('bank')}
-            className={`px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-              settingsTab === 'bank' ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap ${
+              settingsTab === 'bank'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Landmark size={15} />
-            <span>Bank Account Details</span>
+            <Landmark size={15} className={`shrink-0 ${settingsTab === 'bank' ? 'text-indigo-600' : ''}`} />
+            <span className="truncate">Bank Wire</span>
           </button>
         </div>
       </div>
 
       {toastMsg && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-            <span>{toastMsg}</span>
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            <span className="break-words">{toastMsg}</span>
           </div>
-          <button onClick={() => setToastMsg(null)} className="text-emerald-600">
-            <X size={14} />
+          <button type="button" onClick={() => setToastMsg(null)} className="text-emerald-700 hover:text-emerald-900 cursor-pointer p-1 shrink-0" aria-label="Dismiss message">
+            <X size={15} />
           </button>
         </div>
       )}
 
-      {/* TAB 1: CHURCH PROFILE, LOGO & GPS */}
+      {errorMsg && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs font-bold flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle size={16} className="text-rose-600 shrink-0" />
+            <span className="break-words">{errorMsg}</span>
+          </div>
+          <button type="button" onClick={() => setErrorMsg(null)} className="text-rose-700 hover:text-rose-900 cursor-pointer p-1 shrink-0" aria-label="Dismiss error">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* TAB 1: CHURCH PROFILE, LOGO & GPS (Responsive Mobile 1-Col -> Tablet 2-Col Side Cards -> Desktop 12-Col Split) */}
       {settingsTab === 'profile' && (
-        <form onSubmit={handleSaveChurchProfile} className="space-y-6 max-w-4xl text-xs">
-          {/* SECTION 1: LOGO & CHURCH BRANDING THEME */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <Palette className="text-indigo-600" size={22} />
-              <div>
-                <h3 className="text-base font-black text-slate-900">Church Logo & Theme Branding</h3>
-                <p className="text-xs text-slate-500">Upload custom emblem logo and set primary/secondary portal brand color hex codes.</p>
-              </div>
-            </div>
-
-            {/* Logo Upload & Picker */}
-            <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-slate-50/70 rounded-2xl border border-slate-200/80">
-              <div className="relative shrink-0">
-                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-white border-2 border-indigo-200 shadow-md overflow-hidden flex items-center justify-center text-slate-400">
-                  {profileData.logo_url ? (
-                    <img src={profileData.logo_url} alt="Church Logo" className="w-full h-full object-cover" />
-                  ) : (
-                    <Church size={40} />
-                  )}
+        <form id="church-profile-settings-form" onSubmit={handleSaveChurchProfile} className="space-y-5 sm:space-y-6 text-xs">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start">
+            {/* LEFT PRIMARY COLUMN (7 cols on xl+): General Info + Branding */}
+            <div className="xl:col-span-7 space-y-5 sm:space-y-6 min-w-0">
+              {/* SECTION 1: CHURCH IDENTITY & ADDRESS */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-5">
+                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <Church className="text-indigo-600 shrink-0" size={19} />
+                  <div className="min-w-0">
+                    <h3 className="text-base font-black text-slate-900">Church General Information</h3>
+                    <p className="text-xs text-slate-500">Header branding, leadership contact details, and physical sanctuary address.</p>
+                  </div>
                 </div>
-                {profileData.logo_url && (
-                  <button
-                    type="button"
-                    onClick={() => setProfileData(prev => ({ ...prev, logo_url: '' }))}
-                    className="absolute -top-2 -right-2 w-7 h-7 bg-rose-600 text-white rounded-full flex items-center justify-center hover:bg-rose-700 shadow-sm cursor-pointer"
-                    title="Remove Logo"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
 
-              <div className="space-y-3 flex-1 w-full">
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Logo Image URL</label>
-                  <div className="flex gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Main Header Title *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. FaithConnect"
+                      value={profileData.main_title || ''}
+                      onChange={e => setProfileData(prev => ({ ...prev, main_title: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-[11px] text-slate-400 mt-1 block">Displayed in the portal navigation header</span>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Subtle Subtitle Title *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Grace Cathedral"
+                      value={profileData.subtle_title || ''}
+                      onChange={e => setProfileData(prev => ({ ...prev, subtle_title: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                    <span className="text-[11px] text-slate-400 mt-1 block">Campus or cathedral tagline under main title</span>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="font-bold text-slate-700 block mb-1.5">Full Church Legal Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. FaithConnect Grace Cathedral"
+                      value={profileData.name}
+                      onChange={e => setProfileData(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Senior Pastor(s) / Lead Minister *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.senior_pastor}
+                      onChange={e => setProfileData(prev => ({ ...prev, senior_pastor: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Contact Phone *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.phone}
+                      onChange={e => setProfileData(prev => ({ ...prev, phone: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Contact Email *</label>
+                    <input
+                      type="email"
+                      required
+                      value={profileData.email}
+                      onChange={e => setProfileData(prev => ({ ...prev, email: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono text-slate-900 font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Website URL</label>
                     <input
                       type="url"
-                      placeholder="https://images.unsplash.com/photo-..."
-                      value={profileData.logo_url}
-                      onChange={e => setProfileData(prev => ({ ...prev, logo_url: e.target.value }))}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-mono text-xs text-slate-800"
+                      value={profileData.website || ''}
+                      onChange={e => setProfileData(prev => ({ ...prev, website: e.target.value }))}
+                      placeholder="https://faithconnect.church"
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPresetLogoPicker(!showPresetLogoPicker)}
-                      className="px-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold transition-all shrink-0 cursor-pointer"
-                    >
-                      Preset Logos
-                    </button>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="font-bold text-slate-700 block mb-1.5">Physical Address *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.address}
+                      onChange={e => setProfileData(prev => ({ ...prev, address: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-medium text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">City *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.city}
+                      onChange={e => setProfileData(prev => ({ ...prev, city: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">State / Region / Country *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileData.state_country}
+                      onChange={e => setProfileData(prev => ({ ...prev, state_country: e.target.value }))}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="font-bold text-slate-700 block mb-1.5">Mission Statement / Vision</label>
+                    <textarea
+                      rows={2}
+                      value={profileData.mission_statement || ''}
+                      onChange={e => setProfileData(prev => ({ ...prev, mission_statement: e.target.value }))}
+                      placeholder="Empowering believer communities, promoting transformation..."
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: LOGO & CHURCH BRANDING THEME */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-6">
+                <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <Palette className="text-indigo-600 shrink-0" size={19} />
+                  <div className="min-w-0">
+                    <h3 className="text-base font-black text-slate-900">Church Logo & Theme Branding</h3>
+                    <p className="text-xs text-slate-500">Upload emblem logo and configure primary and secondary portal brand colors.</p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 pt-1">
-                  <label className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-2 shadow-xs">
-                    <Upload size={15} />
-                    <span>Upload Logo File</span>
-                    <input type="file" accept="image/*" onChange={handleLogoFileUpload} className="hidden" />
-                  </label>
-                  <span className="text-[11px] text-slate-400 font-medium">PNG, JPG, SVG or WEBP up to 5MB</span>
+                {/* Logo Upload & Picker */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-5 pb-5 border-b border-slate-100">
+                  <div className="relative shrink-0">
+                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center text-slate-400">
+                      {profileData.logo_url ? (
+                        <img src={profileData.logo_url} alt="Church Logo" className="w-full h-full object-cover" />
+                      ) : (
+                        <Church size={34} />
+                      )}
+                    </div>
+                    {profileData.logo_url && (
+                      <button
+                        type="button"
+                        onClick={() => setProfileData(prev => ({ ...prev, logo_url: '' }))}
+                        className="absolute -top-2 -right-2 w-7 h-7 bg-rose-600 text-white rounded-full flex items-center justify-center hover:bg-rose-700 shadow-xs cursor-pointer"
+                        title="Remove Logo"
+                        aria-label="Remove Logo"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 flex-1 w-full min-w-0">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1.5">Logo Image URL</label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="url"
+                          placeholder="https://..."
+                          value={profileData.logo_url}
+                          onChange={e => setProfileData(prev => ({ ...prev, logo_url: e.target.value }))}
+                          className="flex-1 min-w-0 min-h-[40px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm sm:text-xs text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPresetLogoPicker(!showPresetLogoPicker)}
+                          className="min-h-[40px] px-3.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                          {showPresetLogoPicker ? 'Hide Presets' : 'Preset Logos'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="min-h-[40px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-2 whitespace-nowrap">
+                        <Upload size={14} />
+                        <span>Upload Logo File</span>
+                        <input type="file" accept="image/*" onChange={handleLogoFileUpload} className="hidden" />
+                      </label>
+                      <span className="text-[11px] text-slate-500">PNG, JPG, SVG or WEBP up to 5MB</span>
+                    </div>
+
+                    {showPresetLogoPicker && (
+                      <div className="pt-3 border-t border-slate-100 space-y-2">
+                        <span className="font-bold text-slate-700 block text-[11px]">Choose from Preset Church Logos:</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {PRESET_CHURCH_LOGOS.map((preset, i) => {
+                            const isSelected = profileData.logo_url === preset.url;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => {
+                                  setProfileData(prev => ({ ...prev, logo_url: preset.url }));
+                                  setShowPresetLogoPicker(false);
+                                  showToast(`Selected "${preset.name}" logo.`);
+                                }}
+                                className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-1.5 cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-indigo-50/60 border-indigo-600 ring-1 ring-indigo-600'
+                                    : 'bg-slate-50 border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/40'
+                                }`}
+                              >
+                                <img src={preset.url} alt={preset.name} className="w-10 h-10 rounded-lg object-cover" />
+                                <span className="text-[11px] font-bold text-slate-700 text-center truncate w-full">{preset.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {showPresetLogoPicker && (
-                  <div className="p-3 bg-white rounded-2xl border border-slate-200 space-y-2 animate-in fade-in shadow-xs">
-                    <span className="font-bold text-slate-700 block text-[11px]">Choose from Preset Church Logos:</span>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {PRESET_CHURCH_LOGOS.map((preset, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => {
-                            setProfileData(prev => ({ ...prev, logo_url: preset.url }));
-                            setShowPresetLogoPicker(false);
-                            showToast(`Selected "${preset.name}" logo!`);
-                          }}
-                          className="p-2 bg-slate-50 rounded-xl border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/50 transition-all text-left flex flex-col items-center gap-1.5 cursor-pointer"
-                        >
-                          <img src={preset.url} alt={preset.name} className="w-10 h-10 rounded-lg object-cover" />
-                          <span className="text-[10px] font-extrabold text-slate-700 text-center truncate w-full">{preset.name}</span>
-                        </button>
-                      ))}
+                {/* Portal Theme Primary & Secondary Colors */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 text-xs">Portal Brand Theme Colors</h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Pick custom hex colors or apply a preset palette across buttons and accents.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-700 text-xs">Primary Accent Color *</label>
+                        <span className="font-mono text-[11px] font-bold text-slate-500 uppercase tabular-nums">{profileData.primary_color || '#4f46e5'}</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="color"
+                          value={profileData.primary_color || '#4f46e5'}
+                          onChange={e => setProfileData(prev => ({ ...prev, primary_color: e.target.value }))}
+                          className="w-11 h-10 rounded-lg cursor-pointer border border-slate-200 bg-white p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={profileData.primary_color || '#4f46e5'}
+                          onChange={e => setProfileData(prev => ({ ...prev, primary_color: e.target.value }))}
+                          placeholder="#4f46e5"
+                          className="flex-1 min-w-0 min-h-[40px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-700 text-xs">Secondary Accent Color *</label>
+                        <span className="font-mono text-[11px] font-bold text-slate-500 uppercase tabular-nums">{profileData.secondary_color || '#10b981'}</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <input
+                          type="color"
+                          value={profileData.secondary_color || '#10b981'}
+                          onChange={e => setProfileData(prev => ({ ...prev, secondary_color: e.target.value }))}
+                          className="w-11 h-10 rounded-lg cursor-pointer border border-slate-200 bg-white p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={profileData.secondary_color || '#10b981'}
+                          onChange={e => setProfileData(prev => ({ ...prev, secondary_color: e.target.value }))}
+                          placeholder="#10b981"
+                          className="flex-1 min-w-0 min-h-[40px] px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
 
-            {/* Portal Theme Primary & Secondary Colors */}
-            <div className="space-y-4 pt-2 border-t border-slate-100">
-              <div>
-                <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wide">Portal Brand Theme Colors</h4>
-                <p className="text-[11px] text-slate-500">Pick custom hex colors or choose a pre-configured theme palette to restyle headers, primary action buttons, and highlights.</p>
-              </div>
+                  {/* Preset Theme Palettes */}
+                  <div className="space-y-2 pt-1">
+                    <span className="font-bold text-slate-700 block text-[11px]">Preset Portal Color Palettes:</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                      {PRESET_COLOR_THEMES.map((theme, idx) => {
+                        const isSelected =
+                          (profileData.primary_color || '').toLowerCase() === theme.primary.toLowerCase() &&
+                          (profileData.secondary_color || '').toLowerCase() === theme.secondary.toLowerCase();
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setProfileData(prev => ({
+                                ...prev,
+                                primary_color: theme.primary,
+                                secondary_color: theme.secondary
+                              }));
+                              showToast(`Applied "${theme.name}" theme palette.`);
+                            }}
+                            className={`p-2.5 rounded-xl border transition-colors text-left flex flex-col gap-1.5 cursor-pointer ${
+                              isSelected
+                                ? 'bg-indigo-50/50 border-indigo-600 ring-1 ring-indigo-600'
+                                : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-4 h-4 rounded-md border border-black/10" style={{ backgroundColor: theme.primary }} />
+                              <span className="w-4 h-4 rounded-md border border-black/10" style={{ backgroundColor: theme.secondary }} />
+                            </div>
+                            <span className="text-[11px] font-bold text-slate-800 leading-tight truncate">{theme.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Primary Color Picker */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="font-extrabold text-slate-700 block text-xs">Primary Accent Color *</label>
-                    <span className="font-mono text-[11px] font-extrabold text-slate-600 uppercase">{profileData.primary_color || '#4f46e5'}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                      value={profileData.primary_color || '#4f46e5'}
-                      onChange={e => setProfileData(prev => ({ ...prev, primary_color: e.target.value }))}
-                      className="w-12 h-10 rounded-xl cursor-pointer border-0 bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={profileData.primary_color || '#4f46e5'}
-                      onChange={e => setProfileData(prev => ({ ...prev, primary_color: e.target.value }))}
-                      placeholder="#4f46e5"
-                      className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl font-mono font-bold text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Secondary Color Picker */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="font-extrabold text-slate-700 block text-xs">Secondary Accent Color *</label>
-                    <span className="font-mono text-[11px] font-extrabold text-slate-600 uppercase">{profileData.secondary_color || '#10b981'}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                      value={profileData.secondary_color || '#10b981'}
-                      onChange={e => setProfileData(prev => ({ ...prev, secondary_color: e.target.value }))}
-                      className="w-12 h-10 rounded-xl cursor-pointer border-0 bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={profileData.secondary_color || '#10b981'}
-                      onChange={e => setProfileData(prev => ({ ...prev, secondary_color: e.target.value }))}
-                      placeholder="#10b981"
-                      className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl font-mono font-bold text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Preset Theme Palettes */}
-              <div className="space-y-2 pt-1">
-                <span className="font-extrabold text-slate-700 block text-[11px]">Preset Portal Color Palettes:</span>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  {PRESET_COLOR_THEMES.map((theme, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => {
-                        setProfileData(prev => ({
-                          ...prev,
-                          primary_color: theme.primary,
-                          secondary_color: theme.secondary
-                        }));
-                        showToast(`Applied "${theme.name}" theme palette!`);
-                      }}
-                      className="p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-all text-left flex flex-col gap-1.5 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-1">
-                        <span className="w-5 h-5 rounded-full shadow-2xs border border-white" style={{ backgroundColor: theme.primary }} />
-                        <span className="w-5 h-5 rounded-full shadow-2xs border border-white" style={{ backgroundColor: theme.secondary }} />
+                  {/* Live Theme & Brand Preview Strip */}
+                  <div className="p-4 bg-slate-900 rounded-xl text-white space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-white/10 overflow-hidden flex items-center justify-center shrink-0 text-[10px] font-black">
+                          {profileData.logo_url ? (
+                            <img src={profileData.logo_url} alt="Preview" className="w-full h-full object-cover" />
+                          ) : (
+                            'FC'
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-white truncate leading-tight">{profileData.main_title || 'FaithConnect'}</p>
+                          <p className="text-[10px] text-slate-400 truncate leading-tight">{profileData.subtle_title || 'Grace Cathedral'}</p>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-bold text-slate-800 leading-tight truncate">{theme.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Live Theme Preview Box */}
-              <div className="p-4 bg-slate-900 rounded-2xl text-white space-y-3 shadow-md">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400">Live Portal Theme Preview</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: profileData.primary_color || '#4f46e5' }} />
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: profileData.secondary_color || '#10b981' }} />
+                      <span className="text-[11px] font-mono text-slate-400 tabular-nums">
+                        {profileData.primary_color || '#4f46e5'} / {profileData.secondary_color || '#10b981'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        className="px-3.5 py-2 rounded-lg font-bold text-white text-xs whitespace-nowrap"
+                        style={{ backgroundColor: profileData.primary_color || '#4f46e5' }}
+                      >
+                        Primary Button
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3.5 py-2 rounded-lg font-bold text-white text-xs whitespace-nowrap"
+                        style={{ backgroundColor: profileData.secondary_color || '#10b981' }}
+                      >
+                        Secondary Action
+                      </button>
+                      <span
+                        className="text-xs font-bold underline"
+                        style={{ color: profileData.primary_color || '#4f46e5' }}
+                      >
+                        Active Link Accent
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
+              </div>
+            </div>
+
+            {/* RIGHT SIDE COLUMN: 2-Col Side-by-Side on Tablet/Laptop (md–lg), Stacked 5-Col Sidebar on Desktop (xl+) */}
+            <div className="xl:col-span-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-5 sm:gap-6 min-w-0">
+              {/* SECTION 3: GPS LOCATION & INTERACTIVE MAP CONFIGURATION */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <MapPin className="text-indigo-600 shrink-0" size={19} />
+                    <div className="min-w-0">
+                      <h3 className="text-base font-black text-slate-900">GPS Coordinates & Map</h3>
+                      <p className="text-xs text-slate-500">Sanctuary coordinates for congregation maps.</p>
+                    </div>
+                  </div>
+
                   <button
                     type="button"
-                    className="px-4 py-2 rounded-xl font-bold text-white text-xs shadow-sm transition-all"
-                    style={{ backgroundColor: profileData.primary_color || '#4f46e5' }}
+                    onClick={handleGetCurrentGps}
+                    disabled={gpsLoading}
+                    className="min-h-[38px] px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-2 shrink-0 text-xs whitespace-nowrap"
                   >
-                    Primary Button
+                    {gpsLoading ? <RefreshCw size={14} className="animate-spin text-emerald-600" /> : <Compass size={14} className="text-emerald-600" />}
+                    <span>Use Device GPS</span>
                   </button>
-                  <span
-                    className="px-3 py-1 rounded-full text-[10px] font-black uppercase text-white shadow-2xs"
-                    style={{ backgroundColor: profileData.secondary_color || '#10b981' }}
-                  >
-                    Secondary Badge
-                  </span>
-                  <span
-                    className="text-xs font-bold underline cursor-pointer"
-                    style={{ color: profileData.primary_color || '#4f46e5' }}
-                  >
-                    Active Link Accent
-                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Latitude *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={profileData.latitude}
+                      onChange={e => setProfileData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                      className="w-full min-h-[42px] px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">Longitude *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={profileData.longitude}
+                      onChange={e => setProfileData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                      className="w-full min-h-[42px] px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="font-bold text-slate-700 block mb-1.5">Quick Location Preset Selector</label>
+                    <select
+                      onChange={e => {
+                        const idx = Number(e.target.value);
+                        if (!isNaN(idx) && PRESET_GPS_LOCATIONS[idx]) {
+                          const p = PRESET_GPS_LOCATIONS[idx];
+                          setProfileData(prev => ({ ...prev, latitude: p.lat, longitude: p.lng }));
+                          showToast(`Set GPS location to "${p.name}".`);
+                        }
+                      }}
+                      className="w-full min-h-[42px] px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm sm:text-xs text-slate-800 cursor-pointer focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="">-- Choose Preset Location --</option>
+                      {PRESET_GPS_LOCATIONS.map((loc, idx) => (
+                        <option key={idx} value={idx}>
+                          {loc.name} ({loc.lat}, {loc.lng})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Interactive Location Map Preview */}
+                <div className="space-y-2 pt-1">
+                  <span className="font-bold text-slate-700 block text-xs">Live Map Preview</span>
+                  <LocationMap
+                    latitude={profileData.latitude}
+                    longitude={profileData.longitude}
+                    title={profileData.name}
+                    subtitle={`${profileData.address}, ${profileData.city}`}
+                    height="240px"
+                  />
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* SECTION 2: CHURCH IDENTITY & ADDRESS */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <Church className="text-indigo-600" size={20} />
-              <h3 className="text-base font-black text-slate-900">Church General Information</h3>
-            </div>
+              {/* SECTION 4: WEEKLY SERVICE TIMES */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Clock className="text-indigo-600 shrink-0" size={19} />
+                      <div className="min-w-0">
+                        <h3 className="text-base font-black text-slate-900">Weekly Worship Service Times</h3>
+                        <p className="text-xs text-slate-500">Shown on member overview and public church info.</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
+                      {profileData.service_times.length} scheduled
+                    </span>
+                  </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Main Header Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. FaithConnect"
-                  value={profileData.main_title || ''}
-                  onChange={e => setProfileData(prev => ({ ...prev, main_title: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-                <span className="text-[10px] text-slate-400 font-medium">Main large headline title in top navigation bar</span>
-              </div>
+                  {profileData.service_times.length > 0 ? (
+                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                      {profileData.service_times.map((st, i) => (
+                        <div key={i} className="px-3.5 py-2.5 bg-white hover:bg-slate-50 flex items-center justify-between gap-3">
+                          <span className="font-semibold text-slate-800 text-xs sm:text-[13px] break-words min-w-0">{st}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveServiceTime(i)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
+                            title="Remove Service Time"
+                            aria-label={`Remove ${st}`}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 py-3">No service times listed yet. Add your first weekly service below.</p>
+                  )}
+                </div>
 
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Subtle Subtitle Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Grace Cathedral"
-                  value={profileData.subtle_title || ''}
-                  onChange={e => setProfileData(prev => ({ ...prev, subtle_title: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-                <span className="text-[10px] text-slate-400 font-medium">Subtle tagline subtitle under the main headline title</span>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="font-extrabold text-slate-700 block mb-1">Full Church Legal Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. FaithConnect Grace Cathedral"
-                  value={profileData.name}
-                  onChange={e => setProfileData(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Senior Pastor(s) / Lead Minister *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileData.senior_pastor}
-                  onChange={e => setProfileData(prev => ({ ...prev, senior_pastor: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Contact Phone *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileData.phone}
-                  onChange={e => setProfileData(prev => ({ ...prev, phone: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Contact Email *</label>
-                <input
-                  type="email"
-                  required
-                  value={profileData.email}
-                  onChange={e => setProfileData(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-slate-900 font-bold"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="font-extrabold text-slate-700 block mb-1">Physical Address *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileData.address}
-                  onChange={e => setProfileData(prev => ({ ...prev, address: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">City *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileData.city}
-                  onChange={e => setProfileData(prev => ({ ...prev, city: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">State / Region / Country *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileData.state_country}
-                  onChange={e => setProfileData(prev => ({ ...prev, state_country: e.target.value }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="font-extrabold text-slate-700 block mb-1">Website URL</label>
-                <input
-                  type="url"
-                  value={profileData.website || ''}
-                  onChange={e => setProfileData(prev => ({ ...prev, website: e.target.value }))}
-                  placeholder="https://faithconnect.church"
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-slate-800"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="font-extrabold text-slate-700 block mb-1">Mission Statement / Vision</label>
-                <textarea
-                  rows={2}
-                  value={profileData.mission_statement || ''}
-                  onChange={e => setProfileData(prev => ({ ...prev, mission_statement: e.target.value }))}
-                  placeholder="Empowering believer communities, promoting transformation..."
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* SECTION 3: WEEKLY SERVICE TIMES */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Clock className="text-indigo-600" size={20} />
-                <h3 className="text-base font-black text-slate-900">Weekly Worship Service Times</h3>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              {profileData.service_times.map((st, i) => (
-                <div key={i} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
-                  <span className="font-bold text-slate-800">• {st}</span>
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. Sunday Youth Service: 4:00 PM"
+                    value={newServiceTime}
+                    onChange={e => setNewServiceTime(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddServiceTime();
+                      }
+                    }}
+                    className="flex-1 min-w-0 min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-medium focus:bg-white focus:border-indigo-500 focus:outline-none"
+                  />
                   <button
                     type="button"
-                    onClick={() => handleRemoveServiceTime(i)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                    title="Remove Service Time"
+                    onClick={handleAddServiceTime}
+                    className="min-h-[42px] px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
                   >
-                    <Trash2 size={15} />
+                    <Plus size={15} />
+                    <span>Add Service</span>
                   </button>
                 </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <input
-                type="text"
-                placeholder="e.g. Sunday Youth Service: 4:00 PM"
-                value={newServiceTime}
-                onChange={e => setNewServiceTime(e.target.value)}
-                className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium"
-              />
-              <button
-                type="button"
-                onClick={handleAddServiceTime}
-                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1 shrink-0"
-              >
-                <Plus size={16} /> Add Service Time
-              </button>
+              </div>
             </div>
           </div>
 
-          {/* SECTION 4: GPS LOCATION & INTERACTIVE MAP CONFIGURATION */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <MapPin className="text-indigo-600" size={20} />
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Church GPS Coordinates & Interactive Map</h3>
-                  <p className="text-xs text-slate-500">Set accurate latitude & longitude coordinates to render the church sanctuary on interactive maps.</p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleGetCurrentGps}
-                disabled={gpsLoading}
-                className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-2 shrink-0 text-xs shadow-xs"
-              >
-                {gpsLoading ? <RefreshCw size={15} className="animate-spin text-emerald-600" /> : <Compass size={15} className="text-emerald-600" />}
-                <span>Use Current Device GPS</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Latitude (° N/S) *</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={profileData.latitude}
-                  onChange={e => setProfileData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Longitude (° E/W) *</label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  value={profileData.longitude}
-                  onChange={e => setProfileData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-slate-900"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="font-extrabold text-slate-700 block mb-1">Quick Location Preset Selector</label>
-                <select
-                  onChange={e => {
-                    const idx = Number(e.target.value);
-                    if (!isNaN(idx) && PRESET_GPS_LOCATIONS[idx]) {
-                      const p = PRESET_GPS_LOCATIONS[idx];
-                      setProfileData(prev => ({ ...prev, latitude: p.lat, longitude: p.lng }));
-                      showToast(`📍 Set GPS location to "${p.name}"`);
-                    }
-                  }}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 cursor-pointer"
-                >
-                  <option value="">-- Choose Preset Location --</option>
-                  {PRESET_GPS_LOCATIONS.map((loc, idx) => (
-                    <option key={idx} value={idx}>
-                      {loc.name} ({loc.lat}, {loc.lng})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Interactive Location Map Preview */}
-            <div className="space-y-2 pt-2">
-              <span className="font-extrabold text-slate-700 block text-xs">Live Map Location Preview:</span>
-              <LocationMap
-                latitude={profileData.latitude}
-                longitude={profileData.longitude}
-                title={profileData.name}
-                subtitle={`${profileData.address}, ${profileData.city}`}
-                height="280px"
-              />
-            </div>
-          </div>
-
-          {/* SAVE BUTTON */}
-          <div className="flex justify-end pt-2">
+          {/* BOTTOM SAVE BAR */}
+          <div className="flex items-center justify-end pt-1">
             <button
               type="submit"
-              className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl text-xs shadow-lg shadow-indigo-200 transition-all cursor-pointer flex items-center gap-2"
+              className="w-full sm:w-auto min-h-[44px] px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap"
             >
-              <Check size={18} />
+              <Check size={16} />
               <span>Save Church Profile & GPS Settings</span>
             </button>
           </div>
         </form>
       )}
 
-      {/* TAB 2: MOBILE MONEY PROVIDERS */}
+      {/* TAB 2: MOBILE MONEY PROVIDERS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
       {settingsTab === 'mobile' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-5 max-w-3xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-black text-slate-900">Mobile Money Gateway Configuration</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Configure merchant numbers, account titles, and USSD dial instructions (Afrimoney, Orange Money, M-Pesa, etc.).</p>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
+          {/* Left: Configured Providers List */}
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-5 min-w-0">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900">Mobile Money Gateways</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Active merchant codes and USSD payment instructions shown in the Giving Portal.
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
+                {givingConfig.mobile_gateways.filter(g => g.is_active).length} active / {givingConfig.mobile_gateways.length} total
+              </span>
             </div>
-            <button
-              onClick={handleOpenAddGateway}
-              className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-extrabold hover:bg-indigo-700 transition-all flex items-center gap-1.5 cursor-pointer shrink-0 text-xs shadow-xs"
-            >
-              <Plus size={16} /> Add Provider
-            </button>
+
+            {givingConfig.mobile_gateways.length === 0 ? (
+              <div className="py-10 px-4 text-center space-y-2 border border-dashed border-slate-200 rounded-xl">
+                <Smartphone size={28} className="mx-auto text-slate-300" />
+                <p className="font-bold text-slate-700">No Mobile Money providers configured</p>
+                <p className="text-xs text-slate-500">Use the provider panel to add Afrimoney, Orange Money, or M-Pesa.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                {givingConfig.mobile_gateways.map((g, idx) => {
+                  const gwId = g.id || g.provider;
+                  const isEditing = editingGatewayId === gwId;
+                  const isConfirmingDelete = confirmDeleteGwId === gwId;
+
+                  return (
+                    <div
+                      key={gwId || idx}
+                      className={`p-4 space-y-2.5 transition-colors ${
+                        isEditing ? 'bg-indigo-50/60' : 'bg-white hover:bg-slate-50/70'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                            <Smartphone size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="font-black text-slate-900 text-sm truncate">{g.provider}</span>
+                              <span className="text-slate-300" aria-hidden="true">·</span>
+                              <span className="font-mono font-bold text-slate-600 tabular-nums">{g.merchant_number}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-semibold truncate">
+                              Account: <span className="text-slate-800">{g.merchant_name}</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end sm:justify-start gap-1.5 shrink-0 pl-12 sm:pl-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleGateway(gwId)}
+                            className={`min-h-[34px] px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap ${
+                              g.is_active
+                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                            }`}
+                          >
+                            {g.is_active ? 'Active' : 'Disabled'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditGateway(g)}
+                            className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Edit Provider"
+                            aria-label={`Edit ${g.provider}`}
+                          >
+                            <Edit size={15} />
+                          </button>
+
+                          {isConfirmingDelete ? (
+                            <div className="flex items-center gap-1 pl-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteGateway(gwId)}
+                                className="min-h-[32px] px-2.5 py-1 bg-rose-600 text-white rounded-lg text-[11px] font-bold hover:bg-rose-700 cursor-pointer whitespace-nowrap"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteGwId(null)}
+                                className="min-h-[32px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold hover:bg-slate-200 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteGwId(gwId)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Provider"
+                              aria-label={`Delete ${g.provider}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {g.dial_code_instructions && (
+                        <p className="text-[11px] text-slate-500 sm:pl-12 leading-relaxed break-words">
+                          {g.dial_code_instructions}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {showGatewayForm && (
-            <form onSubmit={handleSaveGateway} className="p-5 bg-indigo-50/60 rounded-2xl border border-indigo-200 space-y-3.5 text-xs">
-              <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
-                <span className="font-black text-indigo-950 uppercase text-xs">
-                  {editingGatewayId ? 'Edit Mobile Money Provider' : '➕ Add New Mobile Money Provider'}
-                </span>
-                <button type="button" onClick={() => setShowGatewayForm(false)} className="text-slate-400 hover:text-slate-600">
-                  <X size={18} />
-                </button>
+          {/* Right: Sticky Add / Edit Provider Form */}
+          <form
+            ref={gatewayFormRef}
+            onSubmit={handleSaveGateway}
+            className="lg:col-span-5 lg:sticky lg:top-20 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-black text-slate-900 truncate">
+                  {editingGatewayId ? 'Edit Mobile Money Provider' : 'Add Mobile Money Provider'}
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {editingGatewayId ? 'Update merchant details and USSD flow.' : 'Register a new mobile wallet channel.'}
+                </p>
               </div>
+              {editingGatewayId && (
+                <button
+                  type="button"
+                  onClick={resetGatewayForm}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer shrink-0"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Provider Name *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Afrimoney, Orange Money, M-Pesa"
-                    value={gwProvider}
-                    onChange={e => setGwProvider(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Merchant Number / Code *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. 076 892 101 or #144*4*8891#"
-                    value={gwMerchantNumber}
-                    onChange={e => setGwMerchantNumber(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-mono font-bold"
-                  />
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Provider Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Afrimoney, Orange Money, M-Pesa"
+                  value={gwProvider}
+                  onChange={e => setGwProvider(e.target.value)}
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Account Title / Merchant Name *</label>
+                <label className="font-bold text-slate-700 block mb-1.5">Merchant Number / Code *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 076 892 101 or #144*4*8891#"
+                  value={gwMerchantNumber}
+                  onChange={e => setGwMerchantNumber(e.target.value)}
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-1">
+                <label className="font-bold text-slate-700 block mb-1.5">Account Title / Merchant Name *</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. Grace Cathedral Ministry"
                   value={gwMerchantName}
                   onChange={e => setGwMerchantName(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">USSD Dial Instructions</label>
+              <div className="sm:col-span-2 lg:col-span-1">
+                <label className="font-bold text-slate-700 block mb-1.5">USSD Dial Instructions</label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   placeholder="e.g. Dial *161# -> Select Pay Merchant -> Enter Code 8812 -> Enter Amount..."
                   value={gwInstructions}
                   onChange={e => setGwInstructions(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowGatewayForm(false)} className="px-4 py-2 text-slate-500 font-bold">
+            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-2">
+              {editingGatewayId && (
+                <button
+                  type="button"
+                  onClick={resetGatewayForm}
+                  className="w-full sm:w-auto min-h-[42px] px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl font-bold cursor-pointer"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="px-5 py-2 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 cursor-pointer shadow-xs">
-                  {editingGatewayId ? 'Save Changes' : 'Add Provider'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="space-y-3">
-            {givingConfig.mobile_gateways.map((g, idx) => {
-              const gwId = g.id || g.provider;
-              return (
-                <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-9 h-9 rounded-xl bg-amber-500 text-white font-black flex items-center justify-center text-sm shadow-2xs">
-                        📱
-                      </span>
-                      <div>
-                        <span className="font-black text-slate-900 text-sm block">{g.provider}</span>
-                        <span className="text-[10px] text-slate-500 block font-mono font-bold">{g.merchant_number}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleGateway(gwId)}
-                        className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase cursor-pointer transition-colors ${
-                          g.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {g.is_active ? 'Active' : 'Disabled'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditGateway(g)}
-                        className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all cursor-pointer"
-                        title="Edit Provider"
-                      >
-                        <Edit size={15} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteGateway(gwId)}
-                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                        title="Delete Provider"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-white rounded-xl border border-slate-100 text-[11px] space-y-1">
-                    <p className="font-bold text-slate-700">Account Name: <span className="text-slate-900 font-extrabold">{g.merchant_name}</span></p>
-                    <p className="text-slate-500 font-medium">{g.dial_code_instructions}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+              )}
+              <button
+                type="submit"
+                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer shadow-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              >
+                {editingGatewayId ? <Check size={15} /> : <Plus size={15} />}
+                <span>{editingGatewayId ? 'Save Changes' : 'Add Provider'}</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
-      {/* TAB 3: GIVING FUNDS */}
+      {/* TAB 3: GIVING FUNDS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
       {settingsTab === 'funds' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-5 max-w-3xl text-xs">
-          <div>
-            <h3 className="text-lg font-black text-slate-900">Giving Funds & Project Categories</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Manage offering funds and custom giving projects available in church portal checkout.</p>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
+          {/* Left: Add New Fund Form */}
+          <form
+            onSubmit={handleAddCustomFund}
+            className="lg:col-span-5 lg:sticky lg:top-20 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0"
+          >
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-base font-black text-slate-900">Add Giving Fund / Project</h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Create designated offering funds or special project categories for church giving.
+              </p>
+            </div>
 
-          <form onSubmit={handleAddCustomFund} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-            <span className="font-extrabold text-slate-900 block text-xs">➕ Add New Giving Fund / Project Category</span>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Fund Category Name *</label>
-                <input 
-                  type="text" 
+                <label className="font-bold text-slate-700 block mb-1.5">Fund Category Name *</label>
+                <input
+                  type="text"
                   required
                   placeholder="e.g. Youth Camp Sponsorship"
                   value={newFundName}
                   onChange={e => setNewFundName(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
+
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Short Description</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. Annual youth retreat seed"
+                <label className="font-bold text-slate-700 block mb-1.5">Short Description</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Annual youth retreat seed & scholarship fund"
                   value={newFundDesc}
                   onChange={e => setNewFundDesc(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end">
-              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 cursor-pointer shadow-xs">
-                Add Fund Category
+            <div className="flex justify-end pt-1">
+              <button
+                type="submit"
+                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 cursor-pointer shadow-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              >
+                <Plus size={15} />
+                <span>Add Fund Category</span>
               </button>
             </div>
           </form>
 
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {givingConfig.funds.map(fund => (
-              <div key={fund.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 flex items-center justify-between">
-                <div>
-                  <p className="font-extrabold text-slate-900 text-xs">{fund.name}</p>
-                  {fund.description && <p className="text-[11px] text-slate-400">{fund.description}</p>}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleToggleFundStatus(fund.id)}
-                  className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase cursor-pointer transition-colors ${
-                    fund.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  {fund.is_active ? 'Active' : 'Disabled'}
-                </button>
+          {/* Right: Funds Directory */}
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900">Giving Funds & Project Categories</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Toggle availability in the member checkout selector.</p>
               </div>
-            ))}
+              <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
+                {activeFundsCount} active / {givingConfig.funds.length} total
+              </span>
+            </div>
+
+            {givingConfig.funds.length === 0 ? (
+              <div className="py-10 px-4 text-center space-y-2 border border-dashed border-slate-200 rounded-xl">
+                <DollarSign size={28} className="mx-auto text-slate-300" />
+                <p className="font-bold text-slate-700">No giving funds configured</p>
+                <p className="text-xs text-slate-500">Add a designated fund category to enable online giving.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                {givingConfig.funds.map(fund => (
+                  <div key={fund.id} className="p-4 bg-white hover:bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-900 text-sm break-words">{fund.name}</p>
+                      {fund.description && <p className="text-xs text-slate-500 mt-0.5 break-words">{fund.description}</p>}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFundStatus(fund.id)}
+                      className={`self-start sm:self-center min-h-[34px] px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+                        fund.is_active
+                          ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {fund.is_active ? 'Active' : 'Disabled'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* TAB 4: BANK ACCOUNT DETAILS */}
+      {/* TAB 4: BANK ACCOUNT DETAILS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
       {settingsTab === 'bank' && (
-        <form onSubmit={handleSaveBank} className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-5 max-w-3xl text-xs">
-          <div>
-            <h3 className="text-lg font-black text-slate-900">Church Bank Wire & Transfer Details</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Banking instructions displayed to congregants making electronic wire deposits.</p>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
+          <form
+            onSubmit={handleSaveBank}
+            className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-5 min-w-0"
+          >
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-base sm:text-lg font-black text-slate-900">Church Bank Wire & Transfer Details</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Banking instructions displayed to congregants making electronic wire deposits.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Bank Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={bankName}
+                  onChange={e => setBankName(e.target.value)}
+                  placeholder="e.g. Sierra Leone Commercial Bank (SLCB)"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Account Title / Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={bankAccName}
+                  onChange={e => setBankAccName(e.target.value)}
+                  placeholder="e.g. Grace Cathedral General Account"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Account Number *</label>
+                <input
+                  type="text"
+                  required
+                  value={bankAccNum}
+                  onChange={e => setBankAccNum(e.target.value)}
+                  placeholder="e.g. 003-010-994821"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">SWIFT / Routing Code</label>
+                <input
+                  type="text"
+                  value={bankSwift}
+                  onChange={e => setBankSwift(e.target.value)}
+                  placeholder="e.g. SLCBFREETOWN"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                className="w-full sm:w-auto min-h-[42px] px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              >
+                <Check size={16} />
+                <span>Save Bank Details</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Right: Live Congregant Wire Summary Preview */}
+          <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+              <Landmark className="text-indigo-600 shrink-0" size={18} />
+              <div className="min-w-0">
+                <h4 className="text-sm font-black text-slate-900">Member Wire Card Preview</h4>
+                <p className="text-[11px] text-slate-500">Live preview of how bank instructions appear to donors.</p>
+              </div>
+            </div>
+
+            <dl className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-slate-50/50">
+                <dt className="text-slate-500 font-semibold shrink-0">Bank Institution</dt>
+                <dd className="font-bold text-slate-900 sm:text-right break-words">{bankName || 'Not set'}</dd>
+              </div>
+              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
+                <dt className="text-slate-500 font-semibold shrink-0">Account Title</dt>
+                <dd className="font-bold text-slate-900 sm:text-right break-words">{bankAccName || 'Not set'}</dd>
+              </div>
+              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-slate-50/50">
+                <dt className="text-slate-500 font-semibold shrink-0">Account Number</dt>
+                <dd className="font-mono font-bold text-slate-900 tabular-nums sm:text-right break-all">{bankAccNum || '—'}</dd>
+              </div>
+              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
+                <dt className="text-slate-500 font-semibold shrink-0">SWIFT / Routing</dt>
+                <dd className="font-mono font-bold text-slate-900 sm:text-right break-all">{bankSwift || '—'}</dd>
+              </div>
+            </dl>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1">Bank Name *</label>
-              <input
-                type="text"
-                required
-                value={bankName}
-                onChange={e => setBankName(e.target.value)}
-                placeholder="e.g. Sierra Leone Commercial Bank (SLCB)"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-              />
-            </div>
-
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1">Account Title / Name *</label>
-              <input
-                type="text"
-                required
-                value={bankAccName}
-                onChange={e => setBankAccName(e.target.value)}
-                placeholder="e.g. Grace Cathedral General Account"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
-              />
-            </div>
-
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1">Account Number *</label>
-              <input
-                type="text"
-                required
-                value={bankAccNum}
-                onChange={e => setBankAccNum(e.target.value)}
-                placeholder="e.g. 003-010-994821"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-slate-900"
-              />
-            </div>
-
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1">SWIFT / Routing Code</label>
-              <input
-                type="text"
-                value={bankSwift}
-                onChange={e => setBankSwift(e.target.value)}
-                placeholder="e.g. SLCBFREETOWN"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-slate-900"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="submit"
-              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <Check size={16} /> Save Bank Details
-            </button>
-          </div>
-        </form>
+        </div>
       )}
     </div>
   );
