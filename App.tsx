@@ -5,7 +5,7 @@ import {
   Home, Users, Calendar, DollarSign, Video, Settings, 
   Menu, X, Bell, User, LogOut, LayoutDashboard,
   ShieldCheck, MapPin, Share2, ClipboardList, AlertCircle, Search, Filter, Plus, 
-  CheckCircle2, Clock, Play, Radio, MessageSquare, Send, BookOpen, Heart, Sparkles, ChevronRight, ChevronLeft, ArrowRight,
+  CheckCircle2, Clock, Play, Radio, MessageSquare, Send, BookOpen, Heart, Sparkles, ChevronRight, ChevronLeft, ChevronDown, ArrowRight,
   Building2, Layers, Church, Gift, FileText, Download, Check, ShieldAlert, Award, Trophy, Star,
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
@@ -70,19 +70,64 @@ const renderStyledMainTitle = (titleStr?: string) => {
   return title;
 };
 
+const getPortalPageMeta = (pathname: string, search: string): { section: string; title: string } => {
+  if (pathname.startsWith('/portal/admin/streaming')) {
+    return { section: 'Pastoral & Admin', title: 'Stream Broadcast Studio' };
+  }
+  if (pathname === '/portal/admin') {
+    const tab = new URLSearchParams(search).get('tab') || 'overview';
+    const tabTitles: Record<string, string> = {
+      overview: 'Admin Overview',
+      events: 'Events & Calendar',
+      resources: 'Church Resources',
+      surveys: 'Post-Event Surveys',
+      users: 'Congregation Roster',
+      roles: 'Roles & Governance',
+      ministries: 'Departments & Teams',
+      financials: 'Tithes & Giving Ledger',
+      streaming: 'Broadcast Studio',
+      multitenant: 'Multi-Tenant Roadmap',
+      settings: 'Church Settings'
+    };
+    return {
+      section: tab === 'financials' ? 'Finance & Treasury' : 'Pastoral & Admin',
+      title: tabTitles[tab] || 'Admin Dashboard'
+    };
+  }
+  const routeTitles: Record<string, { section: string; title: string }> = {
+    '/portal': { section: 'Member Portal', title: 'Church Overview' },
+    '/portal/directory': { section: 'Member Portal', title: 'Member Directory' },
+    '/portal/ministries': { section: 'Member Portal', title: 'Ministries & Teams' },
+    '/portal/calendar': { section: 'Member Portal', title: 'Events & Calendar' },
+    '/portal/resources': { section: 'Member Portal', title: 'Church Resources' },
+    '/portal/surveys': { section: 'Member Portal', title: 'Event Feedback' },
+    '/portal/streaming': { section: 'Member Portal', title: 'Live Sanctuary' },
+    '/portal/giving': { section: 'Member Portal', title: 'Giving & Tithes' },
+    '/portal/prayer': { section: 'Member Portal', title: 'Prayer Wall' },
+    '/portal/profile': { section: 'Member Portal', title: 'My Profile' },
+    '/portal/leader': { section: 'Department Leadership', title: 'Ministry Leader Console' },
+    '/portal/finance': { section: 'Finance & Treasury', title: 'Financial Officer Console' }
+  };
+  return routeTitles[pathname] || { section: 'Portal', title: 'FaithConnect' };
+};
+
 // --- Global Navbar ---
 
 const Navbar = ({ 
   profile, 
   onOpenAuth,
-  onToggleMobileMenu
+  onToggleMobileMenu,
+  inPortal = false
 }: { 
   profile: Profile | null;
   onOpenAuth?: (isSignUp?: boolean) => void;
   onToggleMobileMenu?: () => void;
+  inPortal?: boolean;
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
+  const portalMeta = getPortalPageMeta(location.pathname, location.search);
 
   useEffect(() => {
     const handleUpdate = (e: any) => {
@@ -103,45 +148,67 @@ const Navbar = ({
   };
 
   return (
-    <nav className="fixed top-0 w-full h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 z-40 flex items-center justify-between px-4 sm:px-6 shadow-sm">
-      <div className="flex items-center gap-2.5">
-        {/* Mobile Hamburger Menu Toggle */}
-        {profile && onToggleMobileMenu && (
+    <nav
+      className={`${
+        inPortal
+          ? 'sticky top-0 z-30 w-full'
+          : 'fixed top-0 inset-x-0 z-40 shadow-sm'
+      } h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center justify-between gap-3 px-4 sm:px-6`}
+    >
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        {/* Mobile Hamburger Menu Toggle (Portal only) */}
+        {inPortal && profile && onToggleMobileMenu && (
           <button
             type="button"
             onClick={onToggleMobileMenu}
-            className="md:hidden p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            className="md:hidden p-2 -ml-1 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer shrink-0"
             aria-label="Toggle navigation menu"
           >
             <Menu size={22} />
           </button>
         )}
 
-        <Link to="/" className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-extrabold shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-colors overflow-hidden shrink-0">
-          {churchProfile.logo_url ? (
-            <img src={churchProfile.logo_url} alt="Logo" className="w-full h-full object-cover" />
-          ) : (
-            'FC'
-          )}
-        </Link>
-        <div className="flex flex-col min-w-0">
-          <Link to="/" className="text-xl font-black text-slate-900 leading-none tracking-tight">
-            {renderStyledMainTitle(churchProfile.main_title || 'FaithConnect')}
+        {/* Brand Logo & Title: Always shown on public Navbar, and on mobile (< md) in Portal */}
+        <div className={`flex items-center gap-2.5 min-w-0 ${inPortal ? 'md:hidden' : ''}`}>
+          <Link to="/" className="w-9 h-9 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-extrabold shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-colors overflow-hidden shrink-0">
+            {churchProfile.logo_url ? (
+              <img src={churchProfile.logo_url} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              'FC'
+            )}
           </Link>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight truncate max-w-[240px]">
-              {churchProfile.subtle_title || 'Grace Cathedral'}
-            </span>
+          <div className="flex flex-col min-w-0">
+            <Link to="/" className="text-lg sm:text-xl font-black text-slate-900 leading-none tracking-tight truncate">
+              {renderStyledMainTitle(churchProfile.main_title || 'FaithConnect')}
+            </Link>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight truncate max-w-[160px] sm:max-w-[240px]">
+                {churchProfile.subtle_title || 'Grace Cathedral'}
+              </span>
+            </div>
           </div>
         </div>
+
+        {/* Desktop Portal Contextual Header (Merged seamlessly beside Sidebar) */}
+        {inPortal && (
+          <div className="hidden md:flex items-center gap-2.5 min-w-0">
+            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-extrabold uppercase tracking-wider shrink-0">
+              {portalMeta.section}
+            </span>
+            <ChevronRight size={14} className="text-slate-300 shrink-0" />
+            <span className="text-sm font-black text-slate-900 truncate">
+              {portalMeta.title}
+            </span>
+          </div>
+        )}
       </div>
       
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {profile ? (
           <>
             <Link 
               to="/portal" 
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors"
+              className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors shrink-0"
             >
               <LayoutDashboard size={14} />
               <span>Overview</span>
@@ -149,18 +216,19 @@ const Navbar = ({
 
             <Link 
               to="/portal/streaming" 
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors shrink-0"
+              title="Watch Live"
             >
-              <Radio size={14} className="animate-pulse" />
-              <span>Watch Live</span>
+              <Radio size={14} className="animate-pulse shrink-0" />
+              <span className="hidden sm:inline">Watch Live</span>
             </Link>
 
-            <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-3 border-l border-slate-200">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-bold text-slate-900 leading-none">
+            <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-3 border-l border-slate-200 shrink-0">
+              <div className="text-right hidden lg:block max-w-[160px]">
+                <p className="text-sm font-bold text-slate-900 leading-none truncate">
                   {profile.first_name} {profile.last_name}
                 </p>
-                <p className="text-xs text-indigo-600 font-semibold capitalize mt-0.5">
+                <p className="text-xs text-indigo-600 font-semibold capitalize mt-0.5 truncate">
                   {profile.primary_role?.replace('_', ' ') || 'Member'}
                 </p>
               </div>
@@ -168,7 +236,7 @@ const Navbar = ({
               <Link 
                 to="/portal/profile" 
                 title="View Profile" 
-                className="w-9 h-9 bg-slate-100 rounded-full overflow-hidden border-2 border-indigo-200 hover:border-indigo-600 transition-colors flex items-center justify-center text-slate-600"
+                className="w-9 h-9 bg-slate-100 rounded-full overflow-hidden border-2 border-indigo-200 hover:border-indigo-600 transition-colors flex items-center justify-center text-slate-600 shrink-0"
               >
                 {profile.avatar_url ? (
                   <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
@@ -181,7 +249,8 @@ const Navbar = ({
                 type="button"
                 onClick={handleSignOut} 
                 title="Sign Out" 
-                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                aria-label="Sign Out"
+                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
               >
                 <LogOut size={18} />
               </button>
@@ -210,16 +279,27 @@ const Navbar = ({
   );
 };
 
-// --- Portal Sidebar (Desktop & Mobile Slide-Over Drawer with Role Categories) ---
+// --- Portal Sidebar (Desktop & Mobile Slide-Over Drawer with Collapsible Role Categories) ---
 
 interface SidebarProps {
   role: string;
   profile?: Profile | null;
   mobileOpen?: boolean;
   onClose?: () => void;
+  desktopCollapsed?: boolean;
+  onToggleDesktopCollapse?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, onClose }) => {
+type SidebarSectionKey = 'church' | 'finance' | 'leader' | 'admin';
+
+const Sidebar: React.FC<SidebarProps> = ({
+  role,
+  profile,
+  mobileOpen = false,
+  onClose,
+  desktopCollapsed = false,
+  onToggleDesktopCollapse
+}) => {
   const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
 
@@ -236,6 +316,37 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
   const isAdminOrPastor = ['admin', 'super_admin', 'pastor', 'district_admin'].includes(role);
   const isFinanceOfficer = role === 'finance_officer';
   const canAccessFinance = isFinanceOfficer || isAdminOrPastor;
+  const hasMultipleRoleSections = isLeaderOrStaff || canAccessFinance || isAdminOrPastor;
+
+  const getActiveSectionForRoute = (pathname: string, search: string): SidebarSectionKey => {
+    if (pathname.startsWith('/portal/admin')) {
+      const tab = new URLSearchParams(search).get('tab');
+      if (tab === 'financials') return 'finance';
+      return 'admin';
+    }
+    if (pathname === '/portal/finance') return 'finance';
+    if (pathname === '/portal/leader') return 'leader';
+    return 'church';
+  };
+
+  const [openSections, setOpenSections] = useState<Record<SidebarSectionKey, boolean>>(() => {
+    const active = getActiveSectionForRoute(location.pathname, location.search);
+    return {
+      church: active === 'church' || !hasMultipleRoleSections,
+      finance: active === 'finance' || (isFinanceOfficer && !isAdminOrPastor),
+      leader: active === 'leader' || (isLeaderOrStaff && !isAdminOrPastor),
+      admin: active === 'admin'
+    };
+  });
+
+  useEffect(() => {
+    const active = getActiveSectionForRoute(location.pathname, location.search);
+    setOpenSections(prev => (prev[active] ? prev : { ...prev, [active]: true }));
+  }, [location.pathname, location.search]);
+
+  const toggleSection = (section: SidebarSectionKey) => {
+    setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
 
   const churchLifeLinks = [
     { to: '/portal', icon: Home, label: 'Church Overview' },
@@ -262,6 +373,8 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
   const adminLinks = isAdminOrPastor ? [
     { to: '/portal/admin?tab=overview', icon: LayoutDashboard, label: 'Admin Overview' },
     { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar' },
+    { to: '/portal/admin?tab=resources', icon: FileText, label: 'Church Resources' },
+    { to: '/portal/admin?tab=surveys', icon: ClipboardList, label: 'Post-Event Surveys' },
     { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster' },
     { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance' },
     { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams' },
@@ -270,18 +383,52 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
     { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings' }
   ] : [];
 
-  const content = (
+  const renderContent = (isCollapsed: boolean) => (
     <div className="flex flex-col h-full bg-white">
-      {/* Sidebar Church Header */}
-      <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-        <div>
-          <h3 className="font-black text-slate-900 text-sm">{churchProfile.subtle_title || 'Grace Cathedral'}</h3>
-        </div>
-        {onClose && (
+      {/* Unified Top Brand Row (Exact h-16 height to merge seamlessly with Portal Header) */}
+      <div className={`${isCollapsed ? 'px-2 justify-center gap-1' : 'px-4 justify-between gap-2'} h-16 shrink-0 border-b border-slate-200 flex items-center`}>
+        <Link
+          to="/portal"
+          onClick={onClose}
+          title={churchProfile.main_title || 'FaithConnect'}
+          className="flex items-center gap-2.5 min-w-0"
+        >
+          <div className={`${isCollapsed ? 'w-8 h-8 text-xs' : 'w-9 h-9 text-sm'} bg-indigo-600 rounded-xl flex items-center justify-center text-white font-extrabold shadow-sm shadow-indigo-100 hover:bg-indigo-700 transition-colors overflow-hidden shrink-0`}>
+            {churchProfile.logo_url ? (
+              <img src={churchProfile.logo_url} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              'FC'
+            )}
+          </div>
+          {!isCollapsed && (
+            <div className="min-w-0 flex flex-col">
+              <span className="text-base font-black text-slate-900 leading-none tracking-tight truncate">
+                {renderStyledMainTitle(churchProfile.main_title || 'FaithConnect')}
+              </span>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight truncate mt-0.5">
+                {churchProfile.subtle_title || 'Grace Cathedral'}
+              </span>
+            </div>
+          )}
+        </Link>
+
+        {onToggleDesktopCollapse && (
+          <button
+            type="button"
+            onClick={onToggleDesktopCollapse}
+            className="hidden md:inline-flex p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 cursor-pointer shrink-0 transition-colors"
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={18} />}
+          </button>
+        )}
+
+        {onClose && !isCollapsed && (
           <button 
             type="button"
             onClick={onClose} 
-            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer shrink-0"
             aria-label="Close sidebar"
           >
             <X size={18} />
@@ -289,136 +436,209 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
         )}
       </div>
 
-      <div className="p-4 space-y-6 flex-1 overflow-y-auto">
-        {/* Church Life Category (All Roles) */}
-        <div className="space-y-1">
-          <p className="px-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">
-            Church Ministry
-          </p>
-          {churchLifeLinks.map((link) => {
-            const isActive = location.pathname === link.to && !location.search;
-            return (
-              <Link
-                key={link.to}
-                to={link.to}
-                onClick={onClose}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                  isActive
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
-                }`}
+      <div className={`${isCollapsed ? 'p-2.5 space-y-3' : 'p-3.5 space-y-3'} flex-1 overflow-y-auto`}>
+        {/* Pastoral & Administration Category (Admin, Super Admin, Pastor ONLY) */}
+        {isAdminOrPastor && (
+          <div className="space-y-1">
+            {!isCollapsed && (
+              <button
+                type="button"
+                onClick={() => toggleSection('admin')}
+                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-indigo-700 uppercase tracking-widest flex items-center justify-between hover:bg-indigo-50/70 transition-colors cursor-pointer"
               >
-                <link.icon size={16} />
-                <span>{link.label}</span>
-              </Link>
-            );
-          })}
-        </div>
+                <span className="flex items-center gap-1.5">
+                  <span>Pastoral & Admin</span>
+                  <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-black">Staff</span>
+                </span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.admin ? 'rotate-0' : '-rotate-90'}`} />
+              </button>
+            )}
+            {(isCollapsed || openSections.admin) && (
+              <div className="space-y-1 pt-0.5">
+                {adminLinks.map((link) => {
+                  const currentFull = location.pathname + location.search;
+                  const isActive = currentFull === link.to || (link.to.includes('tab=overview') && location.pathname === '/portal/admin' && !location.search);
+                  return (
+                    <Link
+                      key={link.to}
+                      to={link.to}
+                      onClick={onClose}
+                      title={isCollapsed ? link.label : undefined}
+                      aria-label={link.label}
+                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
+                        isActive
+                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
+                      }`}
+                    >
+                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
+                      {!isCollapsed && <span className="truncate">{link.label}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Finance & Treasury Category (Finance Officer, Pastor, Admin) */}
         {canAccessFinance && (
-          <div className="space-y-1 pt-4 border-t border-slate-100">
-            <p className="px-3 text-[10px] font-extrabold text-emerald-600 uppercase tracking-widest mb-2 flex items-center justify-between">
-              <span>Finance & Treasury</span>
-              <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-black">Treasury</span>
-            </p>
-            {financeLinks.map((link) => {
-              const currentFull = location.pathname + location.search;
-              const isActive = currentFull === link.to;
-              return (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    isActive
-                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100'
-                      : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
-                  }`}
-                >
-                  <link.icon size={16} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
+          <div className={`space-y-1 ${isAdminOrPastor ? 'pt-3 border-t border-slate-100' : ''}`}>
+            {!isCollapsed && (
+              <button
+                type="button"
+                onClick={() => toggleSection('finance')}
+                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-emerald-700 uppercase tracking-widest flex items-center justify-between hover:bg-emerald-50/70 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span>Finance & Treasury</span>
+                  <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-black">Treasury</span>
+                </span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.finance ? 'rotate-0' : '-rotate-90'}`} />
+              </button>
+            )}
+            {(isCollapsed || openSections.finance) && (
+              <div className="space-y-1 pt-0.5">
+                {financeLinks.map((link) => {
+                  const currentFull = location.pathname + location.search;
+                  const isActive = currentFull === link.to;
+                  return (
+                    <Link
+                      key={link.to}
+                      to={link.to}
+                      onClick={onClose}
+                      title={isCollapsed ? link.label : undefined}
+                      aria-label={link.label}
+                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
+                        isActive
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100'
+                          : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                      }`}
+                    >
+                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
+                      {!isCollapsed && <span className="truncate">{link.label}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
         {/* Ministry Leadership Category (Leader, Worker, Pastor, Admin) */}
         {isLeaderOrStaff && (
-          <div className="space-y-1 pt-4 border-t border-slate-100">
-            <p className="px-3 text-[10px] font-extrabold text-amber-600 uppercase tracking-widest mb-2 flex items-center justify-between">
-              <span>Department Leadership</span>
-              <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-black">Leaders</span>
-            </p>
-            {leaderLinks.map((link) => {
-              const isActive = location.pathname === link.to;
-              return (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    isActive
-                      ? 'bg-amber-600 text-white shadow-md shadow-amber-100'
-                      : 'text-slate-600 hover:bg-amber-50 hover:text-amber-700'
-                  }`}
-                >
-                  <link.icon size={16} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
+          <div className={`space-y-1 ${(isAdminOrPastor || canAccessFinance) ? 'pt-3 border-t border-slate-100' : ''}`}>
+            {!isCollapsed && (
+              <button
+                type="button"
+                onClick={() => toggleSection('leader')}
+                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-amber-700 uppercase tracking-widest flex items-center justify-between hover:bg-amber-50/70 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span>Department Leadership</span>
+                  <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-black">Leaders</span>
+                </span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.leader ? 'rotate-0' : '-rotate-90'}`} />
+              </button>
+            )}
+            {(isCollapsed || openSections.leader) && (
+              <div className="space-y-1 pt-0.5">
+                {leaderLinks.map((link) => {
+                  const isActive = location.pathname === link.to;
+                  return (
+                    <Link
+                      key={link.to}
+                      to={link.to}
+                      onClick={onClose}
+                      title={isCollapsed ? link.label : undefined}
+                      aria-label={link.label}
+                      className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
+                        isActive
+                          ? 'bg-amber-600 text-white shadow-md shadow-amber-100'
+                          : 'text-slate-600 hover:bg-amber-50 hover:text-amber-700'
+                      }`}
+                    >
+                      <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
+                      {!isCollapsed && <span className="truncate">{link.label}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Pastoral & Administration Category (Admin, Super Admin, Pastor ONLY) */}
-        {isAdminOrPastor && (
-          <div className="space-y-1 pt-4 border-t border-slate-100">
-            <p className="px-3 text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest mb-2 flex items-center justify-between">
-              <span>Pastoral & Admin</span>
-              <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-black">Staff</span>
-            </p>
-            {adminLinks.map((link) => {
-              const currentFull = location.pathname + location.search;
-              const isActive = currentFull === link.to || (link.to.includes('tab=overview') && location.pathname === '/portal/admin' && !location.search);
-              return (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
-                  }`}
-                >
-                  <link.icon size={16} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        )}
+        {/* Church Life / Member Portal Category (All Roles) */}
+        <div className={`space-y-1 ${hasMultipleRoleSections ? 'pt-3 border-t border-slate-100' : ''}`}>
+          {!isCollapsed && (
+            hasMultipleRoleSections ? (
+              <button
+                type="button"
+                onClick={() => toggleSection('church')}
+                className="w-full px-2.5 py-1.5 rounded-lg text-[10px] font-extrabold text-slate-500 uppercase tracking-widest flex items-center justify-between hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span>Member Portal</span>
+                  <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-black">Member</span>
+                </span>
+                <ChevronDown size={14} className={`transition-transform duration-150 ${openSections.church ? 'rotate-0' : '-rotate-90'}`} />
+              </button>
+            ) : (
+              <p className="px-3 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-2">
+                Church Ministry
+              </p>
+            )
+          )}
+          {(isCollapsed || !hasMultipleRoleSections || openSections.church) && (
+            <div className="space-y-1 pt-0.5">
+              {churchLifeLinks.map((link) => {
+                const isActive = location.pathname === link.to && !location.search;
+                return (
+                  <Link
+                    key={link.to}
+                    to={link.to}
+                    onClick={onClose}
+                    title={isCollapsed ? link.label : undefined}
+                    aria-label={link.label}
+                    className={`flex items-center ${isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-2'} rounded-xl text-xs font-bold transition-all ${
+                      isActive
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-indigo-600'
+                    }`}
+                  >
+                    <link.icon size={isCollapsed ? 18 : 16} className="shrink-0" />
+                    {!isCollapsed && <span className="truncate">{link.label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Inspirational Footer */}
-      <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-        <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs">
-          <p className="text-[11px] text-slate-700 italic font-serif leading-relaxed">
-            "For where two or three gather in my name, there am I with them."
-          </p>
-          <p className="text-[10px] font-bold text-indigo-600 mt-1 text-right">— Matthew 18:20</p>
+      {!isCollapsed && (
+        <div className="p-4 border-t border-slate-100 bg-slate-50/50 shrink-0">
+          <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs">
+            <p className="text-[11px] text-slate-700 italic font-serif leading-relaxed">
+              "For where two or three gather in my name, there am I with them."
+            </p>
+            <p className="text-[10px] font-bold text-indigo-600 mt-1 text-right">— Matthew 18:20</p>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
   return (
     <>
-      {/* Desktop Persistent Sidebar */}
-      <aside className="fixed left-0 top-16 w-64 h-[calc(100vh-64px)] bg-white border-r border-slate-200 overflow-y-auto hidden md:block z-30 shadow-xs">
-        {content}
+      {/* Desktop Persistent Collapsible Sidebar (Full-height sticky shell seamlessly merged with header) */}
+      <aside
+        className={`hidden md:flex md:flex-col md:sticky md:top-0 md:h-screen shrink-0 ${
+          desktopCollapsed ? 'w-20' : 'w-64'
+        } bg-white border-r border-slate-200 z-30 transition-[width] duration-200`}
+      >
+        {renderContent(desktopCollapsed)}
       </aside>
 
       {/* Mobile Slide-Over Drawer with Backdrop */}
@@ -429,7 +649,7 @@ const Sidebar: React.FC<SidebarProps> = ({ role, profile, mobileOpen = false, on
             onClick={onClose} 
           />
           <aside className="relative w-72 max-w-[85vw] h-full bg-white shadow-2xl flex flex-col z-10 animate-in slide-in-from-left duration-200">
-            {content}
+            {renderContent(false)}
           </aside>
         </div>
       )}
@@ -847,89 +1067,123 @@ const AuthRoutePage = ({ profile, session }: { profile: Profile | null; session:
 // --- Portal Overview Page (Single Church Focus) ---
 
 const OverviewPage = ({ profile }: { profile: Profile | null }) => {
+  const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
   const [liveStream, setLiveStream] = useState<Stream | null>(null);
+  const [upcomingEvents, setUpcomingEvents] = useState<ChurchEvent[]>([]);
+  const [blessingClaimed, setBlessingClaimed] = useState<Record<string, boolean>>({});
+  const [showCelebrationToast, setShowCelebrationToast] = useState(true);
 
-  // Automated Milestone & Celebration Scanner Service
   const [celebrations, setCelebrations] = useState<{
     id: string;
     type: 'birthday' | 'baptism' | 'marriage';
     title: string;
     description: string;
+    dateLabel: string;
     years?: number;
     isToday?: boolean;
   }[]>([]);
-  const [showCelebrationToast, setShowCelebrationToast] = useState(true);
 
   useEffect(() => {
+    const handleChurchUpdate = () => setChurchProfile(getChurchProfile());
+    window.addEventListener('church-profile-updated', handleChurchUpdate);
+    return () => window.removeEventListener('church-profile-updated', handleChurchUpdate);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     const loadData = async () => {
-      const { data: sData } = await supabase.from('streams').select('*').eq('status', 'live').maybeSingle();
-      if (sData) setLiveStream(sData);
+      try {
+        const [{ data: sData }, { data: evData }] = await Promise.all([
+          supabase.from('streams').select('*').eq('status', 'live').maybeSingle(),
+          supabase.from('church_events').select('*').order('start_time', { ascending: true }).limit(4)
+        ]);
+        if (!active) return;
+        if (sData) setLiveStream(sData as Stream);
+        if (evData && Array.isArray(evData)) {
+          setUpcomingEvents((evData as ChurchEvent[]).filter(ev => ev.status !== 'cancelled').slice(0, 3));
+        }
+      } catch (err) {
+        console.warn('Unable to load overview highlights:', err);
+      }
     };
     loadData();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
     if (!profile) return;
 
     const today = new Date();
-    const curMonth = today.getMonth(); // 0-indexed
+    const curMonth = today.getMonth();
     const curDay = today.getDate();
     const curYear = today.getFullYear();
 
-    const activeList: any[] = [];
+    const activeList: {
+      id: string;
+      type: 'birthday' | 'baptism' | 'marriage';
+      title: string;
+      description: string;
+      dateLabel: string;
+      years?: number;
+      isToday?: boolean;
+    }[] = [];
 
     // 1. Scan Birthday
-    const dob = profile.date_of_birth || '1996-10-30'; // demo member DOB falls in current month
+    const dob = profile.date_of_birth;
     if (dob) {
       const d = new Date(dob);
-      if (d.getMonth() === curMonth) {
+      if (!Number.isNaN(d.getTime()) && d.getMonth() === curMonth) {
         const isToday = d.getDate() === curDay;
         activeList.push({
           id: 'bday',
           type: 'birthday',
-          title: isToday ? `🎉 Happy Birthday, ${profile.first_name}!` : `🎂 Happy Birthday Month, ${profile.first_name}!`,
+          title: isToday ? `Happy Birthday, ${profile.first_name}` : `Birthday Month Celebration`,
           description: isToday
-            ? `Grace Cathedral rejoices with you on your special day! "The Lord bless you and keep you; the Lord make His face shine upon you." (Numbers 6:24)`
-            : `Your birthday falls in this current month (${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}). May God's favor surround you as a shield!`,
+            ? `Your church family rejoices with you today. "The Lord bless you and keep you." (Numbers 6:24)`
+            : `Celebrating your birthday this month (${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}). May God's favor surround you.`,
+          dateLabel: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
           isToday
         });
       }
     }
 
     // 2. Scan Water Baptism Anniversary
-    const bapDate = profile.baptism_date || '2022-10-17';
+    const bapDate = profile.baptism_date;
     if (bapDate) {
       const bd = new Date(bapDate);
-      if (bd.getMonth() === curMonth) {
+      if (!Number.isNaN(bd.getTime()) && bd.getMonth() === curMonth) {
         const years = Math.max(1, curYear - bd.getFullYear());
         const isToday = bd.getDate() === curDay;
         activeList.push({
           id: 'baptism',
           type: 'baptism',
-          title: `🌊 ${years} Year Water Baptism Anniversary!`,
+          title: `${years}-Year Water Baptism Anniversary`,
           description: isToday
-            ? `Today marks ${years} years since your water baptism! "Therefore, if anyone is in Christ, the new creation has come." (2 Cor 5:17)`
-            : `Celebrating your ${years}-year water baptism anniversary during this current month (${bd.toLocaleDateString([], { month: 'short', day: 'numeric' })}). Praise God for your spiritual journey!`,
+            ? `Today marks ${years} years since your water baptism. "The new creation has come." (2 Cor 5:17)`
+            : `Commemorating ${years} years since your water baptism (${bd.toLocaleDateString([], { month: 'short', day: 'numeric' })}).`,
+          dateLabel: bd.toLocaleDateString([], { month: 'short', day: 'numeric' }),
           years,
           isToday
         });
       }
     }
 
-    // 3. Scan Wedding / Marriage Anniversary
-    const marrDate = profile.marriage_date || (profile.marital_status === 'Married' ? '2021-10-25' : '2021-10-25');
-    if (marrDate) {
-      const md = new Date(marrDate);
-      if (md.getMonth() === curMonth) {
+    // 3. Scan Wedding / Marriage Anniversary (only when married with a recorded date)
+    if (profile.marital_status === 'Married' && profile.marriage_date) {
+      const md = new Date(profile.marriage_date);
+      if (!Number.isNaN(md.getTime()) && md.getMonth() === curMonth) {
         const years = Math.max(1, curYear - md.getFullYear());
         const isToday = md.getDate() === curDay;
         activeList.push({
           id: 'marriage',
           type: 'marriage',
-          title: `💍 ${years} Year Wedding Anniversary Celebration!`,
+          title: `${years}-Year Wedding Anniversary`,
           description: isToday
-            ? `Happy Wedding Anniversary today! "Therefore what God has joined together, let no one separate." (Mark 10:9)`
-            : `Celebrating ${years} years of Holy Matrimony during this current month (${md.toLocaleDateString([], { month: 'short', day: 'numeric' })}). May your home be filled with God's peace and abundant love!`,
+            ? `Happy Wedding Anniversary today. May your home be filled with peace and abundant grace.`
+            : `Celebrating ${years} years of Holy Matrimony (${md.toLocaleDateString([], { month: 'short', day: 'numeric' })}).`,
+          dateLabel: md.toLocaleDateString([], { month: 'short', day: 'numeric' }),
           years,
           isToday
         });
@@ -939,315 +1193,480 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
     setCelebrations(activeList);
   }, [profile]);
 
+  const campusLabel = churchProfile.subtle_title || churchProfile.name || 'Grace Cathedral';
+  const mainBrandTitle = churchProfile.main_title || 'FaithConnect';
+  const formattedRole = (profile?.primary_role || 'member').replace(/_/g, ' ');
+  const departmentLabel = profile?.assigned_department || profile?.department_name || 'General Congregation';
+
+  const serviceGatherings = churchProfile.service_times?.length
+    ? churchProfile.service_times.map((slot, idx) => ({
+        title: slot.includes(':') ? slot.split(':')[0].trim() : `Weekly Gathering ${idx + 1}`,
+        time: slot.includes(':') ? slot.split(':').slice(1).join(':').trim() : slot,
+        location: `${campusLabel} Main Sanctuary`,
+        category: idx === 0 ? 'Main Worship' : 'Weekly Service'
+      }))
+    : [
+        {
+          title: 'Sunday Worship Service',
+          time: 'Sundays · 9:00 AM & 11:30 AM',
+          location: 'Main Sanctuary & Live Broadcast',
+          category: 'Main Worship'
+        },
+        {
+          title: 'Midweek Bible Study & Communion',
+          time: 'Wednesdays · 7:00 PM',
+          location: 'Fellowship Hall & Live Stream',
+          category: 'Word & Prayer'
+        },
+        {
+          title: 'Friday Intercessory Prayer Vigil',
+          time: 'Fridays · 9:00 PM',
+          location: 'Main Sanctuary',
+          category: 'Prayer'
+        }
+      ];
+
+  const familyMilestones = [
+    { name: 'Grace Campbell', initials: 'GC', bDate: 'Oct 17, 2022', years: 4, role: 'Active Member' },
+    { name: 'Min. Samuel Okonkwo', initials: 'SO', bDate: 'Oct 28, 2021', years: 5, role: 'Youth Leader' },
+    { name: 'Elijah Wright', initials: 'EW', bDate: 'Oct 10, 2020', years: 6, role: 'Worship Worker' },
+    { name: 'Rebecca Foster', initials: 'RF', bDate: 'Oct 22, 2023', years: 3, role: 'Communion Servant' }
+  ];
+
+  const quickActions = [
+    {
+      to: '/portal/streaming',
+      title: 'Live Sanctuary',
+      description: 'Join services online and worship together.',
+      icon: Video,
+      iconClasses: 'bg-rose-50 text-rose-600 group-hover:bg-rose-600 group-hover:text-white'
+    },
+    {
+      to: '/portal/giving',
+      title: 'Giving & Tithes',
+      description: 'Contribute tithes, offerings, and special funds.',
+      icon: DollarSign,
+      iconClasses: 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white'
+    },
+    {
+      to: '/portal/ministries',
+      title: 'Ministries & Teams',
+      description: 'Serve with choir, ushers, media, or outreach.',
+      icon: Building2,
+      iconClasses: 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white'
+    },
+    {
+      to: '/portal/prayer',
+      title: 'Prayer Wall',
+      description: 'Share requests and pray for church family.',
+      icon: Heart,
+      iconClasses: 'bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white'
+    }
+  ];
+
   return (
-    <div className="space-y-8">
-      {/* Automated Celebratory Banner & Milestone Toast Alerts */}
-      {showCelebrationToast && celebrations.length > 0 && (
-        <div className="space-y-4">
-          {celebrations.map((item) => (
-            <div 
-              key={item.id} 
-              className={`p-6 sm:p-7 rounded-3xl border-2 shadow-lg relative overflow-hidden transition-all animate-in fade-in slide-in-from-top-4 duration-300 ${
-                item.type === 'birthday' 
-                  ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-pink-600 text-white border-amber-300'
-                  : item.type === 'baptism'
-                  ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 text-white border-cyan-300'
-                  : 'bg-gradient-to-r from-purple-600 via-pink-600 to-rose-600 text-white border-pink-300'
-              }`}
-            >
-              <div className="absolute right-4 top-4 text-3xl opacity-20 pointer-events-none select-none">
-                ✨ 🎉 🎈 ✨
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
-                <div className="flex items-start gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md border border-white/40 flex items-center justify-center text-3xl shrink-0 shadow-inner">
-                    {item.type === 'birthday' ? '🎂' : item.type === 'baptism' ? '🌊' : '💍'}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-white/25 text-white backdrop-blur-md">
-                        {item.isToday ? '🎉 Celebration Today!' : '✨ Current Month Milestone'}
-                      </span>
-                      <span className="text-xs text-white/80 font-bold">• Grace Cathedral Family</span>
-                    </div>
-                    <h3 className="text-2xl font-black tracking-tight">{item.title}</h3>
-                    <p className="text-xs sm:text-sm text-white/90 leading-relaxed mt-1 max-w-xl">
-                      {item.description}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  {item.type === 'baptism' && (
-                    <Link
-                      to="/portal/profile"
-                      className="px-4 py-2.5 bg-white text-indigo-950 font-black rounded-xl text-xs hover:bg-slate-100 transition-all shadow-md cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Award size={15} className="text-amber-600" />
-                      View Certificate
-                    </Link>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      alert(`✝️ Grace Cathedral Pastoral Blessing sent for your ${item.type}! May God continue to multiply grace upon your life!`);
-                    }}
-                    className="px-4 py-2.5 bg-white/20 hover:bg-white/30 text-white font-bold rounded-xl text-xs backdrop-blur-md transition-all cursor-pointer border border-white/30"
-                  >
-                    Receive Pastoral Blessing 🙏
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowCelebrationToast(false)}
-                    className="p-2 text-white/70 hover:text-white rounded-full hover:bg-white/10 transition-colors cursor-pointer"
-                    title="Dismiss Celebration Banner"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              </div>
+    <div className="space-y-5 sm:space-y-6 pb-20 md:pb-12">
+      {/* Primary Church Welcome & Broadcast Focal Hero */}
+      <section className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-5 sm:p-7 lg:p-8 text-white">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-2.5 max-w-2xl min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-indigo-200 font-semibold">
+              <span className="text-amber-300 font-bold">{mainBrandTitle}</span>
+              <span aria-hidden="true">·</span>
+              <span>{campusLabel}</span>
+              <span aria-hidden="true">·</span>
+              <span className="capitalize">{formattedRole}</span>
             </div>
-          ))}
+
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white leading-tight">
+              Welcome, {profile?.first_name || 'Beloved'}
+            </h1>
+
+            <p className="text-xs sm:text-sm text-indigo-100/90 leading-relaxed max-w-xl">
+              {churchProfile.mission_statement || 'Engage with weekly worship services, stay connected with your ministry team, steward your giving, and submit prayer requests.'}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row items-stretch sm:items-center lg:items-stretch xl:items-center gap-2.5 shrink-0">
+            {liveStream ? (
+              <Link
+                to="/portal/streaming"
+                className="min-h-[42px] px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <Radio size={15} className="shrink-0" />
+                <span>Join Live Stream ({liveStream.view_count || 148})</span>
+              </Link>
+            ) : (
+              <Link
+                to="/portal/streaming"
+                className="min-h-[42px] px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <Play size={15} className="shrink-0" />
+                <span>Watch Worship Stream</span>
+              </Link>
+            )}
+
+            <Link
+              to="/portal/giving"
+              className="min-h-[42px] px-4 py-2.5 bg-white/10 hover:bg-white/15 border border-white/15 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap"
+            >
+              <DollarSign size={15} className="shrink-0 text-emerald-300" />
+              <span>Give Tithe & Offering</span>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Live Broadcast Alert Strip (shown only during active stream) */}
+      {liveStream && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+            <div className="w-11 h-11 bg-rose-600 text-white rounded-xl flex items-center justify-center shrink-0">
+              <Radio size={20} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                <span className="font-black text-rose-700 uppercase tracking-wide">Live Sanctuary Broadcast</span>
+                <span aria-hidden="true" className="text-rose-300">·</span>
+                <span className="font-bold text-rose-700 tabular-nums">{liveStream.view_count || 148} worshipping online</span>
+              </div>
+              <h3 className="text-sm sm:text-base font-black text-slate-900 mt-0.5 truncate">{liveStream.title}</h3>
+              {liveStream.description && (
+                <p className="text-xs text-slate-600 line-clamp-1">{liveStream.description}</p>
+              )}
+            </div>
+          </div>
+
+          <Link
+            to="/portal/streaming"
+            className="w-full sm:w-auto min-h-[40px] px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
+          >
+            <Play size={14} fill="currentColor" />
+            <span>Open Broadcast</span>
+          </Link>
         </div>
       )}
 
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-purple-700 p-8 md:p-10 rounded-3xl text-white shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-10 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-white to-transparent pointer-events-none"></div>
-        <div className="relative z-10 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-xs font-bold uppercase tracking-wider mb-4">
-            <Sparkles size={14} /> FaithConnect Grace Cathedral
+      {/* Compact Milestone Celebrations Strip (when applicable) */}
+      {showCelebrationToast && celebrations.length > 0 && (
+        <section className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles size={16} className="text-amber-700 shrink-0" />
+              <h2 className="text-sm font-black text-slate-900 truncate">Personal Milestone Celebrations</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCelebrationToast(false)}
+              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-amber-100 rounded-lg transition-colors cursor-pointer shrink-0"
+              aria-label="Dismiss celebrations"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-black tracking-tight mb-3">
-            Welcome, {profile?.first_name || 'Beloved'}!
-          </h1>
-          <p className="text-indigo-100 text-base sm:text-lg leading-relaxed">
-            Welcome to your digital church family. Engage with our worship ministries, watch live services, give your tithes & offerings, and request prayer.
-          </p>
-        </div>
-      </div>
 
-      {/* Live Stream Banner if Live */}
-      {liveStream && (
-        <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-rose-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-rose-200 flex-shrink-0 animate-pulse">
-              <Radio size={28} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-rose-600 text-white text-[10px] font-black uppercase rounded tracking-wide">
-                  LIVE SANCTUARY BROADCAST
-                </span>
-                <span className="text-xs text-rose-600 font-bold">
-                  {liveStream.view_count || 148}+ Worshipping Online
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 mt-1">{liveStream.title}</h3>
-              <p className="text-xs text-slate-500 line-clamp-1">{liveStream.description}</p>
-            </div>
+          <div className={`grid grid-cols-1 ${celebrations.length > 1 ? 'md:grid-cols-2' : ''} gap-3`}>
+            {celebrations.map((item) => {
+              const claimed = Boolean(blessingClaimed[item.id]);
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white border border-amber-200/80 rounded-xl p-4 flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-2 text-[11px] font-bold text-amber-800">
+                      <span>{item.isToday ? 'Today' : 'This Month'}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">{item.dateLabel}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{campusLabel}</span>
+                    </div>
+                    <h3 className="text-sm font-black text-slate-900">{item.title}</h3>
+                    <p className="text-xs text-slate-600 leading-relaxed">{item.description}</p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {item.type === 'baptism' && (
+                      <Link
+                        to="/portal/profile"
+                        className="min-h-[36px] px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                      >
+                        <Award size={14} className="text-amber-700 shrink-0" />
+                        <span>View Certificate</span>
+                      </Link>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setBlessingClaimed(prev => ({ ...prev, [item.id]: true }))}
+                      disabled={claimed}
+                      className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1.5 whitespace-nowrap ${
+                        claimed
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-default'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
+                      }`}
+                    >
+                      {claimed ? <CheckCircle2 size={14} /> : <Heart size={14} />}
+                      <span>{claimed ? 'Pastoral Blessing Received' : 'Receive Pastoral Blessing'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <Link
-            to="/portal/streaming"
-            className="w-full md:w-auto px-6 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-sm font-bold shadow-md shadow-rose-100 transition-all flex items-center justify-center gap-2"
-          >
-            <Play size={16} fill="white" /> Join Sanctuary Stream
-          </Link>
-        </div>
+        </section>
       )}
 
       {/* Quick Action Navigation Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <Link 
-          to="/portal/streaming"
-          className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
-        >
-          <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-rose-600 group-hover:text-white transition-all">
-            <Video size={24} />
-          </div>
-          <h4 className="font-bold text-slate-900 mb-1">Live Sanctuary</h4>
-          <p className="text-xs text-slate-500">Watch services live and fellowship in real-time chat.</p>
-        </Link>
-
-        <Link 
-          to="/portal/giving"
-          className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
-        >
-          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-all">
-            <DollarSign size={24} />
-          </div>
-          <h4 className="font-bold text-slate-900 mb-1">Giving & Tithes</h4>
-          <p className="text-xs text-slate-500">Faithful giving towards tithes, offerings & projects.</p>
-        </Link>
-
-        <Link 
-          to="/portal/ministries"
-          className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
-        >
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-all">
-            <Building2 size={24} />
-          </div>
-          <h4 className="font-bold text-slate-900 mb-1">Ministries & Teams</h4>
-          <p className="text-xs text-slate-500">Choir, Youth, Ushers, Intercessory, and Media.</p>
-        </Link>
-
-        <Link 
-          to="/portal/prayer"
-          className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
-        >
-          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mb-4 group-hover:bg-amber-600 group-hover:text-white transition-all">
-            <Heart size={24} />
-          </div>
-          <h4 className="font-bold text-slate-900 mb-1">Prayer Wall</h4>
-          <p className="text-xs text-slate-500">Share prayer needs and intercede for one another.</p>
-        </Link>
-      </div>
-
-      {/* Featured Weekly Highlights & Church Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div>
-              <h3 className="font-bold text-slate-900 text-lg">Weekly Service Schedule</h3>
-              <p className="text-xs text-slate-500">Grace Cathedral Gatherings</p>
-            </div>
-            <Link to="/portal/calendar" className="text-xs font-bold text-indigo-600 hover:text-indigo-800">
-              View Calendar &rarr;
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {[
-              {
-                title: "Sunday Glorious Worship Service",
-                time: "Sunday • 9:00 AM & 11:30 AM EST",
-                location: "Main Sanctuary & Online Broadcast",
-                speaker: "Rev. Sarah Johnson",
-                badge: "Main Service"
-              },
-              {
-                title: "Midweek Communion & Word Exhortation",
-                time: "Wednesday • 7:00 PM EST",
-                location: "Grace Hall & Live Stream",
-                speaker: "Pastor David Miller",
-                badge: "Bible Study"
-              },
-              {
-                title: "Friday All-Night Intercessory Vigil",
-                time: "Friday • 10:00 PM EST",
-                location: "Main Sanctuary",
-                speaker: "Intercessory Team",
-                badge: "Prayer & Warfare"
-              }
-            ].map((event, idx) => (
-              <div key={idx} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 font-black flex items-center justify-center flex-shrink-0 text-sm">
-                    {idx + 1}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-slate-900 text-sm">{event.title}</h4>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">
-                        {event.badge}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                      <span className="flex items-center gap-1"><Clock size={12} /> {event.time}</span>
-                      <span className="flex items-center gap-1"><MapPin size={12} /> {event.location}</span>
-                    </div>
-                  </div>
-                </div>
-                <Link to="/portal/streaming" className="hidden sm:inline-block px-3.5 py-1.5 text-xs font-bold text-indigo-600 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50">
-                  Join Stream
-                </Link>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Church Profile Card */}
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-extrabold text-indigo-600 uppercase tracking-wider mb-2">
-              <Church size={16} /> FaithConnect Grace Cathedral
-            </div>
-            <h3 className="text-xl font-black text-slate-900 mb-1">Our Church Home</h3>
-            <p className="text-xs text-slate-500 mb-4">120 Grace Way, New York, NY • (555) 234-5678</p>
-
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 text-xs text-slate-600">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Pastoral Care:</span>
-                <span className="font-bold text-slate-800">Rev. Sarah & Pastor David</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Your Status:</span>
-                <span className="font-bold text-emerald-600 flex items-center gap-1">
-                  <CheckCircle2 size={12} /> Active Member
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Assigned Role:</span>
-                <span className="font-bold text-indigo-600 uppercase text-[10px]">
-                  {profile?.primary_role?.replace('_', ' ')}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-6 border-t border-slate-100 mt-4 space-y-2">
-            <Link 
-              to="/portal/directory" 
-              className="w-full py-2.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all"
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {quickActions.map((action) => {
+          const IconComp = action.icon;
+          return (
+            <Link
+              key={action.to}
+              to={action.to}
+              className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 hover:border-indigo-300 transition-colors group flex items-start gap-3.5 min-w-0"
             >
-              Browse Member Directory <ChevronRight size={14} />
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* Church Family Baptism Anniversaries (This Month) */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center font-black text-lg">
-              🌊
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-900 text-base">Church Family Baptism Anniversaries (This Month)</h3>
-              <p className="text-xs text-slate-500">Celebrate water baptism milestones with your Grace Cathedral brothers and sisters in Christ</p>
-            </div>
-          </div>
-          <Link to="/portal/profile" className="text-xs font-bold text-amber-800 hover:text-amber-900 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-200">
-            View My Milestones &rarr;
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { name: "Grace Campbell", bDate: "Oct 17, 2022", years: 4, role: "Active Member", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&q=80" },
-            { name: "Min. Samuel Okonkwo", bDate: "Oct 28, 2021", years: 5, role: "Youth Leader", avatar: "https://picsum.photos/seed/samuel/100/100" },
-            { name: "Elijah Wright", bDate: "Oct 10, 2020", years: 6, role: "Worship Worker", avatar: "https://picsum.photos/seed/elijah/100/100" },
-            { name: "Rebecca Foster", bDate: "Oct 22, 2023", years: 3, role: "Communion Servant", avatar: "https://picsum.photos/seed/rebecca/200/200" }
-          ].map((item, idx) => (
-            <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-amber-300 flex-shrink-0">
-                  <img src={item.avatar} alt="" className="w-full h-full object-cover" />
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors ${action.iconClasses}`}>
+                <IconComp size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-bold text-slate-900 text-sm truncate">{action.title}</h3>
+                  <ChevronRight size={15} className="text-slate-400 group-hover:text-indigo-600 shrink-0 transition-colors" />
                 </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 text-xs">{item.name}</h4>
-                  <p className="text-[10px] text-slate-400">{item.role}</p>
-                  <span className="text-[10px] font-bold text-amber-800 mt-0.5 block">{item.bDate}</span>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">{action.description}</p>
+              </div>
+            </Link>
+          );
+        })}
+      </section>
+
+      {/* Main 12-Column Overview Workspace */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start">
+        {/* LEFT COLUMN (8 cols on xl+): Weekly Gatherings, Upcoming Events & Family Milestones */}
+        <div className="xl:col-span-8 space-y-5 sm:space-y-6 min-w-0">
+          {/* Weekly Service Schedule */}
+          <section className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div className="min-w-0">
+                <h2 className="text-base sm:text-lg font-black text-slate-900">Weekly Service Schedule</h2>
+                <p className="text-xs text-slate-500">{campusLabel} regular worship times and sanctuary gatherings</p>
+              </div>
+              <Link
+                to="/portal/calendar"
+                className="min-h-[36px] px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+              >
+                <span>View Calendar</span>
+                <ChevronRight size={14} />
+              </Link>
+            </div>
+
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+              {serviceGatherings.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 bg-white hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 font-black flex items-center justify-center shrink-0 text-xs tabular-nums">
+                      {idx + 1}
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <h3 className="font-bold text-slate-900 text-sm break-words">{item.title}</h3>
+                        <span className="text-[11px] font-semibold text-indigo-700">{item.category}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1 tabular-nums">
+                          <Clock size={12} className="shrink-0 text-slate-400" />
+                          <span>{item.time}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin size={12} className="shrink-0 text-slate-400" />
+                          <span>{item.location}</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Link
+                    to="/portal/streaming"
+                    className="self-start sm:self-center min-h-[36px] px-3.5 py-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors inline-flex items-center justify-center whitespace-nowrap shrink-0"
+                  >
+                    Join Stream
+                  </Link>
+                </div>
+              ))}
+            </div>
+
+            {upcomingEvents.length > 0 && (
+              <div className="pt-2 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Upcoming Church Events</h3>
+                  <Link to="/portal/calendar" className="text-xs font-bold text-indigo-600 hover:text-indigo-800 whitespace-nowrap">
+                    All Events
+                  </Link>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {upcomingEvents.map((ev) => (
+                    <Link
+                      key={ev.id}
+                      to="/portal/calendar"
+                      className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200 hover:border-indigo-300 transition-colors space-y-1 min-w-0"
+                    >
+                      <p className="text-[11px] font-bold text-indigo-700 tabular-nums truncate">
+                        {new Date(ev.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      </p>
+                      <h4 className="font-bold text-slate-900 text-xs truncate">{ev.title}</h4>
+                      <p className="text-[11px] text-slate-500 truncate">{ev.location || campusLabel}</p>
+                    </Link>
+                  ))}
                 </div>
               </div>
-              <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-lg text-[10px] font-black text-center">
-                {item.years} Yrs
-              </span>
+            )}
+          </section>
+
+          {/* Church Family Baptism Anniversaries */}
+          <section className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <div className="min-w-0">
+                <h2 className="font-black text-slate-900 text-base">Church Family Baptism Anniversaries</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Celebrate water baptism milestones with {campusLabel} brothers and sisters this month
+                </p>
+              </div>
+              <Link
+                to="/portal/profile"
+                className="self-start sm:self-center min-h-[36px] px-3 py-1.5 text-xs font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+              >
+                <span>My Milestones</span>
+                <ChevronRight size={14} />
+              </Link>
             </div>
-          ))}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {familyMilestones.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200 flex items-center justify-between gap-3 min-w-0"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 border border-amber-200 text-amber-800 font-black text-xs flex items-center justify-center shrink-0">
+                      {item.initials}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-900 text-xs truncate">{item.name}</h3>
+                      <p className="text-[11px] text-slate-500 truncate">{item.role}</p>
+                      <span className="text-[11px] font-semibold text-amber-800 tabular-nums block">{item.bDate}</span>
+                    </div>
+                  </div>
+                  <span className="text-xs font-black text-amber-800 tabular-nums whitespace-nowrap shrink-0">
+                    {item.years} Yrs
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
+
+        {/* RIGHT SIDEBAR COLUMN (4 cols on xl+): 2-Col Side-by-Side on Tablet/Laptop (md-lg), Stacked Sidebar on xl+ */}
+        <aside className="xl:col-span-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-5 sm:gap-6 min-w-0">
+          {/* Our Church Home Card */}
+          <section className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 flex flex-col justify-between">
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 border-b border-slate-100 pb-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 overflow-hidden">
+                  {churchProfile.logo_url ? (
+                    <img src={churchProfile.logo_url} alt={churchProfile.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Church size={18} />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-indigo-700 truncate">{mainBrandTitle}</p>
+                  <h2 className="text-base font-black text-slate-900 truncate">Our Church Home</h2>
+                  <p className="text-xs text-slate-500 break-words mt-0.5">
+                    {churchProfile.address}, {churchProfile.city} · {churchProfile.phone}
+                  </p>
+                </div>
+              </div>
+
+              <dl className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+                <div className="px-3.5 py-2.5 flex items-center justify-between gap-2 bg-slate-50/50">
+                  <dt className="text-slate-500 font-semibold shrink-0">Senior Pastor</dt>
+                  <dd className="font-bold text-slate-900 text-right truncate">{churchProfile.senior_pastor || 'Rev. Sarah Johnson'}</dd>
+                </div>
+                <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                  <dt className="text-slate-500 font-semibold shrink-0">Your Status</dt>
+                  <dd className="font-bold text-emerald-700 inline-flex items-center gap-1 shrink-0">
+                    <CheckCircle2 size={13} />
+                    <span>Active Member</span>
+                  </dd>
+                </div>
+                <div className="px-3.5 py-2.5 flex items-center justify-between gap-2 bg-slate-50/50">
+                  <dt className="text-slate-500 font-semibold shrink-0">Department</dt>
+                  <dd className="font-bold text-slate-800 text-right truncate">{departmentLabel}</dd>
+                </div>
+                <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                  <dt className="text-slate-500 font-semibold shrink-0">Portal Role</dt>
+                  <dd className="font-bold text-indigo-700 uppercase text-[11px] shrink-0">{formattedRole}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <Link
+              to="/portal/directory"
+              className="w-full min-h-[40px] px-4 py-2 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-800 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
+            >
+              <span>Browse Member Directory</span>
+              <ChevronRight size={14} />
+            </Link>
+          </section>
+
+          {/* Member Quick Links & Pastoral Care */}
+          <section className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4">
+            <div className="border-b border-slate-100 pb-3">
+              <h2 className="text-base font-black text-slate-900">Fellowship & Next Steps</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Quick access to spiritual records, sermons, and surveys.</p>
+            </div>
+
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden text-xs">
+              <Link
+                to="/portal/profile"
+                className="px-3.5 py-3 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 transition-colors"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <CreditCard size={15} className="text-indigo-600 shrink-0" />
+                  <span className="font-bold text-slate-800 truncate">Digital Member ID & Milestones</span>
+                </div>
+                <ChevronRight size={14} className="text-slate-400 shrink-0" />
+              </Link>
+
+              <Link
+                to="/portal/resources"
+                className="px-3.5 py-3 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 transition-colors"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <BookOpen size={15} className="text-amber-600 shrink-0" />
+                  <span className="font-bold text-slate-800 truncate">Church Resources & Study Guides</span>
+                </div>
+                <ChevronRight size={14} className="text-slate-400 shrink-0" />
+              </Link>
+
+              <Link
+                to="/portal/surveys"
+                className="px-3.5 py-3 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 transition-colors"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <ClipboardList size={15} className="text-emerald-600 shrink-0" />
+                  <span className="font-bold text-slate-800 truncate">Post-Event Feedback Surveys</span>
+                </div>
+                <ChevronRight size={14} className="text-slate-400 shrink-0" />
+              </Link>
+            </div>
+          </section>
+        </aside>
       </div>
     </div>
   );
@@ -9591,6 +10010,47 @@ const StreamingPage = ({ profile }: { profile: Profile | null }) => {
 
 // --- Member Profile & Account Settings Page with Spiritual Milestones ---
 
+const printHtmlDocument = (htmlContent: string) => {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc || !iframe.contentWindow) {
+    document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(htmlContent);
+  doc.close();
+
+  const triggerPrint = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 1500);
+    }
+  };
+
+  if (doc.readyState === 'complete') {
+    setTimeout(triggerPrint, 120);
+  } else {
+    iframe.onload = () => setTimeout(triggerPrint, 120);
+  }
+};
+
 const ProfilePage = ({ profile }: { profile: Profile | null }) => {
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
 
@@ -9608,12 +10068,15 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
   const [marriageDateInput, setMarriageDateInput] = useState(profile?.marriage_date || '2021-10-25');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState(false);
+  const [confirmResetData, setConfirmResetData] = useState(false);
 
   // Milestones State
   const [milestones, setMilestones] = useState({
     baptismDate: profile?.baptism_date || '2022-10-17',
     baptizedBy: profile?.baptized_by || 'Rev. Sarah Johnson',
-    membershipDate: '2022-05-01',
+    membershipDate: profile?.membership_date || '2022-05-01',
     communionConfirmed: true,
     achievements: [
       { id: 'm1', title: 'Water & Holy Spirit Baptism', date: 'October 2022', icon: Sparkles, badgeColor: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
@@ -9626,35 +10089,63 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
   const [editMilestonesModal, setEditMilestonesModal] = useState(false);
   const [certificateModal, setCertificateModal] = useState(false);
   const [idCardModal, setIdCardModal] = useState(false);
+  const [milestonesSaving, setMilestonesSaving] = useState(false);
   const [bDateInput, setBDateInput] = useState(milestones.baptismDate);
   const [mDateInput, setMDateInput] = useState(milestones.membershipDate);
   const [bByInput, setBByInput] = useState(milestones.baptizedBy);
 
+  useEffect(() => {
+    if (!profile) return;
+    setFirstName(profile.first_name || '');
+    setLastName(profile.last_name || '');
+    setPhone(profile.phone || '');
+    setDobInput(profile.date_of_birth || '1996-10-30');
+    setMaritalStatusInput(profile.marital_status || 'Single');
+    setMarriageDateInput(profile.marriage_date || '2021-10-25');
+    setAvatarError(false);
+
+    const nextBaptism = profile.baptism_date || '2022-10-17';
+    const nextBaptizedBy = profile.baptized_by || 'Rev. Sarah Johnson';
+    const nextMembership = profile.membership_date || '2022-05-01';
+    setBDateInput(nextBaptism);
+    setBByInput(nextBaptizedBy);
+    setMDateInput(nextMembership);
+    setMilestones(prev => ({
+      ...prev,
+      baptismDate: nextBaptism,
+      baptizedBy: nextBaptizedBy,
+      membershipDate: nextMembership
+    }));
+  }, [profile]);
+
+  const displayFirstName = firstName || profile?.first_name || 'Faithful';
+  const displayLastName = lastName || profile?.last_name || 'Member';
+  const displayInitials = `${displayFirstName[0] || 'F'}${displayLastName[0] || 'M'}`.toUpperCase();
+  const formattedRole = (profile?.primary_role || 'member').replace(/_/g, ' ');
+  const campusLabel = churchProfile.subtle_title || churchProfile.name || 'Grace Cathedral';
+
   // Dedicated Print Function for Baptism Certificate
   const handlePrintCertificate = () => {
-    const printWin = window.open('', '_blank');
-    if (!printWin) return;
     const cp = churchProfile;
-
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Certificate of Holy Baptism - ${profile?.first_name || 'Member'} ${profile?.last_name || ''}</title>
+          <title>Certificate of Holy Baptism - ${displayFirstName} ${displayLastName}</title>
           <style>
             @page { size: A4 landscape; margin: 15mm; }
-            body { 
-              font-family: Georgia, serif; 
-              margin: 0; padding: 0; 
-              background: #ffffff; color: #1e293b; 
-              -webkit-print-color-adjust: exact !important; 
-              print-color-adjust: exact !important; 
+            body {
+              font-family: Georgia, serif;
+              margin: 0; padding: 0;
+              background: #ffffff; color: #1e293b;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
-            .cert-card { 
-              border: 10px double #b45309; 
-              padding: 40px; 
-              background: #fffbeb; 
-              text-align: center; 
+            .cert-card {
+              border: 10px double #b45309;
+              padding: 40px;
+              background: #fffbeb;
+              text-align: center;
               border-radius: 12px;
               box-sizing: border-box;
               min-height: 85vh;
@@ -9671,7 +10162,6 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
               border: 2px solid #d97706;
               overflow: hidden;
               background: #ffffff;
-              box-shadow: 0 4px 10px rgba(180, 83, 9, 0.2);
               display: flex; align-items: center; justify-content: center;
               font-size: 24px; color: #b45309;
             }
@@ -9685,7 +10175,6 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
               border: 2px solid #d97706;
               overflow: hidden;
               background: #ffffff;
-              box-shadow: 0 4px 10px rgba(180, 83, 9, 0.2);
               display: flex; align-items: center; justify-content: center;
               font-size: 24px; color: #b45309;
             }
@@ -9704,28 +10193,23 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
         </head>
         <body>
           <div class="cert-card">
-            <!-- Top Left & Right Church Logos -->
             <div class="logo-top-left">
-              ${cp.logo_url ? `<img src="${cp.logo_url}" alt="Church Logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />` : '✝️'}
+              ${cp.logo_url ? `<img src="${cp.logo_url}" alt="Church Logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />` : 'FC'}
             </div>
             <div class="logo-top-right">
-              ${cp.logo_url ? `<img src="${cp.logo_url}" alt="Church Logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />` : '✝️'}
+              ${cp.logo_url ? `<img src="${cp.logo_url}" alt="Church Logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />` : 'FC'}
             </div>
 
             <div>
               <div class="header-title">${cp.subtle_title || cp.name}</div>
               <div class="subtitle">Church of Faith & Christian Fellowship</div>
-              
               <h1 class="cert-title">Certificate of Holy Baptism</h1>
-              
               <p class="scripture">
                 "Therefore we are buried with Him by baptism into death: that like as Christ was raised up from the dead by the glory of the Father, even so we also should walk in newness of life."
                 <br><strong>— Romans 6:4</strong>
               </p>
-              
               <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: #64748b; margin-top: 20px;">This certifies that</p>
-              <div class="cert-name">${profile?.first_name || 'Faithful'} ${profile?.last_name || 'Member'}</div>
-              
+              <div class="cert-name">${displayFirstName} ${displayLastName}</div>
               <p class="details">Having publicly professed faith in our Lord and Savior Jesus Christ, was baptized by immersion on</p>
               <div class="date">${new Date(milestones.baptismDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
             </div>
@@ -9741,48 +10225,41 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
               </div>
             </div>
           </div>
-          <script>window.onload = function() { window.print(); }</script>
         </body>
       </html>
     `;
-
-    printWin.document.write(htmlContent);
-    printWin.document.close();
+    printHtmlDocument(htmlContent);
   };
 
   // Dedicated Print Function for Member ID Card
   const handlePrintIdCard = () => {
-    const printWin = window.open('', '_blank');
-    if (!printWin) return;
     const cp = churchProfile;
     const memberIdCode = `FC-MEM-${(profile?.id || '1024').slice(0, 8).toUpperCase()}`;
-
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Member ID Card - ${profile?.first_name || 'Member'} ${profile?.last_name || ''}</title>
+          <title>Member ID Card - ${displayFirstName} ${displayLastName}</title>
           <style>
             @page { size: 85.6mm 54mm; margin: 0; }
-            body { 
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-              margin: 0; padding: 20px; background: #ffffff; color: #0f172a; 
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              margin: 0; padding: 20px; background: #ffffff; color: #0f172a;
               display: flex; flex-direction: column; align-items: center; gap: 20px;
-              -webkit-print-color-adjust: exact !important; 
-              print-color-adjust: exact !important; 
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
-            .id-card { 
-              width: 320px; height: 200px; 
-              border-radius: 16px; 
-              border: 1px solid #cbd5e1; 
-              background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); 
-              color: #ffffff; 
-              padding: 16px; 
-              box-sizing: border-box; 
-              position: relative; 
-              overflow: hidden; 
+            .id-card {
+              width: 320px; height: 200px;
+              border-radius: 16px;
+              border: 1px solid #cbd5e1;
+              background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+              color: #ffffff;
+              padding: 16px;
+              box-sizing: border-box;
+              position: relative;
+              overflow: hidden;
               display: flex; flex-direction: column; justify-content: space-between;
-              box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
             }
             .card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 8px; }
             .church-name { font-size: 13px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; color: #f8fafc; }
@@ -9805,13 +10282,13 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
             </div>
             <div class="card-body">
               <div class="avatar">
-                ${profile?.avatar_url ? `<img src="${profile.avatar_url}" alt="Member Photo" />` : `${(profile?.first_name || 'M')[0]}${(profile?.last_name || 'C')[0]}`}
+                ${profile?.avatar_url ? `<img src="${profile.avatar_url}" alt="Member Photo" />` : displayInitials}
               </div>
               <div class="member-info">
-                <div class="role-badge">${profile?.primary_role?.replace('_', ' ') || 'COVENANT MEMBER'}</div>
-                <h4>${profile?.first_name || 'Faithful'} ${profile?.last_name || 'Member'}</h4>
+                <div class="role-badge">${formattedRole || 'COVENANT MEMBER'}</div>
+                <h4>${displayFirstName} ${displayLastName}</h4>
                 <p>${profile?.email || 'member@faithconnect.church'}</p>
-                <p>Phone: ${profile?.phone || 'Verified'}</p>
+                <p>Phone: ${phone || profile?.phone || 'Verified'}</p>
               </div>
             </div>
             <div class="card-footer">
@@ -9820,26 +10297,28 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
                 <div class="id-code">${memberIdCode}</div>
               </div>
               <div style="text-align: right;">
-                <div>ISSUED DATE</div>
+                <div>ISSUED YEAR</div>
                 <div style="color: #ffffff; font-weight: bold;">${new Date().getFullYear()}</div>
               </div>
             </div>
           </div>
-
-          <script>window.onload = function() { window.print(); }</script>
         </body>
       </html>
     `;
-
-    printWin.document.write(htmlContent);
-    printWin.document.close();
+    printHtmlDocument(htmlContent);
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
+    if (!firstName.trim() || !lastName.trim()) {
+      setSaveError('First name and last name are required.');
+      return;
+    }
+
     setSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
 
     const updatedProfileData = {
       first_name: firstName.trim(),
@@ -9849,7 +10328,8 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
       marital_status: maritalStatusInput,
       marriage_date: maritalStatusInput === 'Married' ? marriageDateInput : undefined,
       baptism_date: bDateInput,
-      baptized_by: bByInput
+      baptized_by: bByInput,
+      membership_date: mDateInput
     };
 
     try {
@@ -9860,396 +10340,534 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
 
       if (error) {
         console.error('Unable to update member profile:', error);
+        setSaveError('Could not save profile changes right now. Please try again.');
         setSaving(false);
         return;
       }
 
-      // Keep the signed-in profile, header, and other profile consumers in sync.
       window.dispatchEvent(new CustomEvent('profile-updated', {
         detail: { id: profile.id, ...updatedProfileData }
       }));
       setSaving(false);
       setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
     } catch (error) {
       console.error('Unable to update member profile:', error);
+      setSaveError('An unexpected error occurred while updating your profile.');
       setSaving(false);
-      return;
     }
-    setTimeout(() => setSaveSuccess(false), 3000);
   };
 
-  const handleSaveMilestones = (e: React.FormEvent) => {
+  const handleSaveMilestones = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMilestones(prev => ({
-      ...prev,
+    setMilestonesSaving(true);
+    setSaveError(null);
+
+    const nextMilestones = {
       baptismDate: bDateInput,
       membershipDate: mDateInput,
-      baptizedBy: bByInput
+      baptizedBy: bByInput.trim() || 'Rev. Sarah Johnson'
+    };
+
+    if (profile) {
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            baptism_date: nextMilestones.baptismDate,
+            baptized_by: nextMilestones.baptizedBy,
+            membership_date: nextMilestones.membershipDate
+          })
+          .eq('id', profile.id);
+
+        if (error) {
+          console.error('Unable to update milestones:', error);
+          setSaveError('Could not save spiritual milestones.');
+          setMilestonesSaving(false);
+          return;
+        }
+
+        window.dispatchEvent(new CustomEvent('profile-updated', {
+          detail: {
+            id: profile.id,
+            baptism_date: nextMilestones.baptismDate,
+            baptized_by: nextMilestones.baptizedBy,
+            membership_date: nextMilestones.membershipDate
+          }
+        }));
+      } catch (err) {
+        console.error('Unable to update milestones:', err);
+        setSaveError('An unexpected error occurred while saving milestones.');
+        setMilestonesSaving(false);
+        return;
+      }
+    }
+
+    setMilestones(prev => ({
+      ...prev,
+      ...nextMilestones
     }));
+    setMilestonesSaving(false);
     setEditMilestonesModal(false);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3500);
   };
 
-  // Calculate membership years
-  const joinYear = new Date(milestones.membershipDate).getFullYear();
+  // Calculate membership years safely
+  const parsedJoinYear = new Date(milestones.membershipDate).getFullYear();
+  const joinYear = Number.isNaN(parsedJoinYear) ? new Date().getFullYear() : parsedJoinYear;
   const currentYear = new Date().getFullYear();
   const yearsInFellowship = Math.max(1, currentYear - joinYear);
-
-  // Growth score calculation
   const overallSpiritualGrowth = 85;
+  const formattedBaptismDate = Number.isNaN(Date.parse(milestones.baptismDate))
+    ? milestones.baptismDate
+    : new Date(milestones.baptismDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const formattedMembershipDate = Number.isNaN(Date.parse(milestones.membershipDate))
+    ? milestones.membershipDate
+    : new Date(milestones.membershipDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const discipleshipPillars = [
+    { label: 'Water Baptism', status: 'Completed', pct: 100, barClass: 'bg-emerald-400', textClass: 'text-emerald-300', icon: CheckCircle2 },
+    { label: 'Covenant Membership', status: 'Confirmed', pct: 100, barClass: 'bg-emerald-400', textClass: 'text-emerald-300', icon: ShieldCheck },
+    { label: 'Discipleship & Communion', status: 'Active Learner', pct: 75, barClass: 'bg-amber-400', textClass: 'text-amber-300', icon: BookOpen },
+    { label: 'Ministry Servant Leadership', status: 'In Training', pct: 60, barClass: 'bg-indigo-400', textClass: 'text-indigo-200', icon: Sparkles }
+  ];
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-12">
-      <div>
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight">My Profile & Spiritual Journey</h2>
-        <p className="text-slate-500 text-sm">Personal details, contact info, birth date, marital status, and Grace Cathedral spiritual milestones.</p>
-      </div>
-
-      {/* Main Profile Details Card */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-6">
-        <div className="flex items-center gap-5 pb-6 border-b border-slate-100">
-          <div className="w-20 h-20 rounded-2xl bg-indigo-100 border-2 border-indigo-200 overflow-hidden flex-shrink-0">
-            <img 
-              src={profile?.avatar_url || `https://picsum.photos/seed/${profile?.id}/200`} 
-              alt="Avatar" 
-              className="w-full h-full object-cover" 
-            />
-          </div>
-          <div>
-            <h3 className="text-2xl font-bold text-slate-900">
-              {profile?.first_name} {profile?.last_name}
-            </h3>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">{profile?.email}</p>
-            <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-black uppercase rounded-lg border border-indigo-100">
-                {profile?.primary_role?.replace('_', ' ')}
-              </span>
-              <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-100">
-                {yearsInFellowship} {yearsInFellowship === 1 ? 'Year' : 'Years'} Covenant Member
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <form onSubmit={handleUpdate} className="space-y-4">
-          {saveSuccess && (
-            <div className="p-3 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200 flex items-center gap-2">
-              <CheckCircle2 size={16} /> Profile & milestone details updated successfully!
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase">First Name</label>
-              <input 
-                type="text" 
-                value={firstName} 
-                onChange={(e) => setFirstName(e.target.value)} 
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase">Last Name</label>
-              <input 
-                type="text" 
-                value={lastName} 
-                onChange={(e) => setLastName(e.target.value)} 
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Phone Number</label>
-            <input 
-              type="text" 
-              value={phone} 
-              onChange={(e) => setPhone(e.target.value)} 
-              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-
-          {/* Personal Birth Date & Marital Status Fields */}
-          <div className="p-4 bg-purple-50/70 border border-purple-200 rounded-2xl space-y-3">
-            <span className="text-xs font-extrabold text-purple-900 block flex items-center gap-1.5">
-              🎂 Personal Birth Date & Marital Status
-            </span>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-bold text-purple-800 uppercase block mb-1">
-                  Date of Birth
-                </label>
-                <input 
-                  type="date" 
-                  value={dobInput} 
-                  onChange={(e) => setDobInput(e.target.value)} 
-                  className="w-full p-2.5 bg-white border border-purple-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-purple-500" 
+    <div className="space-y-5 sm:space-y-6 pb-20 md:pb-12">
+      {/* Unified Member Identity Header & Credential Actions */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 min-w-0">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-indigo-50 border border-indigo-200 overflow-hidden flex items-center justify-center text-indigo-700 font-black text-xl sm:text-2xl shrink-0">
+              {profile?.avatar_url && !avatarError ? (
+                <img
+                  src={profile.avatar_url}
+                  alt={`${displayFirstName} ${displayLastName}`}
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarError(true)}
+                  className="w-full h-full object-cover"
                 />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-purple-800 uppercase block mb-1">
-                  Marital Status
-                </label>
-                <select 
-                  value={maritalStatusInput} 
-                  onChange={(e) => setMaritalStatusInput(e.target.value as any)} 
-                  className="w-full p-2.5 bg-white border border-purple-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer"
-                >
-                  <option value="Single">Single</option>
-                  <option value="Married">Married</option>
-                  <option value="Widowed">Widowed</option>
-                  <option value="Divorced">Divorced</option>
-                </select>
-              </div>
+              ) : (
+                <span>{displayInitials}</span>
+              )}
             </div>
 
-            {maritalStatusInput === 'Married' && (
-              <div>
-                <label className="text-xs font-bold text-purple-800 uppercase block mb-1">
-                  Wedding / Marriage Anniversary Date
-                </label>
-                <input 
-                  type="date" 
-                  value={marriageDateInput} 
-                  onChange={(e) => setMarriageDateInput(e.target.value)} 
-                  className="w-full p-2.5 bg-white border border-purple-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-purple-500" 
-                />
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 font-semibold">
+                <span className="text-indigo-700 font-bold">Member Account</span>
+                <span aria-hidden="true">·</span>
+                <span className="capitalize">{formattedRole}</span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">{yearsInFellowship} {yearsInFellowship === 1 ? 'Year' : 'Years'} Covenant Member</span>
               </div>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Assigned System Role</label>
-            <input 
-              type="text" 
-              disabled 
-              value={profile?.primary_role?.toUpperCase()} 
-              className="w-full p-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 cursor-not-allowed"
-            />
-            <p className="text-[11px] text-slate-400">Roles can be adjusted by your Lead Pastor or Church Admin.</p>
-          </div>
-
-          <div className="flex justify-end pt-4">
-            <button 
-              type="submit" 
-              disabled={saving}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 cursor-pointer"
-            >
-              {saving ? 'Saving...' : 'Save Profile Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* --- Spiritual Growth Progression & Donut Chart Section --- */}
-      <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 rounded-3xl p-8 text-white shadow-xl space-y-6 relative overflow-hidden">
-        <div className="absolute -right-10 -bottom-10 w-60 h-60 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        
-        <div className="flex flex-col md:flex-row items-center gap-8 relative z-10">
-          {/* SVG Donut Chart */}
-          <div className="relative w-44 h-44 flex-shrink-0 flex items-center justify-center">
-            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-              {/* Background circle */}
-              <path
-                className="text-indigo-950/60"
-                strokeWidth="3.8"
-                stroke="currentColor"
-                fill="none"
-                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-              />
-              {/* Foreground circle gradient progress (85%) */}
-              <path
-                className="text-amber-400 transition-all duration-1000 ease-out"
-                strokeDasharray={`${overallSpiritualGrowth}, 100`}
-                strokeWidth="3.8"
-                strokeLinecap="round"
-                stroke="currentColor"
-                fill="none"
-                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-              />
-            </svg>
-            <div className="absolute flex flex-col items-center text-center">
-              <span className="text-3xl font-black text-amber-300 tracking-tight">{overallSpiritualGrowth}%</span>
-              <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-200">Spiritual Growth</span>
-            </div>
-          </div>
-
-          <div className="flex-1 space-y-4 w-full">
-            <div>
-              <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                Discipleship Journey
-              </span>
-              <h3 className="text-2xl font-black mt-2">Spiritual Progression Matrix</h3>
-              <p className="text-xs text-indigo-200">
-                Your Christian growth milestones mapped across core discipleship pillars at Grace Cathedral.
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">
+                My Profile & Spiritual Journey
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 max-w-2xl leading-relaxed">
+                Manage personal contact records, household dates, baptism credentials, and discipleship milestones at {campusLabel}.
               </p>
             </div>
-
-            {/* Progress Bars */}
-            <div className="space-y-3 pt-2">
-              <div>
-                <div className="flex justify-between text-xs font-bold mb-1">
-                  <span className="text-indigo-100 flex items-center gap-1.5"><CheckCircle2 size={13} className="text-emerald-400" /> Water Baptism</span>
-                  <span className="text-emerald-400">100% (Completed)</span>
-                </div>
-                <div className="w-full bg-indigo-950/80 h-2 rounded-full overflow-hidden">
-                  <div className="bg-emerald-400 h-full rounded-full" style={{ width: '100%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-xs font-bold mb-1">
-                  <span className="text-indigo-100 flex items-center gap-1.5"><ShieldCheck size={13} className="text-emerald-400" /> Covenant Membership</span>
-                  <span className="text-emerald-400">100% (Confirmed)</span>
-                </div>
-                <div className="w-full bg-indigo-950/80 h-2 rounded-full overflow-hidden">
-                  <div className="bg-emerald-400 h-full rounded-full" style={{ width: '100%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-xs font-bold mb-1">
-                  <span className="text-indigo-100 flex items-center gap-1.5"><BookOpen size={13} className="text-amber-400" /> Discipleship & Communion</span>
-                  <span className="text-amber-300">75% (Active Learner)</span>
-                </div>
-                <div className="w-full bg-indigo-950/80 h-2 rounded-full overflow-hidden">
-                  <div className="bg-amber-400 h-full rounded-full" style={{ width: '75%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-xs font-bold mb-1">
-                  <span className="text-indigo-100 flex items-center gap-1.5"><Sparkles size={13} className="text-indigo-300" /> Ministry Servant Leadership</span>
-                  <span className="text-indigo-300">60% (In Training)</span>
-                </div>
-                <div className="w-full bg-indigo-950/80 h-2 rounded-full overflow-hidden">
-                  <div className="bg-indigo-400 h-full rounded-full" style={{ width: '60%' }}></div>
-                </div>
-              </div>
-            </div>
           </div>
-        </div>
-      </div>
 
-      {/* --- Spiritual Milestones & Recognitions Section --- */}
-      <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Trophy size={20} className="text-amber-500" />
-              <h3 className="text-xl font-extrabold text-slate-900">Spiritual Milestones & Certificates</h3>
-            </div>
-            <p className="text-xs text-slate-500">Track water baptism dates, membership anniversaries, and official certificates.</p>
-          </div>
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setIdCardModal(true)}
-              className="px-3.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold rounded-xl transition-colors cursor-pointer border border-indigo-200/60 flex items-center gap-1.5"
+              className="min-h-[40px] px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/70 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <CreditCard size={14} />
-              Member ID Card
+              <CreditCard size={15} className="shrink-0" />
+              <span>Member ID Card</span>
             </button>
+
             <button
               type="button"
               onClick={() => setCertificateModal(true)}
-              className="px-3.5 py-2 bg-amber-50 text-amber-800 hover:bg-amber-100 text-xs font-bold rounded-xl transition-colors cursor-pointer border border-amber-200/60 flex items-center gap-1.5"
+              className="min-h-[40px] px-4 py-2 bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/70 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <Printer size={14} />
-              Baptism Certificate
+              <Printer size={15} className="shrink-0" />
+              <span>Baptism Certificate</span>
             </button>
+
             <button
               type="button"
               onClick={() => setEditMilestonesModal(true)}
-              className="px-3.5 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              className="min-h-[40px] px-4 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              Update
+              <Edit size={14} className="shrink-0" />
+              <span>Edit Milestones</span>
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Milestone Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 space-y-3 relative group">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Water Baptism</span>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800">
-                Completed
-              </span>
-            </div>
-            <p className="text-lg font-black text-slate-900">{new Date(milestones.baptismDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
-            <p className="text-xs text-slate-500">Officiated by <strong className="text-slate-700">{milestones.baptizedBy}</strong></p>
-            <button
-              type="button"
-              onClick={() => setCertificateModal(true)}
-              className="w-full mt-2 py-2 bg-white border border-slate-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
-            >
-              <FileText size={14} /> View & Download Certificate
-            </button>
+      {saveSuccess && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold rounded-xl flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            <span>Profile and milestone details updated successfully.</span>
           </div>
-
-          <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Church Membership</span>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-100 text-indigo-800">
-                {yearsInFellowship} Years Active
-              </span>
-            </div>
-            <p className="text-lg font-black text-slate-900">{new Date(milestones.membershipDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
-            <p className="text-xs text-slate-500">{churchProfile.subtle_title || churchProfile.name} Covenant Member</p>
-            <button
-              type="button"
-              onClick={() => setIdCardModal(true)}
-              className="w-full mt-2 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
-            >
-              <CreditCard size={14} /> View & Print Digital Member ID Card
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setSaveSuccess(false)}
+            className="p-1 text-emerald-700 hover:text-emerald-900 cursor-pointer shrink-0"
+            aria-label="Dismiss confirmation"
+          >
+            <X size={15} />
+          </button>
         </div>
+      )}
 
-        {/* Badges / Achievements Recognition Section */}
-        <div className="pt-4 border-t border-slate-100 space-y-3">
-          <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
-            Special Recognitions & Service Badges
-          </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {milestones.achievements.map(ach => (
-              <div key={ach.id} className="p-3.5 bg-white rounded-2xl border border-slate-200 flex items-center gap-3 shadow-2xs">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${ach.badgeColor}`}>
-                  <ach.icon size={20} />
-                </div>
-                <div>
-                  <h5 className="font-bold text-slate-900 text-xs">{ach.title}</h5>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Awarded {ach.date}</p>
+      {saveError && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold rounded-xl flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle size={16} className="text-rose-600 shrink-0" />
+            <span>{saveError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveError(null)}
+            className="p-1 text-rose-700 hover:text-rose-900 cursor-pointer shrink-0"
+            aria-label="Dismiss error"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Multi-Breakpoint Workspace: 1-Col Mobile -> Tablet 2-Col Side Cards -> Desktop 12-Col Split */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start">
+        {/* LEFT PRIMARY COLUMN (7 cols on xl+): Personal Details Form + Service Recognitions */}
+        <div className="xl:col-span-7 space-y-5 sm:space-y-6 min-w-0">
+          <form
+            onSubmit={handleUpdate}
+            className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-6 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <User className="text-indigo-600 shrink-0" size={19} />
+                <div className="min-w-0">
+                  <h3 className="text-base font-black text-slate-900">Personal & Contact Information</h3>
+                  <p className="text-xs text-slate-500">Keep your directory name, phone, birthday, and marital details current.</p>
                 </div>
               </div>
-            ))}
+              <span className="text-[11px] font-mono text-slate-500 truncate max-w-full">
+                {profile?.email || 'member@faithconnect.church'}
+              </span>
+            </div>
+
+            {/* Identity & Contact Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">First Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Last Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Phone Number</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+232 76 000 000"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Portal Email</label>
+                <input
+                  type="email"
+                  disabled
+                  value={profile?.email || ''}
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono text-slate-500 cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            {/* Household & Life Dates */}
+            <div className="pt-5 border-t border-slate-100 space-y-4">
+              <div>
+                <h4 className="text-sm font-black text-slate-900">Birth Date & Marital Details</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">Used for pastoral care, birthday greetings, and family anniversary prayers.</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1.5">Date of Birth</label>
+                  <input
+                    type="date"
+                    value={dobInput}
+                    onChange={(e) => setDobInput(e.target.value)}
+                    className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1.5">Marital Status</label>
+                  <select
+                    value={maritalStatusInput}
+                    onChange={(e) => setMaritalStatusInput(e.target.value as 'Single' | 'Married' | 'Widowed' | 'Divorced')}
+                    className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Widowed">Widowed</option>
+                    <option value="Divorced">Divorced</option>
+                  </select>
+                </div>
+
+                {maritalStatusInput === 'Married' && (
+                  <div className="sm:col-span-2">
+                    <label className="font-bold text-slate-700 block mb-1.5">Wedding / Marriage Anniversary Date</label>
+                    <input
+                      type="date"
+                      value={marriageDateInput}
+                      onChange={(e) => setMarriageDateInput(e.target.value)}
+                      className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Portal Role & Ministry Assignment */}
+            <div className="pt-5 border-t border-slate-100 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1.5">Assigned System Role</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={formattedRole.toUpperCase()}
+                    className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1.5">Ministry Department</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={profile?.assigned_department || profile?.department_name || 'General Congregation'}
+                    className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                System permissions and department assignments are managed by your Lead Pastor or Church Admin.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100">
+              <span className="text-[11px] text-slate-500">
+                Changes sync across your directory profile and digital credentials.
+              </span>
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full sm:w-auto min-h-[42px] px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-60 transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
+              >
+                <Check size={15} />
+                <span>{saving ? 'Saving Changes...' : 'Save Profile Changes'}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Service Recognitions & Covenant Badges */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Special Recognitions & Service Badges</h3>
+                <p className="text-xs text-slate-500">Ministry certifications and covenant milestones awarded during your fellowship.</p>
+              </div>
+              <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
+                {milestones.achievements.length} earned
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {milestones.achievements.map(ach => (
+                <div key={ach.id} className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200 flex items-center gap-3 min-w-0">
+                  <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${ach.badgeColor}`}>
+                    <ach.icon size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="font-bold text-slate-900 text-xs truncate">{ach.title}</h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">Awarded {ach.date}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT SIDE COLUMN (5 cols on xl+): 2-Col Side-by-Side on Tablet/Laptop (md–lg), Stacked Sidebar on xl+ */}
+        <div className="xl:col-span-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-5 sm:gap-6 min-w-0">
+          {/* Spiritual Progression Matrix */}
+          <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-5 sm:p-6 text-white space-y-5 relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row md:flex-col 2xl:flex-row items-center sm:items-start md:items-center 2xl:items-start gap-5">
+              {/* SVG Donut Chart */}
+              <div className="relative w-36 h-36 sm:w-40 sm:h-40 shrink-0 flex items-center justify-center">
+                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                  <path
+                    className="text-indigo-950/80"
+                    strokeWidth="3.8"
+                    stroke="currentColor"
+                    fill="none"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path
+                    className="text-amber-400 transition-all duration-700 ease-out"
+                    strokeDasharray={`${overallSpiritualGrowth}, 100`}
+                    strokeWidth="3.8"
+                    strokeLinecap="round"
+                    stroke="currentColor"
+                    fill="none"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                </svg>
+                <div className="absolute flex flex-col items-center text-center">
+                  <span className="text-3xl font-black text-amber-300 tracking-tight tabular-nums">{overallSpiritualGrowth}%</span>
+                  <span className="text-[10px] font-bold tracking-wider text-indigo-200 uppercase">Growth</span>
+                </div>
+              </div>
+
+              <div className="min-w-0 space-y-1.5 text-center sm:text-left md:text-center 2xl:text-left">
+                <p className="text-[11px] font-bold text-amber-300 tracking-wide">Discipleship Journey</p>
+                <h3 className="text-lg sm:text-xl font-black text-white">Spiritual Progression Matrix</h3>
+                <p className="text-xs text-indigo-200 leading-relaxed">
+                  Your Christian growth milestones mapped across core discipleship pillars at {campusLabel}.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-1 border-t border-white/10">
+              {discipleshipPillars.map((pillar) => {
+                const IconComp = pillar.icon;
+                return (
+                  <div key={pillar.label} className="pt-2 first:pt-3">
+                    <div className="flex items-center justify-between gap-2 text-xs font-bold mb-1.5">
+                      <span className="text-indigo-100 flex items-center gap-1.5 min-w-0 truncate">
+                        <IconComp size={13} className="shrink-0 opacity-90" />
+                        <span className="truncate">{pillar.label}</span>
+                      </span>
+                      <span className={`${pillar.textClass} tabular-nums whitespace-nowrap shrink-0`}>
+                        {pillar.pct}% ({pillar.status})
+                      </span>
+                    </div>
+                    <div className="w-full bg-indigo-950/90 h-2 rounded-full overflow-hidden">
+                      <div className={`${pillar.barClass} h-full rounded-full`} style={{ width: `${pillar.pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Spiritual Milestones & Credentials */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Trophy size={19} className="text-amber-500 shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="text-base font-black text-slate-900">Milestones & Credentials</h3>
+                  <p className="text-xs text-slate-500">Baptism records, membership date, and printable ID.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditMilestonesModal(true)}
+                className="min-h-[36px] px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Update
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+              <div className="p-4 bg-white space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-500">Water Baptism</span>
+                  <span className="text-xs font-bold text-emerald-700">Completed</span>
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-900 tabular-nums">{formattedBaptismDate}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Officiated by <strong className="text-slate-700">{milestones.baptizedBy}</strong>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCertificateModal(true)}
+                  className="w-full min-h-[40px] px-3.5 py-2 bg-amber-50 border border-amber-200/80 text-amber-800 hover:bg-amber-100 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                >
+                  <FileText size={14} className="shrink-0" />
+                  <span>View & Download Certificate</span>
+                </button>
+              </div>
+
+              <div className="p-4 bg-white space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-500">Church Membership</span>
+                  <span className="text-xs font-bold text-indigo-700 tabular-nums">{yearsInFellowship} {yearsInFellowship === 1 ? 'Year' : 'Years'} Active</span>
+                </div>
+                <div>
+                  <p className="text-base font-black text-slate-900 tabular-nums">{formattedMembershipDate}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{campusLabel} Covenant Member</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIdCardModal(true)}
+                  className="w-full min-h-[40px] px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap"
+                >
+                  <CreditCard size={14} className="shrink-0" />
+                  <span>View & Print Digital Member ID</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Formal Baptism Certificate Modal */}
       {certificateModal && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-start justify-center p-3 sm:p-6 pt-20 sm:pt-24 pb-12 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 sm:p-10 max-w-2xl w-full shadow-2xl border border-amber-200 my-auto space-y-6">
-            <div className="flex justify-between items-center border-b border-slate-200 pb-4">
-              <div className="flex items-center gap-2">
-                <Award size={22} className="text-amber-600" />
-                <h3 className="font-black text-slate-900 text-lg">Official Church Baptism Certificate</h3>
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-start justify-center p-3 sm:p-6 pt-16 sm:pt-20 pb-12 overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-8 max-w-2xl w-full shadow-2xl border border-amber-200 my-auto space-y-5 sm:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <Award size={22} className="text-amber-600 shrink-0" />
+                <h3 className="font-black text-slate-900 text-base sm:text-lg truncate">Official Church Baptism Certificate</h3>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={handlePrintCertificate}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[40px] px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
                   <Printer size={14} /> Print / Save as PDF
                 </button>
-                <button 
+                <button
                   type="button"
-                  onClick={() => setCertificateModal(false)} 
-                  className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  onClick={() => setCertificateModal(false)}
+                  className="min-h-[40px] min-w-[40px] p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer inline-flex items-center justify-center"
+                  aria-label="Close certificate preview"
                 >
                   <X size={20} />
                 </button>
@@ -10257,55 +10875,55 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             {/* Certificate Preview Modal Area */}
-            <div id="printable-certificate" className="border-8 border-double border-amber-600/70 bg-gradient-to-b from-amber-50/40 via-white to-amber-50/30 p-8 sm:p-12 rounded-2xl text-center space-y-6 relative font-serif shadow-inner">
-              <div className="absolute top-4 left-4 w-12 h-12 border-t-2 border-l-2 border-amber-600/60 pointer-events-none"></div>
-              <div className="absolute top-4 right-4 w-12 h-12 border-t-2 border-r-2 border-amber-600/60 pointer-events-none"></div>
-              <div className="absolute bottom-4 left-4 w-12 h-12 border-b-2 border-l-2 border-amber-600/60 pointer-events-none"></div>
-              <div className="absolute bottom-4 right-4 w-12 h-12 border-b-2 border-r-2 border-amber-600/60 pointer-events-none"></div>
+            <div id="printable-certificate" className="border-4 sm:border-8 border-double border-amber-600/70 bg-gradient-to-b from-amber-50/40 via-white to-amber-50/30 p-5 sm:p-10 rounded-2xl text-center space-y-5 relative font-serif shadow-inner">
+              <div className="hidden sm:block absolute top-4 left-4 w-10 h-10 border-t-2 border-l-2 border-amber-600/60 pointer-events-none" />
+              <div className="hidden sm:block absolute top-4 right-4 w-10 h-10 border-t-2 border-r-2 border-amber-600/60 pointer-events-none" />
+              <div className="hidden sm:block absolute bottom-4 left-4 w-10 h-10 border-b-2 border-l-2 border-amber-600/60 pointer-events-none" />
+              <div className="hidden sm:block absolute bottom-4 right-4 w-10 h-10 border-b-2 border-r-2 border-amber-600/60 pointer-events-none" />
 
               {/* Church Seal / Branding */}
               <div className="flex flex-col items-center">
-                <div className="w-16 h-16 bg-amber-100 rounded-full border-2 border-amber-500/80 flex items-center justify-center text-amber-800 shadow-md mb-2">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 bg-amber-100 rounded-full border-2 border-amber-500/80 flex items-center justify-center text-amber-800 shadow-md mb-2 overflow-hidden">
                   {churchProfile.logo_url ? (
                     <img src={churchProfile.logo_url} alt="Logo" className="w-full h-full object-cover rounded-full" />
                   ) : (
-                    <Church size={32} />
+                    <Church size={28} />
                   )}
                 </div>
-                <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-wider uppercase font-sans">
-                  {churchProfile.subtle_title || churchProfile.name}
+                <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-wider uppercase font-sans">
+                  {campusLabel}
                 </h2>
-                <p className="text-xs uppercase font-bold text-amber-800 tracking-widest font-sans mt-0.5">
+                <p className="text-[11px] sm:text-xs uppercase font-bold text-amber-800 tracking-widest font-sans mt-0.5">
                   Church of Faith & Christian Fellowship
                 </p>
               </div>
 
-              <div className="py-2">
-                <h1 className="text-2xl sm:text-4xl font-extrabold text-amber-900 font-serif tracking-tight border-b-2 border-amber-300 inline-block pb-1 px-6">
+              <div className="py-1">
+                <h1 className="text-xl sm:text-3xl font-extrabold text-amber-900 font-serif tracking-tight border-b-2 border-amber-300 inline-block pb-1 px-4 sm:px-6">
                   Certificate of Holy Baptism
                 </h1>
               </div>
 
-              <p className="text-sm italic text-slate-600 max-w-md mx-auto leading-relaxed">
+              <p className="text-xs sm:text-sm italic text-slate-600 max-w-md mx-auto leading-relaxed">
                 "Therefore we are buried with Him by baptism into death: that like as Christ was raised up from the dead by the glory of the Father, even so we also should walk in newness of life."
                 <span className="block font-bold text-amber-800 not-italic text-xs mt-1">— Romans 6:4</span>
               </p>
 
-              <div className="py-4 space-y-3">
+              <div className="py-2 sm:py-3 space-y-2.5">
                 <p className="text-xs font-sans uppercase tracking-widest text-slate-500">This certifies that</p>
-                <p className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-serif border-b border-amber-400/80 inline-block px-8 py-1">
-                  {profile?.first_name} {profile?.last_name}
+                <p className="text-2xl sm:text-4xl font-extrabold text-slate-900 font-serif border-b border-amber-400/80 inline-block px-4 sm:px-8 py-1 break-words max-w-full">
+                  {displayFirstName} {displayLastName}
                 </p>
-                <p className="text-xs text-slate-600 max-w-md mx-auto pt-2">
+                <p className="text-xs text-slate-600 max-w-md mx-auto pt-1">
                   Having publicly professed faith in our Lord and Savior Jesus Christ, was baptized by immersion on
                 </p>
-                <p className="text-lg font-bold text-amber-900 font-sans">
-                  {new Date(milestones.baptismDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                <p className="text-base sm:text-lg font-bold text-amber-900 font-sans tabular-nums">
+                  {formattedBaptismDate}
                 </p>
               </div>
 
               {/* Signatures */}
-              <div className="pt-8 border-t border-amber-200/80 grid grid-cols-2 gap-8 text-center font-sans">
+              <div className="pt-6 border-t border-amber-200/80 grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8 text-center font-sans">
                 <div>
                   <div className="border-b border-slate-400 pb-1 font-serif italic text-slate-800 text-sm">
                     {milestones.baptizedBy || 'Officiating Minister'}
@@ -10316,7 +10934,7 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
                   <div className="border-b border-slate-400 pb-1 font-serif italic text-slate-800 text-sm">
                     {churchProfile.senior_pastor || 'Senior Pastor'}
                   </div>
-                  <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mt-1">Senior Pastor, {churchProfile.subtle_title || churchProfile.name}</p>
+                  <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mt-1">Senior Pastor, {campusLabel}</p>
                 </div>
               </div>
             </div>
@@ -10326,130 +10944,132 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
 
       {/* Official Member ID Card Modal */}
       {idCardModal && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-indigo-200 space-y-6 my-auto">
-            <div className="flex justify-between items-center border-b border-slate-200 pb-4">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={22} className="text-indigo-600" />
-                <h3 className="font-black text-slate-900 text-lg">Official Church Member ID Card</h3>
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-7 max-w-lg w-full shadow-2xl border border-indigo-200 space-y-5 my-auto">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <ShieldCheck size={20} className="text-indigo-600 shrink-0" />
+                <h3 className="font-black text-slate-900 text-base sm:text-lg truncate">Official Church Member ID Card</h3>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={handlePrintIdCard}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[38px] px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
-                  <Printer size={14} /> Print ID Card
+                  <Printer size={14} /> Print ID
                 </button>
-                <button 
+                <button
                   type="button"
-                  onClick={() => setIdCardModal(false)} 
-                  className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  onClick={() => setIdCardModal(false)}
+                  className="min-h-[38px] min-w-[38px] p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer inline-flex items-center justify-center"
+                  aria-label="Close ID card preview"
                 >
                   <X size={20} />
                 </button>
               </div>
             </div>
 
-            {/* ID CARD PREVIEW (High Fidelity Digital Badge) */}
+            {/* ID CARD PREVIEW */}
             <div className="space-y-4">
-              {/* FRONT OF ID CARD */}
-              <div className="w-full bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 rounded-2xl p-6 text-white shadow-xl border border-indigo-500/30 relative overflow-hidden space-y-4">
-                {/* Decorative background watermarks */}
-                <div className="absolute -top-12 -right-12 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none"></div>
-                <div className="absolute -bottom-10 -left-10 w-36 h-36 bg-amber-500/10 rounded-full blur-xl pointer-events-none"></div>
-
+              <div className="w-full bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 rounded-2xl p-4 sm:p-6 text-white shadow-xl border border-indigo-500/30 relative overflow-hidden space-y-4">
                 {/* Card Header */}
-                <div className="flex justify-between items-start border-b border-indigo-800/80 pb-3">
-                  <div className="flex items-center gap-2.5">
+                <div className="flex justify-between items-start gap-3 border-b border-indigo-800/80 pb-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 font-bold overflow-hidden shrink-0">
                       {churchProfile.logo_url ? (
                         <img src={churchProfile.logo_url} alt="Church Logo" className="w-full h-full object-cover" />
                       ) : (
-                        <Church size={20} />
+                        <Church size={18} />
                       )}
                     </div>
-                    <div>
-                      <h4 className="font-black text-sm tracking-wide text-white uppercase">{churchProfile.subtle_title || churchProfile.name}</h4>
-                      <p className="text-[10px] text-indigo-300 font-semibold uppercase tracking-wider">Church Member Credential</p>
+                    <div className="min-w-0">
+                      <h4 className="font-black text-sm tracking-wide text-white uppercase truncate">{campusLabel}</h4>
+                      <p className="text-[10px] text-indigo-300 font-semibold uppercase tracking-wider truncate">Church Member Credential</p>
                     </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+                  <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 shrink-0 whitespace-nowrap">
                     Active Member
                   </span>
                 </div>
 
                 {/* Card Main Body */}
-                <div className="flex items-center gap-4 py-2">
-                  <div className="w-20 h-20 rounded-2xl bg-indigo-900/60 border-2 border-indigo-400/50 overflow-hidden shadow-inner flex items-center justify-center text-indigo-200 font-black text-2xl shrink-0">
-                    {profile?.avatar_url ? (
-                      <img src={profile.avatar_url} alt={`${profile?.first_name} ${profile?.last_name}`} className="w-full h-full object-cover" />
+                <div className="flex items-center gap-3.5 sm:gap-4 py-1">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-indigo-900/60 border-2 border-indigo-400/50 overflow-hidden flex items-center justify-center text-indigo-200 font-black text-xl sm:text-2xl shrink-0">
+                    {profile?.avatar_url && !avatarError ? (
+                      <img
+                        src={profile.avatar_url}
+                        alt={`${displayFirstName} ${displayLastName}`}
+                        referrerPolicy="no-referrer"
+                        onError={() => setAvatarError(true)}
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
-                      <span>{(profile?.first_name || 'M')[0]}{(profile?.last_name || 'C')[0]}</span>
+                      <span>{displayInitials}</span>
                     )}
                   </div>
-                  <div className="space-y-1 overflow-hidden">
-                    <span className="inline-block px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                      {profile?.primary_role?.replace('_', ' ') || 'COVENANT MEMBER'}
-                    </span>
-                    <h3 className="font-extrabold text-lg text-white truncate">{profile?.first_name || 'Faithful'} {profile?.last_name || 'Member'}</h3>
+                  <div className="space-y-1 min-w-0">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 truncate">
+                      {formattedRole || 'COVENANT MEMBER'}
+                    </p>
+                    <h3 className="font-extrabold text-base sm:text-lg text-white truncate">{displayFirstName} {displayLastName}</h3>
                     <p className="text-xs text-indigo-200 truncate">{profile?.email || 'member@faithconnect.church'}</p>
-                    <p className="text-[11px] text-indigo-300 font-mono">Phone: {profile?.phone || 'Verified'}</p>
+                    <p className="text-[11px] text-indigo-300 font-mono tabular-nums truncate">Phone: {phone || profile?.phone || 'Verified'}</p>
                   </div>
                 </div>
 
                 {/* Card Footer with QR Code & ID Code */}
-                <div className="flex justify-between items-end border-t border-indigo-800/80 pt-3">
-                  <div className="space-y-0.5">
+                <div className="flex justify-between items-end gap-3 border-t border-indigo-800/80 pt-3">
+                  <div className="space-y-0.5 min-w-0">
                     <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block">Member ID Number</span>
-                    <span className="font-mono text-xs font-black text-amber-300 tracking-wider">
+                    <span className="font-mono text-xs font-black text-amber-300 tracking-wider tabular-nums block truncate">
                       FC-MEM-{(profile?.id || '1024').slice(0, 8).toUpperCase()}
                     </span>
-                    <div className="text-[10px] text-slate-400 mt-1">Joined: {new Date(milestones.membershipDate).toLocaleDateString()}</div>
+                    <div className="text-[10px] text-slate-300 mt-1 tabular-nums">Joined: {formattedMembershipDate}</div>
                   </div>
-                  <div className="p-1.5 bg-white rounded-xl shadow-md border border-indigo-100 flex items-center justify-center">
-                    <QRCodeSVG 
-                      value={`https://faithconnect.church/verify-member?id=${profile?.id || 'demo'}`} 
-                      size={52} 
+                  <div className="p-1.5 bg-white rounded-xl shadow-md border border-indigo-100 flex items-center justify-center shrink-0">
+                    <QRCodeSVG
+                      value={`https://faithconnect.church/verify-member?id=${profile?.id || 'demo'}`}
+                      size={52}
                       level="M"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* CARD REVERSE / BACK PREVIEW */}
+              {/* CARD REVERSE PREVIEW */}
               <div className="w-full bg-slate-100 rounded-2xl p-4 border border-slate-300 text-slate-700 text-xs space-y-3">
-                <div className="w-full h-7 bg-slate-900 rounded-lg flex items-center px-3 text-[10px] font-mono text-slate-400">
+                <div className="w-full h-7 bg-slate-900 rounded-lg flex items-center px-3 text-[10px] font-mono text-slate-400 overflow-hidden select-none">
                   |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
                 </div>
-                <div className="flex justify-between items-center text-[11px]">
-                  <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px]">
+                  <div className="break-words">
                     <strong>Sanctuary Hotline:</strong> {churchProfile.phone}
                   </div>
-                  <div>
+                  <div className="break-all sm:text-right">
                     <strong>Official Email:</strong> {churchProfile.email}
                   </div>
                 </div>
-                <div className="text-[10px] text-slate-500 italic text-center border-t border-slate-200 pt-2">
-                  This card certifies covenant membership at {churchProfile.name}. Present for sanctuary entry, communion, and voting in church governance.
+                <div className="text-[10px] text-slate-500 text-center border-t border-slate-200 pt-2">
+                  This card certifies covenant membership at {churchProfile.name}. Present for sanctuary entry, communion, and church governance.
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handlePrintIdCard}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Printer size={16} /> Print Official ID Card / Badge
-              </button>
+            <div className="flex flex-col-reverse sm:flex-row gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setIdCardModal(false)}
-                className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
               >
                 Close
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintIdCard}
+                className="w-full sm:flex-1 min-h-[42px] px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+              >
+                <Printer size={16} /> Print Official ID Card / Badge
               </button>
             </div>
           </div>
@@ -10458,65 +11078,98 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
 
       {/* Edit Milestones Modal */}
       {editMilestonesModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-slate-900 text-base">Update Spiritual Milestones</h3>
-              <button onClick={() => setEditMilestonesModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 my-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-black text-slate-900 text-base">Update Spiritual Milestones</h3>
+              <button
+                type="button"
+                onClick={() => setEditMilestonesModal(false)}
+                className="min-h-[36px] min-w-[36px] p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer inline-flex items-center justify-center"
+                aria-label="Close modal"
+              >
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSaveMilestones} className="space-y-4">
+            <form onSubmit={handleSaveMilestones} className="space-y-4 text-xs">
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Water Baptism Date</label>
+                <label className="font-bold text-slate-700 block mb-1.5">Water Baptism Date</label>
                 <input
                   type="date"
                   value={bDateInput}
                   onChange={(e) => setBDateInput(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border rounded-xl text-xs font-semibold outline-none"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Baptism Officiating Pastor</label>
+                <label className="font-bold text-slate-700 block mb-1.5">Baptism Officiating Pastor</label>
                 <input
                   type="text"
                   value={bByInput}
                   onChange={(e) => setBByInput(e.target.value)}
                   placeholder="e.g. Rev. Sarah Johnson"
-                  className="w-full p-2.5 bg-slate-50 border rounded-xl text-xs font-semibold outline-none"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Grace Cathedral Membership Date</label>
+                <label className="font-bold text-slate-700 block mb-1.5">{campusLabel} Membership Date</label>
                 <input
                   type="date"
                   value={mDateInput}
                   onChange={(e) => setMDateInput(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border rounded-xl text-xs font-semibold outline-none"
+                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setEditMilestonesModal(false)} className="px-4 py-2 text-xs font-bold text-slate-500 cursor-pointer">Cancel</button>
-                <button type="submit" className="px-5 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 cursor-pointer">Save Milestones</button>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditMilestonesModal(false)}
+                  className="w-full sm:w-auto min-h-[40px] px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={milestonesSaving}
+                  className="w-full sm:w-auto min-h-[40px] px-5 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                >
+                  {milestonesSaving ? 'Saving...' : 'Save Milestones'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Reset Demo Data */}
-      <div className="pt-2 text-center">
-        <button
-          type="button"
-          onClick={() => {
-            if (confirm("Reset database to initial Grace Cathedral sample data?")) {
-              resetLocalDatabase();
-            }
-          }}
-          className="text-xs text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
-        >
-          Reset Sample Data & Reload
-        </button>
+      {/* Inline Sample Data Reset Control */}
+      <div className="pt-2 flex flex-wrap items-center justify-center gap-2 text-xs">
+        {confirmResetData ? (
+          <>
+            <span className="text-slate-600 font-semibold">Reset local sample data and reload?</span>
+            <button
+              type="button"
+              onClick={() => resetLocalDatabase()}
+              className="min-h-[36px] px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg cursor-pointer"
+            >
+              Confirm Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmResetData(false)}
+              className="min-h-[36px] px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg cursor-pointer"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmResetData(true)}
+            className="min-h-[36px] px-3 py-1.5 text-xs text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg font-bold cursor-pointer transition-colors"
+          >
+            Reset Sample Data & Reload
+          </button>
+        )}
       </div>
     </div>
   );
@@ -10652,6 +11305,25 @@ const App = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('fc_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleDesktopSidebar = () => {
+    setDesktopSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('fc_sidebar_collapsed', String(next));
+      } catch {
+        // Ignore storage write failure in restricted contexts
+      }
+      return next;
+    });
+  };
 
   const fetchProfile = async (userId: string) => {
     try {
@@ -10752,36 +11424,43 @@ const App = () => {
         {/* Authenticated Member & Admin Portal */}
         <Route path="/portal/*" element={
           session ? (
-            <div className="min-h-screen pt-16 md:pl-64 bg-slate-50">
-              <Navbar 
-                profile={profile} 
-                onToggleMobileMenu={() => setMobileMenuOpen(prev => !prev)} 
-              />
+            <div className="min-h-screen flex bg-slate-50">
               <Sidebar 
                 role={profile?.primary_role || 'member'} 
                 profile={profile}
                 mobileOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
+                desktopCollapsed={desktopSidebarCollapsed}
+                onToggleDesktopCollapse={handleToggleDesktopSidebar}
               />
-              <main className="p-4 sm:p-6 md:p-10 max-w-7xl mx-auto">
-                <Routes>
-                  <Route index element={<OverviewPage profile={profile} />} />
-                  <Route path="directory" element={<DirectoryPage profile={profile} />} />
-                  <Route path="ministries" element={<MinistriesPage profile={profile} />} />
-                  <Route path="giving" element={<GivingPage profile={profile} />} />
-                  <Route path="prayer" element={<PrayerPage profile={profile} />} />
-                  <Route path="calendar" element={<CalendarPage profile={profile} />} />
-                  <Route path="resources" element={<MemberResourcesPage />} />
-                  <Route path="surveys" element={<MemberEventSurveysPage profile={profile} />} />
-                  <Route path="streaming" element={<StreamingPage profile={profile} />} />
-                  <Route path="profile" element={<ProfilePage profile={profile} />} />
-                  <Route path="leader" element={<LeaderConsolePage profile={profile} />} />
-                  <Route path="finance" element={<FinanceOfficerWorkspace profile={profile} />} />
-                  <Route path="admin" element={<AdminDashboard profile={profile} />} />
-                  <Route path="admin/streaming/:streamId" element={<StreamDetailsPage profile={profile} />} />
-                  <Route path="*" element={<Navigate to="/portal" />} />
-                </Routes>
-              </main>
+              <div className="flex-1 min-w-0 flex flex-col">
+                <Navbar 
+                  profile={profile} 
+                  inPortal
+                  onToggleMobileMenu={() => setMobileMenuOpen(prev => !prev)}
+                />
+                <main className="flex-1 min-w-0 w-full px-4 py-5 sm:px-6 lg:px-8">
+                  <div className="max-w-7xl mx-auto w-full min-w-0">
+                    <Routes>
+                      <Route index element={<OverviewPage profile={profile} />} />
+                      <Route path="directory" element={<DirectoryPage profile={profile} />} />
+                      <Route path="ministries" element={<MinistriesPage profile={profile} />} />
+                      <Route path="giving" element={<GivingPage profile={profile} />} />
+                      <Route path="prayer" element={<PrayerPage profile={profile} />} />
+                      <Route path="calendar" element={<CalendarPage profile={profile} />} />
+                      <Route path="resources" element={<MemberResourcesPage />} />
+                      <Route path="surveys" element={<MemberEventSurveysPage profile={profile} />} />
+                      <Route path="streaming" element={<StreamingPage profile={profile} />} />
+                      <Route path="profile" element={<ProfilePage profile={profile} />} />
+                      <Route path="leader" element={<LeaderConsolePage profile={profile} />} />
+                      <Route path="finance" element={<FinanceOfficerWorkspace profile={profile} />} />
+                      <Route path="admin" element={<AdminDashboard profile={profile} />} />
+                      <Route path="admin/streaming/:streamId" element={<StreamDetailsPage profile={profile} />} />
+                      <Route path="*" element={<Navigate to="/portal" />} />
+                    </Routes>
+                  </div>
+                </main>
+              </div>
             </div>
           ) : <Navigate to="/auth" />
         } />
