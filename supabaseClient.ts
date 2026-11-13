@@ -1560,7 +1560,7 @@ const localAuth = {
     const users = getStoredUsers();
     const user = users[normalizedEmail];
 
-    if (!user || !password || !user.password || user.password !== password) {
+    if (!user) {
       return {
         data: { user: null, session: null },
         error: { message: 'Invalid login credentials. Please check your email and password.' }
@@ -1571,6 +1571,13 @@ const localAuth = {
       return {
         data: { user: null, session: null },
         error: { message: 'Portal invitation pending activation. Please use your activation link to set a password first.' }
+      };
+    }
+
+    if (!password || !user.password || user.password !== password) {
+      return {
+        data: { user: null, session: null },
+        error: { message: 'Invalid login credentials. Please check your email and password.' }
       };
     }
 
