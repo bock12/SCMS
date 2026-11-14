@@ -1,0 +1,72 @@
+name: Export Supabase Schema
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scms-schema-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: Export SCMS application schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install PostgreSQL 17 client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo ${VERSION_CODENAME})-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+
+      - name: Export application-owned schemas
+        env:
+          SCMS_DATABASE_URL: ${{ secrets.SCMS_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SCMS_DATABASE_URL:-}" ]]; then
+            echo "::error::Repository secret SCMS_DATABASE_URL is not configured."
+            exit 1
+          fi
+          mkdir -p supabase
+          pg_dump \
+            --schema-only \
+            --no-owner \
+            --no-privileges \
+            --schema=public \
+            --schema=private \
+            --schema=extensions \
+            --file=supabase/schema.sql \
+            "$SCMS_DATABASE_URL"
+          test -s supabase/schema.sql
+          test "$(wc -c < supabase/schema.sql)" -gt 1000
+          echo "Schema export created ($(wc -l < supabase/schema.sql) lines)."
+
+      - name: Commit schema export to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/schema.sql
+          if git diff --cached --quiet; then
+            echo "No schema changes detected."
+            exit 0
+          fi
+          git commit -m "chore(db): export canonical Supabase schema"
+          git push origin HEAD:main
