@@ -39,3 +39,18 @@ The helper exports only the application-owned `public`, `private`, and `extensio
 5. Regenerate `database.types.ts` after approved schema changes.
 
 No command in this guide changes the live database. The export is read-only.
+
+
+## Export from GitHub (no local project copy required)
+
+If you do not have the repository checked out locally, use the hosted workflow instead:
+
+1. In GitHub, open **Settings → Secrets and variables → Actions** for this repository.
+2. Create a repository secret named `SCMS_DATABASE_URL`.
+3. Set its value to the Supabase PostgreSQL connection URI. Prefer the direct connection URI if your network route supports it; otherwise use the session pooler URI. Do not use an anon key or service-role key.
+4. Open **Actions → Export Supabase Schema → Run workflow** and run it on `main`.
+5. On success, the workflow commits the generated `supabase/schema.sql` file to `main`.
+
+The workflow runs on a GitHub-hosted Ubuntu runner, installs PostgreSQL 17 client tools, and exports only `public`, `private`, and `extensions`. The database URI is read from the Actions secret and is not printed. The workflow does not modify the live database.
+
+After the first successful run, the generated SQL file can be reviewed directly in GitHub. Do not enable automatic schema exports on a schedule until the first export has been reviewed.
