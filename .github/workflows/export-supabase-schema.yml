@@ -35,25 +35,20 @@ jobs:
 
       - name: Export application-owned schemas
         env:
-          SCMS_DATABASE_URL: ${{ secrets.SCMS_DATABASE_URL }}
+          PGHOST: aws-0-eu-north-1.pooler.supabase.com
+          PGPORT: "5432"
+          PGDATABASE: postgres
+          PGUSER: postgres.fpzcwetpcwswhxmyeqzh
+          PGPASSWORD: ${{ secrets.SCMS_DB_PASSWORD }}
+          PGSSLMODE: require
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${SCMS_DATABASE_URL:-}" ]]; then
-            echo "::error::Repository secret SCMS_DATABASE_URL is not configured."
+          if [[ -z "${PGPASSWORD:-}" ]]; then
+            echo "::error::Repository secret SCMS_DB_PASSWORD is not configured."
             exit 1
           fi
-          python - <<'PY'
-          import os
-          from urllib.parse import urlsplit, unquote
-
-          parsed = urlsplit(os.environ["SCMS_DATABASE_URL"])
-          print("Connection diagnostic (password is not displayed):")
-          print("  username:", unquote(parsed.username or "<missing>"))
-          print("  host:", parsed.hostname or "<missing>")
-          print("  port:", parsed.port or "<default>")
-          print("  database:", (parsed.path or "").lstrip("/") or "<missing>")
-          PY
+          echo "Connecting with PostgreSQL host/user/database settings (password hidden)."
           mkdir -p supabase
           /usr/lib/postgresql/17/bin/pg_dump \
             --schema-only \
@@ -62,8 +57,7 @@ jobs:
             --schema=public \
             --schema=private \
             --schema=extensions \
-            --file=supabase/schema.sql \
-            "$SCMS_DATABASE_URL"
+            --file=supabase/schema.sql
           test -s supabase/schema.sql
           test "$(wc -c < supabase/schema.sql)" -gt 1000
           echo "Schema export created ($(wc -l < supabase/schema.sql) lines)."
