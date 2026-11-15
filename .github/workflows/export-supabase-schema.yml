@@ -43,6 +43,17 @@ jobs:
             echo "::error::Repository secret SCMS_DATABASE_URL is not configured."
             exit 1
           fi
+          python - <<'PY'
+          import os
+          from urllib.parse import urlsplit, unquote
+
+          parsed = urlsplit(os.environ["SCMS_DATABASE_URL"])
+          print("Connection diagnostic (password is not displayed):")
+          print("  username:", unquote(parsed.username or "<missing>"))
+          print("  host:", parsed.hostname or "<missing>")
+          print("  port:", parsed.port or "<default>")
+          print("  database:", (parsed.path or "").lstrip("/") or "<missing>")
+          PY
           mkdir -p supabase
           /usr/lib/postgresql/17/bin/pg_dump \
             --schema-only \
