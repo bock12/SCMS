@@ -275,6 +275,56 @@ describe('Unified canonical Member Directory (profiles)', () => {
     expect(persisted.membership_status).toBe('active');
   });
 
+
+  test('updates canonical member fields without changing role or portal lifecycle', async () => {
+    const created = await registerUnifiedMember({
+      first_name: 'Abdul',
+      last_name: 'Kamara',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-16',
+      enable_portal_access: false
+    });
+
+    const updated = await updateUnifiedMember(created.profile.id, {
+      first_name: 'Abdul Rahman',
+      last_name: 'Kamara',
+      membership_status: 'inactive',
+      is_baptized: true,
+      baptism_date: '2020-06-14',
+      baptized_by: 'Pastor Example'
+    });
+
+    expect(updated.profile.id).toBe(created.profile.id);
+    expect(updated.profile.first_name).toBe('Abdul Rahman');
+    expect(updated.profile.membership_status).toBe('inactive');
+    expect(updated.profile.portal_access_status).toBe('not_invited');
+    expect(updated.profile.auth_user_id).toBeNull();
+    expect(updated.profile.primary_role).toBe('member');
+
+    const rawDb = JSON.parse(memoryStorage.getItem('faithconnect_db_v2') || '{}');
+    const row = rawDb.profiles.find((profile: any) => profile.id === created.profile.id);
+    expect(row.baptized_by_name_snapshot).toBe('Pastor Example');
+    expect(row.primary_role).toBeUndefined();
+    expect(row.department_name).toBeUndefined();
+    expect(row.status).toBeUndefined();
+  });
+
+  test('does not allow portal activation or suspension without a linked auth account', async () => {
+    const created = await registerUnifiedMember({
+      first_name: 'Sia',
+      last_name: 'Conteh',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-16',
+      enable_portal_access: false
+    });
+
+    await expect(updatePortalAccountStatus(created.profile.id, 'active'))
+      .rejects.toThrow('Portal access must be enabled');
+    await expect(updatePortalAccountStatus(created.profile.id, 'suspended'))
+      .rejects.toThrow('no linked portal account');
+    expect((await getMembers()).some(profile => profile.id === created.profile.id)).toBe(true);
+  });
+
   test('keeps membership lifecycle and portal-account lifecycle independent', async () => {
     const created = await registerUnifiedMember({
       first_name: 'Aminata',
