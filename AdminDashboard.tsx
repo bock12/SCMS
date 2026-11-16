@@ -179,22 +179,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           {currentTab === 'events' && (
             can('manage_events') 
               ? <EventsAdminTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
+              : <PermissionRestrictedCard requiredPermission="manage_resources" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'resources' && (
             can('manage_resources')
-              ? <ResourcesAdminTab profile={profile} resolution={resolution} />
-              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
+              ? <ResourcesAdminTab profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_surveys" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'surveys' && (
             can('manage_surveys')
-              ? <EventSurveysAdminTab profile={profile} resolution={resolution} />
+              ? <EventSurveysAdminTab profile={profile} />
               : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'users' && (
             can('manage_members') 
               ? <UsersTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} resolution={resolution} />
+              : <PermissionRestrictedCard requiredPermission="manage_roles" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'roles' && (
             can('manage_roles') 
@@ -203,7 +203,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'ministries' && (
             can('manage_ministries') 
-              ? <MinistriesAdminTab profile={profile} resolution={resolution} /> 
+              ? <MinistriesAdminTab profile={profile} /> 
               : <PermissionRestrictedCard requiredPermission="manage_ministries" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'financials' && (
@@ -213,7 +213,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'streaming' && (
             can('manage_streams') 
-              ? <StreamingTab profile={profile} resolution={resolution} /> 
+              ? <StreamingTab profile={profile} /> 
               : <PermissionRestrictedCard requiredPermission="manage_streams" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'multitenant' && <MultiTenantTab />}
