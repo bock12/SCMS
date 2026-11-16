@@ -243,6 +243,61 @@ jobs:
 
           echo "Role assignment RPC correctly rejected a caller without manage_roles."
 
+
+      - name: Verify scoped role assignment RPC authorization
+        run: |
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '20000000-0000-4000-8000-000000000001',
+                 r.id, 'branch',
+                 '10000000-0000-4000-8000-000000000001',
+                 NULL, now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'admin';
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub',
+            '30000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '20000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'branch',
+            '10000000-0000-4000-8000-000000000001',
+            NULL
+          );
+          COMMIT;
+          SQL
+
+          if psql -v ON_ERROR_STOP=1 <<'SQL' >/tmp/out-of-scope-role-assignment.log 2>&1
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub',
+            '30000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '20000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'branch',
+            '10000000-0000-4000-8000-000000000002',
+            NULL
+          );
+          COMMIT;
+          SQL
+          then
+            echo "Branch-scoped role manager unexpectedly assigned a role outside their branch."
+            exit 1
+          fi
+
+          UPDATE public.profile_role_assignments
+          SET is_active = false
+          WHERE profile_id = '20000000-0000-4000-8000-000000000001'
+            AND role_id = (SELECT id FROM public.roles WHERE name = 'admin')
+            AND branch_id = '10000000-0000-4000-8000-000000000001';
+
+          echo "Branch-scoped role assignment was allowed only within the actor's assigned scope."
+
       - name: Verify scoped, inactive, and expired permission assignments
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
