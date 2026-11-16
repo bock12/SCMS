@@ -42,7 +42,6 @@ export async function getProfileRoleData(): Promise<{
 export async function assignProfileRole(input: {
   profile_id: string;
   role_id: string;
-  assigned_by_profile_id?: string | null;
   scope_type?: 'church' | 'district' | 'branch';
   branch_id?: string | null;
   district_id?: string | null;
