@@ -6852,6 +6852,8 @@ const ChurchSettingsTab = () => {
 // --- Stream Chat & Studio Details (Exported for /streaming/:streamId) ---
 
 export const StreamDetailsPage = ({ profile }: { profile: Profile | null }) => {
+  const { resolution: streamPermissions, loading: streamPermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canManageStreams = hasEffectivePermission(streamPermissions, 'manage_streams');
   const { streamId } = useParams();
   const [stream, setStream] = useState<Stream | null>(null);
   const [loading, setLoading] = useState(true);
@@ -6889,7 +6891,8 @@ export const StreamDetailsPage = ({ profile }: { profile: Profile | null }) => {
     setRegenLoading(false);
   };
 
-  if (!profile || !['super_admin', 'admin', 'pastor'].includes(profile.primary_role)) {
+  if (streamPermissionsLoading) return <div className="p-10 text-center text-slate-400">Loading broadcast permissions…</div>;
+  if (!profile || !canManageStreams) {
     return <div className="p-10 text-center text-slate-500 font-bold">Access Denied</div>;
   }
 
