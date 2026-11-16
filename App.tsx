@@ -1710,6 +1710,8 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
 // --- Church Member Directory Page with Admin CRUD, Suspend, Soft Delete & Pic Upload ---
 
 const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
+  const { resolution: directoryPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canDirectory = (key: string) => hasEffectivePermission(directoryPermissions, key);
   const [members, setMembers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<ChurchBranch[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>('all');
@@ -1759,7 +1761,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   } | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
-  const isAdminOrPastor = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile?.primary_role || '');
+  const isAdminOrPastor = canDirectory('manage_members') || canDirectory('manage_roles');
 
   useEffect(() => {
     loadDirectory();
@@ -2727,6 +2729,8 @@ const AVAILABILITY_PRESETS = [
 ];
 
 const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
+  const { resolution: ministryPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canMinistry = (key: string) => hasEffectivePermission(ministryPermissions, key);
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [allActiveMemberships, setAllActiveMemberships] = useState<MinistryMember[]>([]);
   const [myJoinRequests, setMyJoinRequests] = useState<MinistryJoinRequest[]>([]);
@@ -2757,13 +2761,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const closeTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
 
-  const isLeader = Boolean(
-    profile && (
-      ['leader', 'worker', 'super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role) ||
-      Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
-    )
-  );
-  const isAdmin = profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role);
+  const isLeader = Boolean(profile && (
+    canMinistry('manage_ministries') || canMinistry('manage_events') ||
+    canMinistry('view_attendance') ||
+    Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
+  ));
+  const isAdmin = canMinistry('manage_roles') || canMinistry('manage_members');
 
   const loadMinistriesAndStatus = async () => {
     setLoadingMinistries(true);
@@ -3839,17 +3842,17 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 // --- Leader & Worker Department Console ---
 
 const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
-  const isLeaderOrStaff = Boolean(
-    profile && (
-      ['super_admin', 'admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(profile.primary_role) ||
-      Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
-    )
-  );
+  const { resolution: leaderPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canLeader = (key: string) => hasEffectivePermission(leaderPermissions, key);
+  const isLeaderOrStaff = Boolean(profile && (
+    canLeader('manage_ministries') || canLeader('manage_events') || canLeader('view_attendance') ||
+    Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
+  ));
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Only Admins and Pastors have permission to switch between all department consoles
-  const canSwitchDepts = Boolean(profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role));
+  // Cross-department administration requires an explicit database permission.
+  const canSwitchDepts = canLeader('manage_roles') || canLeader('manage_members');
   
   // User's specifically assigned department
   const userAssignedDept = (profile as any)?.assigned_department || (profile as any)?.department_name || 'Media & IT Ministry';
@@ -9560,6 +9563,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 // --- Giving & Tithes Portal ---
 
 const GivingPage = ({ profile }: { profile: Profile | null }) => {
+  const { resolution: givingPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canGiving = (key: string) => hasEffectivePermission(givingPermissions, key);
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
   const [selectedAmount, setSelectedAmount] = useState<number | string>(100);
   const [customAmount, setCustomAmount] = useState('');
@@ -9593,7 +9598,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const [latestReceipt, setLatestReceipt] = useState<any>(null);
   const [history, setHistory] = useState<FinancialRecord[]>([]);
 
-  const isStaff = profile && ['super_admin', 'admin', 'pastor', 'finance_officer', 'district_admin'].includes(profile.primary_role);
+  const isStaff = canGiving('view_finances') || canGiving('manage_finances');
   const userFullName = profile ? `${profile.first_name} ${profile.last_name}` : 'Grace Cathedral Member';
 
   useEffect(() => {
