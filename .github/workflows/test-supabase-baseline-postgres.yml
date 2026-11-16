@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "supabase/baseline/fresh_install.sql"
+      - "supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -69,6 +70,9 @@ jobs:
 
       - name: Apply fresh-install baseline
         run: psql -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
+
+      - name: Apply forward role-assignment operations
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql
 
       - name: Assert schema, RLS, policies and routines
         run: |
@@ -204,3 +208,25 @@ jobs:
           fi
 
           echo "Anonymous profile reads and protected membership writes were denied as expected."
+
+      - name: Verify role assignment writes require manage_roles
+        run: |
+          if psql -v ON_ERROR_STOP=1 -c "
+            BEGIN;
+            SET LOCAL ROLE authenticated;
+            SELECT set_config('request.jwt.claim.sub',
+              '30000000-0000-4000-8000-000000000001', true);
+            SELECT public.assign_profile_role(
+              '20000000-0000-4000-8000-000000000001',
+              (SELECT id FROM public.roles WHERE name = 'pastor'),
+              'church',
+              NULL,
+              NULL
+            );
+            COMMIT;
+          " >/tmp/unauthorized-role-assignment.log 2>&1; then
+            echo "A member without manage_roles unexpectedly assigned a system role."
+            exit 1
+          fi
+
+          echo "Role assignment RPC correctly rejected a caller without manage_roles."
