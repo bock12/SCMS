@@ -394,6 +394,16 @@ export async function updateUnifiedMember(
   if (updateError) throw updateError;
 
   let portalInvite: PortalInvitationInfo | undefined;
+  if (input.portal_status === 'archived') {
+    // "Archived portal account" means revoke its login link; it does not archive
+    // or delete the church member record.
+    await supabase.auth.revokePortalAccess(personId);
+  } else if (input.portal_status !== undefined) {
+    await supabase.from('profiles')
+      .update({ portal_access_status: input.portal_status })
+      .eq('id', personId);
+  }
+
   if (input.enable_portal_access === true && !current.auth_user_id) {
     const { data: inviteData, error: inviteError } = await supabase.auth.provisionPortalAccess({
       profileId: personId,
@@ -445,9 +455,16 @@ export async function updatePortalAccountStatus(
   portalStatus: PortalAccountStatus
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
+  if (portalStatus === 'archived') {
+    await supabase.auth.revokePortalAccess(personId);
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', personId).single();
+    if (error) throw error;
+    return toDirectoryProfile(data);
+  }
+
   const { data, error } = await supabase
     .from('profiles')
-    .update({ portal_access_status: portalStatus === 'active' ? 'active' : 'suspended' })
+    .update({ portal_access_status: portalStatus })
     .eq('id', personId)
     .select('*')
     .single();
@@ -468,7 +485,7 @@ export async function enablePortalAccess(
   if (lookupError) throw lookupError;
   if (!existing) throw new Error('Member directory record not found.');
 
-  const current = existing as Profile;
+  const current = toDirectoryProfile(existing);
   const email = normalizeMemberEmail(options?.email ?? current.email);
   if (!email) {
     throw new Error('A valid email address is required to enable portal access.');
@@ -506,5 +523,5 @@ export async function disablePortalAccess(personId: string): Promise<Profile> {
     .eq('id', personId)
     .single();
   if (error) throw error;
-  return data as Profile;
+  return toDirectoryProfile(data);
 }
