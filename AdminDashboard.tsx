@@ -802,7 +802,7 @@ const UsersTab = () => {
     const selectedSystemRole = systemRoles.find(role => role.id === roleId);
     if (!selectedSystemRole) return;
     try {
-      const assignment = await assignProfileRole({ profile_id: userId, role_id: roleId, assigned_by_profile_id: profile.id, scope_type: 'church' });
+      const assignment = await assignProfileRole({ profile_id: userId, role_id: roleId, scope_type: 'church' });
       setRoleAssignments(prev => [assignment, ...prev.filter(item => item.id !== assignment.id)]);
       setRoleSelections(prev => ({ ...prev, [userId]: '' }));
       const target = users.find(user => user.id === userId);
