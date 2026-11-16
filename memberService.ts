@@ -345,7 +345,7 @@ export async function updateUnifiedMember(
   if (lookupError) throw lookupError;
   if (!existing) throw new Error('Member directory record not found.');
 
-  const current = existing as Profile;
+  const current = toDirectoryProfile(existing);
   const email = input.email !== undefined ? normalizeMemberEmail(input.email) : (current.email || '');
   const phone = input.phone !== undefined ? input.phone.trim() : (current.phone || '');
 
@@ -447,12 +447,12 @@ export async function updatePortalAccountStatus(
   validateMemberAttributes({ portal_status: portalStatus });
   const { data, error } = await supabase
     .from('profiles')
-    .update({ portal_access_status: portalStatus === 'active' ? 'active' : 'suspended', status: portalStatus })
+    .update({ portal_access_status: portalStatus === 'active' ? 'active' : 'suspended' })
     .eq('id', personId)
     .select('*')
     .single();
   if (error) throw error;
-  return data as Profile;
+  return toDirectoryProfile(data);
 }
 
 /** Enables portal access for an existing member record via password-setup invitation. */
