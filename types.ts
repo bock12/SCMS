@@ -634,6 +634,30 @@ export interface MinistryMember {
   created_by?: string;
 }
 
+export type MinistryJoinRequestStatus = 'pending' | 'approved' | 'declined' | 'withdrawn';
+
+export interface MinistryJoinRequest {
+  id: string;
+  ministry_id: string;
+  ministry_name: string;
+  member_id: string;
+  applicant_name: string;
+  applicant_email: string;
+  applicant_phone: string;
+  preferred_roles: string[];
+  availability: string;
+  note: string;
+  status: MinistryJoinRequestStatus;
+  created_at: string;
+  updated_at?: string;
+  reviewed_by_id?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: string;
+  review_note?: string;
+  assigned_role_title?: string;
+  assigned_duty?: string;
+}
+
 export interface ProformaLineItem {
   id: string;
   description: string;

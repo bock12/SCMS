@@ -323,11 +323,30 @@ export const saveEventAccount = (account: EventAccount): void => {
 export const getEventAccount = (
   eventId: string, 
   eventTitle: string = 'Church Event', 
-  targetBudget: number = 10000
+  targetBudget: number = 10000,
+  preferredAccountNumber?: string
 ): EventAccount => {
   const all = getAllEventAccounts();
   if (all[eventId]) {
-    return all[eventId];
+    const existing = all[eventId];
+    const nextTitle = eventTitle || existing.event_title;
+    const nextBudget = targetBudget || existing.target_budget;
+    const nextAccNum = preferredAccountNumber || existing.account_number;
+    if (
+      existing.event_title !== nextTitle ||
+      existing.target_budget !== nextBudget ||
+      existing.account_number !== nextAccNum
+    ) {
+      const synced = {
+        ...existing,
+        event_title: nextTitle,
+        target_budget: nextBudget,
+        account_number: nextAccNum
+      };
+      saveEventAccount(synced);
+      return synced;
+    }
+    return existing;
   }
 
   // Generate a dedicated event account if one doesn't exist yet
@@ -337,7 +356,7 @@ export const getEventAccount = (
   const newAccount: EventAccount = {
     event_id: eventId,
     event_title: eventTitle,
-    account_number: `EVT-ACC-2026-${numSuffix}`,
+    account_number: preferredAccountNumber || `EVT-ACC-2026-${numSuffix}`,
     account_name: `FaithConnect - ${eventTitle} Dedicated Fund`,
     bank_name: 'Sierra Leone Commercial Bank (SLCB)',
     bank_account_number: `003-010-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -777,6 +796,9 @@ export const saveOccurrenceOverride = (override: OccurrenceOverride) => {
   const current = getOccurrenceOverrides();
   current[override.id] = override;
   localStorage.setItem(OCCURRENCE_OVERRIDES_KEY, JSON.stringify(current));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: 'occurrence_overrides' } }));
+  }
 };
 
 export const getOccurrenceAttendanceMap = (): Record<string, number> => {
@@ -792,6 +814,16 @@ export const saveOccurrenceAttendance = (occurrenceId: string, count: number) =>
   const current = getOccurrenceAttendanceMap();
   current[occurrenceId] = count;
   localStorage.setItem(OCCURRENCE_ATTENDANCE_KEY, JSON.stringify(current));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: 'occurrence_attendance' } }));
+  }
+};
+
+export const formatLocalDateKey = (dt: Date): string => {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // --- DYNAMIC RECURRENCE OCCURRENCE GENERATOR ENGINE ---
@@ -818,7 +850,8 @@ export const generateEventOccurrences = (
   const config = event.recurrence_config;
 
   if (recurrenceType === 'one_time' && !config) {
-    const occDateStr = startTimeObj.toISOString().slice(0, 10);
+    const occDateStr = isNaN(startTimeObj.getTime()) ? '' : formatLocalDateKey(startTimeObj);
+    if (!occDateStr) return occurrences;
     const occId = `${event.id}_${occDateStr}`;
     const override = overrides[occId];
 
@@ -829,7 +862,7 @@ export const generateEventOccurrences = (
       occurrence_date: occDateStr,
       start_time: override?.new_start_time || event.start_time,
       end_time: override?.new_end_time || event.end_time,
-      status: override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : event.status,
+      status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : event.status,
       is_modified: Boolean(override),
       modified_notes: override?.notes,
       override_location: override?.new_location || event.location,
@@ -849,12 +882,11 @@ export const generateEventOccurrences = (
       ? config.days_of_week
       : [isNaN(startTimeObj.getTime()) ? 0 : startTimeObj.getDay()];
 
-    const curr = new Date(rangeStart);
-    curr.setHours(hours, minutes, 0, 0);
+    const curr = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate(), hours, minutes, 0, 0);
 
     while (curr.getTime() <= rangeEnd.getTime()) {
       if (targetDays.includes(curr.getDay())) {
-        const occDateStr = curr.toISOString().slice(0, 10);
+        const occDateStr = formatLocalDateKey(curr);
         const occId = `${event.id}_${occDateStr}`;
         const override = overrides[occId];
 
@@ -868,7 +900,7 @@ export const generateEventOccurrences = (
           occurrence_date: occDateStr,
           start_time: override?.new_start_time || occStart.toISOString(),
           end_time: override?.new_end_time || occEnd.toISOString(),
-          status: override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
+          status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
           is_modified: Boolean(override),
           modified_notes: override?.notes,
           override_location: override?.new_location || event.location,
@@ -918,7 +950,7 @@ export const generateEventOccurrences = (
         const occStart = getNthWeekdayDate(y, m, nthForMonth, weekdayForMonth, hours, minutes);
 
         if (occStart.getTime() >= rangeStart.getTime() && occStart.getTime() <= rangeEnd.getTime()) {
-          const occDateStr = occStart.toISOString().slice(0, 10);
+          const occDateStr = formatLocalDateKey(occStart);
           const occId = `${event.id}_${occDateStr}`;
           const override = overrides[occId];
           const occEnd = new Date(occStart.getTime() + durationMs);
@@ -930,7 +962,7 @@ export const generateEventOccurrences = (
             occurrence_date: occDateStr,
             start_time: override?.new_start_time || occStart.toISOString(),
             end_time: override?.new_end_time || occEnd.toISOString(),
-            status: override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
+            status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
             is_modified: Boolean(override),
             modified_notes: override?.notes,
             override_location: override?.new_location || event.location,
@@ -970,7 +1002,7 @@ export const generateEventOccurrences = (
         const occStart = getNthWeekdayDate(y, m, nthForQuarter, weekdayForQuarter, hours, minutes);
 
         if (occStart.getTime() >= rangeStart.getTime() && occStart.getTime() <= rangeEnd.getTime()) {
-          const occDateStr = occStart.toISOString().slice(0, 10);
+          const occDateStr = formatLocalDateKey(occStart);
           const occId = `${event.id}_${occDateStr}`;
           const override = overrides[occId];
           const occEnd = new Date(occStart.getTime() + durationMs);
@@ -982,7 +1014,7 @@ export const generateEventOccurrences = (
             occurrence_date: occDateStr,
             start_time: override?.new_start_time || occStart.toISOString(),
             end_time: override?.new_end_time || occEnd.toISOString(),
-            status: override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
+            status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
             is_modified: Boolean(override),
             modified_notes: override?.notes,
             override_location: override?.new_location || event.location,
@@ -1005,8 +1037,46 @@ export const generateEventOccurrences = (
     return occurrences;
   }
 
+  // --- YEARLY RECURRENCE ---
+  if (recurrenceType === 'yearly' || config?.frequency === 'YEARLY') {
+    if (!isNaN(startTimeObj.getTime())) {
+      const startMonth = startTimeObj.getMonth();
+      const startDay = startTimeObj.getDate();
+      for (let y = rangeStart.getFullYear(); y <= rangeEnd.getFullYear(); y++) {
+        const occStart = new Date(y, startMonth, startDay, hours, minutes, 0, 0);
+        if (occStart.getTime() >= rangeStart.getTime() && occStart.getTime() <= rangeEnd.getTime()) {
+          const occDateStr = formatLocalDateKey(occStart);
+          const occId = `${event.id}_${occDateStr}`;
+          const override = overrides[occId];
+          const occEnd = new Date(occStart.getTime() + durationMs);
+
+          occurrences.push({
+            id: occId,
+            event_id: event.id,
+            event_title: event.title,
+            occurrence_date: occDateStr,
+            start_time: override?.new_start_time || occStart.toISOString(),
+            end_time: override?.new_end_time || occEnd.toISOString(),
+            status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : 'scheduled',
+            is_modified: Boolean(override),
+            modified_notes: override?.notes,
+            override_location: override?.new_location || event.location,
+            attendance_count: attendanceMap[occId] ?? (event.registered_count || 0),
+            category: event.category,
+            location: override?.new_location || event.location,
+            organizer_name: event.organizer_name,
+            is_combined_service: event.is_combined_service,
+            account_number: event.account_number
+          });
+        }
+      }
+      if (occurrences.length > 0) return occurrences;
+    }
+  }
+
   // Fallback default: Return parent start date occurrence
-  const occDateStr = startTimeObj.toISOString().slice(0, 10);
+  const occDateStr = isNaN(startTimeObj.getTime()) ? '' : formatLocalDateKey(startTimeObj);
+  if (!occDateStr) return occurrences;
   const occId = `${event.id}_${occDateStr}`;
   const override = overrides[occId];
 
@@ -1017,7 +1087,7 @@ export const generateEventOccurrences = (
     occurrence_date: occDateStr,
     start_time: override?.new_start_time || event.start_time,
     end_time: override?.new_end_time || event.end_time,
-    status: override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : event.status,
+    status: event.status === 'cancelled' ? 'cancelled' : override?.action === 'cancel' ? 'cancelled' : override?.action === 'reschedule' ? 'rescheduled' : event.status,
     is_modified: Boolean(override),
     modified_notes: override?.notes,
     override_location: override?.new_location || event.location,

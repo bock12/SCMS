@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
-import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus, AppRole } from './types';
+import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
@@ -14,6 +14,13 @@ import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember } from './ministryMemberService';
+import {
+  getAllJoinRequests,
+  approveMinistryJoinRequest,
+  declineMinistryJoinRequest,
+  reopenMinistryJoinRequest,
+  MINISTRY_JOIN_REQUESTS_UPDATED_EVENT
+} from './ministryJoinRequestService';
 import { 
   Users, Building2, Map, MapPin, Radio, Activity, Plus, Search, 
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
@@ -182,7 +189,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'ministries' && (
             hasPermission(profile, 'manage_ministries') 
-              ? <MinistriesAdminTab /> 
+              ? <MinistriesAdminTab profile={profile} /> 
               : <PermissionRestrictedCard requiredPermission="manage_ministries" profile={profile} />
           )}
           {currentTab === 'financials' && (
@@ -2052,7 +2059,7 @@ const UsersTab = () => {
 
 // --- Ministries & Teams Admin Tab ---
 
-const MinistriesAdminTab = () => {
+const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const [ministries, setMinistries] = useState<Ministry[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -2102,7 +2109,23 @@ const MinistriesAdminTab = () => {
   const [addMemberDutyInput, setAddMemberDutyInput] = useState('');
   const [editingRosterItem, setEditingRosterItem] = useState<any | null>(null);
   const [editRosterDutyInput, setEditRosterDutyInput] = useState('');
+  const [editRosterRoleInput, setEditRosterRoleInput] = useState('');
+  const [editRosterStatusInput, setEditRosterStatusInput] = useState<'active' | 'in_training' | 'on_leave'>('active');
   const [rosterNotice, setRosterNotice] = useState<string | null>(null);
+  const [rosterSuccessNotice, setRosterSuccessNotice] = useState<string | null>(null);
+
+  // Join requests review state
+  const [allJoinRequests, setAllJoinRequests] = useState<MinistryJoinRequest[]>(() => getAllJoinRequests());
+  const [adminJoinTab, setAdminJoinTab] = useState<'pending' | 'history'>('pending');
+  const [adminReviewingReq, setAdminReviewingReq] = useState<{
+    mode: 'approve' | 'decline';
+    req: MinistryJoinRequest;
+  } | null>(null);
+  const [adminReviewRole, setAdminReviewRole] = useState('');
+  const [adminReviewDuty, setAdminReviewDuty] = useState('');
+  const [adminReviewStatus, setAdminReviewStatus] = useState<'active' | 'in_training' | 'on_leave'>('active');
+  const [adminReviewNote, setAdminReviewNote] = useState('');
+  const [adminReviewBusy, setAdminReviewBusy] = useState(false);
 
   const fetchMinistriesAndProfiles = async () => {
     const [minRes, profRes, memberResult] = await Promise.all([
@@ -2120,7 +2143,25 @@ const MinistriesAdminTab = () => {
 
   useEffect(() => {
     fetchMinistriesAndProfiles();
+    const syncJoinRequests = () => setAllJoinRequests(getAllJoinRequests());
+    window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, syncJoinRequests);
+    window.addEventListener('storage', syncJoinRequests);
+    return () => {
+      window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, syncJoinRequests);
+      window.removeEventListener('storage', syncJoinRequests);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!adminReviewingReq) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !adminReviewBusy) {
+        setAdminReviewingReq(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [adminReviewingReq, adminReviewBusy]);
 
   const loadDeptRoster = async (ministry: Ministry) => {
     const persistedRoster = await getMinistryRoster(ministry.id);
@@ -2193,16 +2234,125 @@ const MinistriesAdminTab = () => {
     setShowInlineCategoryAdd(false);
     setInlineCategoryInput('');
     setRosterNotice(null);
+    setRosterSuccessNotice(null);
+    setEditingRosterItem(null);
+    setAdminJoinTab('pending');
     setDetailModalTab('members');
     setEditingMinistry(m);
     setDeptRoster([]);
     setSelectedRosterMemberId('');
     setAddMemberDutyInput('');
+    setAllJoinRequests(getAllJoinRequests());
     try {
       setDeptRoster(await loadDeptRoster(m));
     } catch (error) {
       console.error('Unable to load department membership roster:', error);
       setRosterNotice('Unable to load this ministry roster. Please try again.');
+    }
+  };
+
+  const handleAdminReopenJoinRequest = async (req: MinistryJoinRequest) => {
+    try {
+      await reopenMinistryJoinRequest(req.id, profile || null);
+      setAllJoinRequests(getAllJoinRequests());
+      setAdminJoinTab('pending');
+      setRosterSuccessNotice(`Re-opened ${req.applicant_name}'s join request for review.`);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Could not re-open request.');
+    }
+  };
+
+  const openEditAdminRosterItem = (mem: any) => {
+    setEditingRosterItem(mem);
+    setEditRosterRoleInput(mem.role || 'Team Member');
+    setEditRosterDutyInput(mem.duty || 'Department Member');
+    const st = String(mem.status || 'active').toLowerCase();
+    setEditRosterStatusInput(
+      st === 'in_training' || st === 'in training'
+        ? 'in_training'
+        : st === 'on_leave' || st === 'on leave'
+        ? 'on_leave'
+        : 'active'
+    );
+  };
+
+  const handleSaveAdminRosterEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRosterItem) return;
+    const updated = deptRoster.map(m =>
+      m.id === editingRosterItem.id
+        ? {
+            ...m,
+            role: editRosterRoleInput.trim() || m.role,
+            duty: editRosterDutyInput.trim() || m.duty,
+            status: editRosterStatusInput
+          }
+        : m
+    );
+    await saveDeptRoster(updated);
+    setRosterSuccessNotice(`Updated role & service assignment for ${editingRosterItem.name}.`);
+    setEditingRosterItem(null);
+  };
+
+  const openAdminApproveJoinModal = (req: MinistryJoinRequest) => {
+    const firstPreferred =
+      req.preferred_roles.find(r => r && !r.toLowerCase().startsWith('open to')) || 'Team Member';
+    setAdminReviewRole(firstPreferred);
+    setAdminReviewDuty(req.availability || 'Sunday & Ministry Service Duty');
+    setAdminReviewStatus('active');
+    setAdminReviewNote('');
+    setAdminReviewingReq({ mode: 'approve', req });
+  };
+
+  const openAdminDeclineJoinModal = (req: MinistryJoinRequest) => {
+    setAdminReviewNote('');
+    setAdminReviewingReq({ mode: 'decline', req });
+  };
+
+  const handleAdminConfirmJoinReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminReviewingReq) return;
+    setAdminReviewBusy(true);
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
+    try {
+      if (adminReviewingReq.mode === 'approve') {
+        const result = await approveMinistryJoinRequest({
+          requestId: adminReviewingReq.req.id,
+          reviewerProfile: profile || null,
+          roleTitle: adminReviewRole,
+          duty: adminReviewDuty,
+          memberStatus: adminReviewStatus,
+          reviewNote: adminReviewNote
+        });
+        if (editingMinistry) {
+          const reloaded = await loadDeptRoster(editingMinistry);
+          setDeptRoster(reloaded);
+          const updatedCount = reloaded.length;
+          const updatedMin = { ...editingMinistry, member_count: updatedCount };
+          setEditingMinistry(updatedMin);
+          setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
+        }
+        setAllJoinRequests(getAllJoinRequests());
+        setRosterSuccessNotice(
+          `Approved ${adminReviewingReq.req.applicant_name} as ${result.request.assigned_role_title} and notified the applicant.`
+        );
+      } else {
+        await declineMinistryJoinRequest({
+          requestId: adminReviewingReq.req.id,
+          reviewerProfile: profile || null,
+          reviewNote: adminReviewNote
+        });
+        setAllJoinRequests(getAllJoinRequests());
+        setRosterSuccessNotice(
+          `Updated join request for ${adminReviewingReq.req.applicant_name} and sent notification.`
+        );
+      }
+      setAdminReviewingReq(null);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to process this join request right now.');
+    } finally {
+      setAdminReviewBusy(false);
     }
   };
 
@@ -2394,6 +2544,7 @@ const MinistriesAdminTab = () => {
 
   const socialCount = ministries.filter(m => m.type === 'social_fellowship').length;
   const serviceCount = ministries.filter(m => (m.type || 'service_department') === 'service_department').length;
+  const totalPendingJoinCount = allJoinRequests.filter(r => r.status === 'pending').length;
 
   const filteredMinistries = ministries.filter(m => {
     const matchesCat = selectedCategory === 'All' || m.category.toLowerCase() === selectedCategory.toLowerCase();
@@ -2407,11 +2558,16 @@ const MinistriesAdminTab = () => {
       {/* Header & Main Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center flex-wrap gap-2 mb-1">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 flex items-center gap-1">
               <Building2 size={12} />
               {ministries.length} Groups Active
             </span>
+            {totalPendingJoinCount > 0 && (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                {totalPendingJoinCount} Pending Join {totalPendingJoinCount === 1 ? 'Request' : 'Requests'}
+              </span>
+            )}
             <span className="text-xs text-slate-400 font-semibold">• Grace Cathedral Groups & Departments</span>
           </div>
           <h3 className="font-extrabold text-slate-900 text-2xl tracking-tight">Church Ministries & Departments</h3>
@@ -2505,6 +2661,10 @@ const MinistriesAdminTab = () => {
           const leaderProfile = profiles.find(p => p.id === m.leader_id || `${p.first_name} ${p.last_name}` === m.leader_name);
           const rolesList = m.roles_and_responsibilities || [];
           const isSocial = m.type === 'social_fellowship';
+          const deptPendingCount = allJoinRequests.filter(r =>
+            r.status === 'pending' &&
+            (r.ministry_id === m.id || r.ministry_name.trim().toLowerCase() === m.name.trim().toLowerCase())
+          ).length;
 
           return (
             <div key={m.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4">
@@ -2525,9 +2685,16 @@ const MinistriesAdminTab = () => {
                     </span>
                   </div>
 
-                  <span className="text-xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                    {m.member_count} Servants
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {deptPendingCount > 0 && (
+                      <span className="text-[10px] font-black text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                        {deptPendingCount} Pending
+                      </span>
+                    )}
+                    <span className="text-xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                      {m.member_count} Servants
+                    </span>
+                  </div>
                 </div>
 
                 <h4 className="font-extrabold text-slate-900 text-lg mb-1 leading-snug">{m.name}</h4>
@@ -2607,7 +2774,9 @@ const MinistriesAdminTab = () => {
                   className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Eye size={14} />
-                  <span>View & Manage Department</span>
+                  <span>
+                    {deptPendingCount > 0 ? `View & Review (${deptPendingCount} Pending)` : 'View & Manage Department'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -2617,7 +2786,7 @@ const MinistriesAdminTab = () => {
 
       {/* --- ADD NEW MINISTRY MODAL --- */}
       {showAddMinistryModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 pt-16 sm:pt-20 pb-10 z-[100] overflow-y-auto">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-start justify-center p-3 sm:p-6 pt-16 sm:pt-20 pb-10 z-[100] overflow-y-auto">
           <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto">
             <div className="flex justify-between items-center pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -2894,8 +3063,16 @@ const MinistriesAdminTab = () => {
       )}
 
       {/* --- DEPARTMENT DETAILS, MEMBERS & LEADERSHIP DIALOG --- */}
-      {editingMinistry && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 pt-12 sm:pt-16 pb-10 z-[100] overflow-y-auto">
+      {editingMinistry && (() => {
+        const editingMinistryAllReqs = allJoinRequests.filter(r =>
+          r.ministry_id === editingMinistry.id ||
+          r.ministry_name.trim().toLowerCase() === editingMinistry.name.trim().toLowerCase()
+        );
+        const editingMinistryPendingReqs = editingMinistryAllReqs.filter(r => r.status === 'pending');
+        const editingMinistryHistoryReqs = editingMinistryAllReqs.filter(r => r.status !== 'pending');
+
+        return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-start justify-center p-3 sm:p-6 pt-12 sm:pt-16 pb-10 z-[100] overflow-y-auto">
           <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 max-w-3xl w-full p-5 sm:p-8 shadow-2xl space-y-6 my-auto relative">
             
             {/* Top-Right Close Button */}
@@ -2947,6 +3124,11 @@ const MinistriesAdminTab = () => {
               >
                 <Users size={15} className={detailModalTab === 'members' ? 'text-indigo-600' : 'text-slate-400'} />
                 <span className="truncate">👥 Department Members ({deptRoster.length})</span>
+                {editingMinistryPendingReqs.length > 0 && (
+                  <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-[9px] font-black shrink-0">
+                    +{editingMinistryPendingReqs.length}
+                  </span>
+                )}
               </button>
 
               <button
@@ -2988,6 +3170,15 @@ const MinistriesAdminTab = () => {
                     </span>
                     <span className="text-[10px] text-indigo-700 font-bold">Pick from Congregation Roster</span>
                   </div>
+
+                  {rosterSuccessNotice && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+                      <span>{rosterSuccessNotice}</span>
+                      <button type="button" onClick={() => setRosterSuccessNotice(null)} className="text-emerald-600 hover:text-emerald-800 cursor-pointer">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
 
                   {rosterNotice && (
                     <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
@@ -3071,6 +3262,221 @@ const MinistriesAdminTab = () => {
                   </div>
                 </div>
 
+                {/* Join Requests & Review Log */}
+                {(editingMinistryPendingReqs.length > 0 || editingMinistryHistoryReqs.length > 0) && (
+                  <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                          <Clock size={14} className="text-amber-600" />
+                          Join Requests &amp; Review Log
+                        </span>
+                        <span className="text-[10px] font-bold text-amber-800 block">
+                          Approve to appoint directly onto this department roster or audit past decisions
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 bg-white/80 p-1 rounded-xl border border-amber-200 self-start sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => setAdminJoinTab('pending')}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
+                            adminJoinTab === 'pending'
+                              ? 'bg-amber-600 text-white shadow-2xs'
+                              : 'text-amber-900 hover:bg-amber-100'
+                          }`}
+                        >
+                          Pending ({editingMinistryPendingReqs.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminJoinTab('history')}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
+                            adminJoinTab === 'history'
+                              ? 'bg-slate-800 text-white shadow-2xs'
+                              : 'text-amber-900 hover:bg-amber-100'
+                          }`}
+                        >
+                          History ({editingMinistryHistoryReqs.length})
+                        </button>
+                      </div>
+                    </div>
+
+                    {adminJoinTab === 'pending' ? (
+                      editingMinistryPendingReqs.length === 0 ? (
+                        <p className="text-[11px] text-amber-900/70 italic py-2 text-center">
+                          No pending join requests right now.
+                        </p>
+                      ) : (
+                        <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                          {editingMinistryPendingReqs.map(req => (
+                            <div key={req.id} className="p-3.5 bg-white rounded-2xl border border-amber-200/80 space-y-2">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <h5 className="font-extrabold text-slate-900 text-xs truncate">{req.applicant_name}</h5>
+                                  <p className="text-[10px] text-slate-500 font-medium truncate">
+                                    {[req.applicant_email, req.applicant_phone].filter(Boolean).join(' · ') || 'Church Member'} · {new Date(req.created_at).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => openAdminDeclineJoinModal(req)}
+                                    className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-xl text-[11px] cursor-pointer transition-colors"
+                                  >
+                                    Decline
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openAdminApproveJoinModal(req)}
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-[11px] cursor-pointer flex items-center gap-1 shadow-2xs transition-colors"
+                                  >
+                                    <Check size={13} />
+                                    <span>Approve &amp; Appoint</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="text-[11px] text-slate-600">
+                                <strong className="text-slate-800">Availability:</strong> {req.availability}
+                              </div>
+
+                              {req.preferred_roles.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {req.preferred_roles.map((rTag, i) => (
+                                    <span key={i} className="px-2 py-0.5 bg-indigo-50 text-indigo-800 border border-indigo-100 rounded-md text-[10px] font-bold">
+                                      {rTag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {req.note && (
+                                <p className="text-[11px] text-slate-600 italic bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-100">
+                                  &ldquo;{req.note}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    ) : editingMinistryHistoryReqs.length === 0 ? (
+                      <p className="text-[11px] text-amber-900/70 italic py-2 text-center">
+                        No processed join requests yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        {editingMinistryHistoryReqs.map(req => (
+                          <div key={req.id} className="p-3 bg-white rounded-2xl border border-slate-200 space-y-1 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-slate-900">{req.applicant_name}</span>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                  req.status === 'approved'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : req.status === 'declined'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-slate-200 text-slate-700'
+                                }`}>
+                                  {req.status}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-slate-400">
+                                  {req.reviewed_by_name || 'Member'} · {new Date(req.reviewed_at || req.updated_at || req.created_at).toLocaleDateString()}
+                                </span>
+                                {(req.status === 'declined' || req.status === 'withdrawn') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAdminReopenJoinRequest(req)}
+                                    className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-md text-[10px] cursor-pointer"
+                                  >
+                                    Re-open
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {req.assigned_role_title && (
+                              <p className="text-[10px] font-bold text-emerald-700">
+                                Appointed: {req.assigned_role_title} ({req.assigned_duty})
+                              </p>
+                            )}
+                            {req.review_note && (
+                              <p className="text-[10px] italic text-slate-600">&ldquo;{req.review_note}&rdquo;</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Inline Edit Roster Assignment Form */}
+                {editingRosterItem && (
+                  <form onSubmit={handleSaveAdminRosterEdit} className="p-4 bg-slate-50 border border-indigo-200 rounded-2xl space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-slate-900">
+                        Edit Assignment: {editingRosterItem.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditingRosterItem(null)}
+                        className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-1">Role Title</label>
+                        <input
+                          type="text"
+                          required
+                          value={editRosterRoleInput}
+                          onChange={e => setEditRosterRoleInput(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-1">Service Duty</label>
+                        <input
+                          type="text"
+                          required
+                          value={editRosterDutyInput}
+                          onChange={e => setEditRosterDutyInput(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-xl font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-1">Status</label>
+                        <select
+                          value={editRosterStatusInput}
+                          onChange={e => setEditRosterStatusInput(e.target.value as 'active' | 'in_training' | 'on_leave')}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                        >
+                          <option value="active">Active</option>
+                          <option value="in_training">In Training</option>
+                          <option value="on_leave">On Leave</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingRosterItem(null)}
+                        className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl cursor-pointer"
+                      >
+                        Save Assignment
+                      </button>
+                    </div>
+                  </form>
+                )}
+
                 {/* Member Roster List */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -3095,25 +3501,42 @@ const MinistriesAdminTab = () => {
                               <img src={mem.avatar_url || `https://picsum.photos/seed/${mem.id}/100/100`} alt="" className="w-full h-full object-cover" />
                             </div>
                             <div className="min-w-0">
-                              <h5 className="font-bold text-slate-900 text-xs truncate">{mem.name}</h5>
+                              <div className="flex items-center gap-1.5">
+                                <h5 className="font-bold text-slate-900 text-xs truncate">{mem.name}</h5>
+                                {mem.status && mem.status !== 'active' && (
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[8px] font-black uppercase shrink-0">
+                                    {String(mem.status).replace('_', ' ')}
+                                  </span>
+                                )}
+                              </div>
                               <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-extrabold block w-fit truncate mt-0.5">
-                                • {mem.duty}
+                                {mem.role || 'Member'} · {mem.duty}
                               </span>
                               <p className="text-[10px] text-slate-400 truncate mt-0.5">{mem.email || mem.phone || 'Congregant'}</p>
                             </div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = deptRoster.filter(m => m.id !== mem.id);
-                              saveDeptRoster(updated);
-                            }}
-                            title="Remove member from department"
-                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer shrink-0 transition-colors"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => openEditAdminRosterItem(mem)}
+                              title="Edit role, duty & status"
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 cursor-pointer transition-colors"
+                            >
+                              <Edit size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = deptRoster.filter(m => m.id !== mem.id);
+                                saveDeptRoster(updated);
+                              }}
+                              title="Remove member from department"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -3468,6 +3891,204 @@ const MinistriesAdminTab = () => {
               </form>
             )}
 
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* --- ADMIN APPROVE / DECLINE JOIN REQUEST MODAL --- */}
+      {adminReviewingReq && (
+        <div
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[120] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !adminReviewBusy) {
+              setAdminReviewingReq(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 my-auto text-xs animate-in fade-in">
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="min-w-0">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  adminReviewingReq.mode === 'approve'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}>
+                  {adminReviewingReq.mode === 'approve' ? 'Approve & Appoint to Roster' : 'Decline Join Request'}
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-1 truncate">
+                  {adminReviewingReq.req.applicant_name}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium truncate">
+                  {adminReviewingReq.req.ministry_name} · Submitted {new Date(adminReviewingReq.req.created_at).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={adminReviewBusy}
+                onClick={() => setAdminReviewingReq(null)}
+                aria-label="Close review dialog"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                <span><strong className="text-slate-800">Email:</strong> {adminReviewingReq.req.applicant_email || '—'}</span>
+                <span><strong className="text-slate-800">Phone:</strong> {adminReviewingReq.req.applicant_phone || '—'}</span>
+              </div>
+              <div className="text-[11px] text-slate-600">
+                <strong className="text-slate-800">Availability:</strong> {adminReviewingReq.req.availability || 'Not specified'}
+              </div>
+              {adminReviewingReq.req.preferred_roles.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                    Preferred Roles {adminReviewingReq.mode === 'approve' ? '(click to select)' : ''}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {adminReviewingReq.req.preferred_roles.map((roleOpt, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={adminReviewingReq.mode !== 'approve'}
+                        onClick={() => {
+                          if (adminReviewingReq.mode === 'approve') {
+                            setAdminReviewRole(roleOpt);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                          adminReviewingReq.mode === 'approve' && adminReviewRole === roleOpt
+                            ? 'bg-indigo-600 text-white border-indigo-600 cursor-pointer'
+                            : 'bg-white text-slate-700 border-slate-200 ' + (adminReviewingReq.mode === 'approve' ? 'hover:border-indigo-300 cursor-pointer' : 'cursor-default')
+                        }`}
+                      >
+                        {roleOpt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {adminReviewingReq.req.note && (
+                <p className="text-[11px] text-slate-600 italic bg-white p-2.5 rounded-xl border border-slate-200">
+                  &ldquo;{adminReviewingReq.req.note}&rdquo;
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleAdminConfirmJoinReview} className="space-y-4">
+              {adminReviewingReq.mode === 'approve' && (
+                <>
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Appointed Team Role *</label>
+                    <input
+                      type="text"
+                      required
+                      value={adminReviewRole}
+                      onChange={e => setAdminReviewRole(e.target.value)}
+                      placeholder="e.g. Camera Operator, Soprano Vocalist"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    {(editingMinistry?.roles_and_responsibilities || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {(editingMinistry?.roles_and_responsibilities || []).slice(0, 6).map((roleChip, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setAdminReviewRole(roleChip)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                              adminReviewRole === roleChip
+                                ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            + {roleChip}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-extrabold text-slate-700 block mb-1">Assigned Service Duty *</label>
+                      <input
+                        type="text"
+                        required
+                        value={adminReviewDuty}
+                        onChange={e => setAdminReviewDuty(e.target.value)}
+                        placeholder="e.g. Sunday 1st Service Camera"
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-extrabold text-slate-700 block mb-1">Initial Roster Status</label>
+                      <select
+                        value={adminReviewStatus}
+                        onChange={e => setAdminReviewStatus(e.target.value as 'active' | 'in_training' | 'on_leave')}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="active">Active Team Member</option>
+                        <option value="in_training">In Training / Onboarding</option>
+                        <option value="on_leave">On Leave</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">
+                  {adminReviewingReq.mode === 'approve'
+                    ? 'Welcome / Onboarding Note (Optional)'
+                    : 'Reason or Next-Step Note (Optional)'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={adminReviewNote}
+                  onChange={e => setAdminReviewNote(e.target.value)}
+                  placeholder={
+                    adminReviewingReq.mode === 'approve'
+                      ? 'Welcome to the team! Rehearsal starts this Saturday at 4:00 PM.'
+                      : 'Thank you for volunteering. Our onboarding cohort opens next month, or check out Hospitality.'
+                  }
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={adminReviewBusy}
+                  onClick={() => setAdminReviewingReq(null)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adminReviewBusy}
+                  className={`px-5 py-2.5 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60 ${
+                    adminReviewingReq.mode === 'approve'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  {adminReviewingReq.mode === 'approve' ? (
+                    <>
+                      <CheckCircle2 size={15} />
+                      <span>{adminReviewBusy ? 'Appointing...' : 'Confirm & Add to Roster'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <X size={15} />
+                      <span>{adminReviewBusy ? 'Updating...' : 'Confirm Decline'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -6511,11 +7132,26 @@ const EventsAdminTab = () => {
     fetchEventsData();
   }, []);
 
+  const toLocalDateTimeInput = (val: Date | string): string => {
+    const dt = typeof val === 'string' ? new Date(val) : new Date(val.getTime());
+    if (Number.isNaN(dt.getTime())) {
+      return typeof val === 'string' ? val.slice(0, 16) : '';
+    }
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const mm = String(dt.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d}T${hh}:${mm}`;
+  };
+
   const openAddModalForDate = (date?: Date) => {
     setEditingEvent(null);
-    const targetDate = date || new Date(Date.now() + 86400000);
-    const startIso = new Date(targetDate.setHours(10, 0, 0, 0)).toISOString().slice(0, 16);
-    const endIso = new Date(targetDate.setHours(12, 0, 0, 0)).toISOString().slice(0, 16);
+    const baseDate = date ? new Date(date.getTime()) : new Date(Date.now() + 86400000);
+    const startDt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 10, 0, 0, 0);
+    const endDt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 12, 0, 0, 0);
+    const startIso = toLocalDateTimeInput(startDt);
+    const endIso = toLocalDateTimeInput(endDt);
 
     setFormTitle('');
     setFormCategory('Worship Service');
@@ -6556,13 +7192,7 @@ const EventsAdminTab = () => {
     setFormCategory(evt.category);
     setFormAudience(evt.target_audience || 'All Congregation');
     
-    const formatDt = (isoStr: string) => {
-      try {
-        return new Date(isoStr).toISOString().slice(0, 16);
-      } catch (e) {
-        return isoStr.slice(0, 16);
-      }
-    };
+    const formatDt = (isoStr: string) => toLocalDateTimeInput(isoStr);
     setFormStartTime(formatDt(evt.start_time));
     setFormEndTime(formatDt(evt.end_time));
     setFormLocation(evt.location || 'Grace Cathedral Sanctuary');
@@ -6637,12 +7267,19 @@ const EventsAdminTab = () => {
         : []
     };
 
+    const parsedStart = new Date(formStartTime);
+    const parsedEnd = new Date(formEndTime);
+    const startIso = !Number.isNaN(parsedStart.getTime()) ? parsedStart.toISOString() : new Date().toISOString();
+    const endIso = !Number.isNaN(parsedEnd.getTime()) && parsedEnd.getTime() >= parsedStart.getTime()
+      ? parsedEnd.toISOString()
+      : new Date(new Date(startIso).getTime() + 7200000).toISOString();
+
     const payload = {
       title: formTitle.trim(),
       category: formCategory,
       target_audience: formAudience,
-      start_time: new Date(formStartTime).toISOString(),
-      end_time: new Date(formEndTime).toISOString(),
+      start_time: startIso,
+      end_time: endIso,
       location: formLocation.trim() || 'Main Sanctuary',
       latitude: Number(formLatitude),
       longitude: Number(formLongitude),
@@ -6667,23 +7304,41 @@ const EventsAdminTab = () => {
     };
 
     if (editingEvent) {
-      await supabase.from('events').update(payload).eq('id', editingEvent.id);
-      // Ensure account is synced
-      getEventAccount(editingEvent.id, payload.title, payload.recurring_funding_allowance);
+      const { error } = await supabase.from('events').update(payload).eq('id', editingEvent.id);
+      if (error) {
+        console.error('Failed to update event:', error);
+        setRecurrenceToast(`Unable to update "${payload.title}": ${error.message}`);
+        setTimeout(() => setRecurrenceToast(null), 5000);
+        return;
+      }
+      if (formHasFundingAccount) {
+        getEventAccount(editingEvent.id, payload.title, payload.recurring_funding_allowance, assignedAccountNum);
+      }
+      setRecurrenceToast(`Updated "${payload.title}" and synced to the Church Calendar.`);
+      setTimeout(() => setRecurrenceToast(null), 5000);
     } else {
       const newEvtId = `evt_${Date.now()}`;
-      await supabase.from('events').insert({
+      const { error } = await supabase.from('events').insert({
         id: newEvtId,
         ...payload,
         registered_count: 0,
         branch_id: 'branch-1'
       });
-      // Initialize dedicated treasury account
-      getEventAccount(newEvtId, payload.title, payload.recurring_funding_allowance);
+      if (error) {
+        console.error('Failed to create event:', error);
+        setRecurrenceToast(`Unable to create "${payload.title}": ${error.message}`);
+        setTimeout(() => setRecurrenceToast(null), 5000);
+        return;
+      }
+      if (formHasFundingAccount) {
+        getEventAccount(newEvtId, payload.title, payload.recurring_funding_allowance, assignedAccountNum);
+      }
+      setRecurrenceToast(`Published "${payload.title}" to the Church Calendar and Member Portal.`);
+      setTimeout(() => setRecurrenceToast(null), 5000);
     }
 
     setShowFormModal(false);
-    fetchEventsData();
+    await fetchEventsData();
   };
 
   const handleDeleteEvent = async (eventId: string) => {
@@ -7719,7 +8374,7 @@ const EventsAdminTab = () => {
                             type="button"
                             onClick={() => {
                               setOverrideAction(occ.status === 'cancelled' ? 'cancel' : 'reschedule');
-                              setOverrideNewTime(occ.start_time.slice(0, 16));
+                              setOverrideNewTime(toLocalDateTimeInput(occ.start_time));
                               setOverrideNewLocation(occ.override_location || occ.location || '');
                               setOverrideNotes(occ.modified_notes || '');
                               setShowOverrideModal(occ);
@@ -7851,7 +8506,7 @@ const EventsAdminTab = () => {
                           type="button"
                           onClick={() => {
                             setOverrideAction(occ.status === 'cancelled' ? 'cancel' : 'reschedule');
-                            setOverrideNewTime(occ.start_time.slice(0, 16));
+                            setOverrideNewTime(toLocalDateTimeInput(occ.start_time));
                             setOverrideNewLocation(occ.override_location || occ.location || '');
                             setOverrideNotes(occ.modified_notes || '');
                             setShowOverrideModal(occ);
@@ -9263,13 +9918,22 @@ const EventsAdminTab = () => {
               </button>
               <button
                 onClick={() => {
+                  const origStart = new Date(showOverrideModal.start_time).getTime();
+                  const origEnd = new Date(showOverrideModal.end_time).getTime();
+                  const origDuration = !Number.isNaN(origStart) && !Number.isNaN(origEnd) && origEnd > origStart
+                    ? origEnd - origStart
+                    : 7200000;
+                  const newStartDt = overrideAction === 'reschedule' && overrideNewTime ? new Date(overrideNewTime) : null;
+                  const validNewStart = newStartDt && !Number.isNaN(newStartDt.getTime());
+
                   saveOccurrenceOverride({
                     id: showOverrideModal.id,
                     event_id: showOverrideModal.event_id,
                     occurrence_date: showOverrideModal.occurrence_date,
                     action: overrideAction,
-                    new_start_time: overrideNewTime || undefined,
-                    new_location: overrideNewLocation || undefined,
+                    new_start_time: validNewStart ? newStartDt.toISOString() : undefined,
+                    new_end_time: validNewStart ? new Date(newStartDt.getTime() + origDuration).toISOString() : undefined,
+                    new_location: overrideAction === 'modify' ? overrideNewLocation || undefined : undefined,
                     notes: overrideNotes
                   });
                   setShowOverrideModal(null);

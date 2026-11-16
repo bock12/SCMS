@@ -1,4 +1,4 @@
-import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
+import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
 
 // Storage keys
 const DB_STORAGE_KEY = 'faithconnect_db_v2';
@@ -426,6 +426,37 @@ const initialMinistries: Ministry[] = [
   }
 ];
 
+const initialJoinRequests: MinistryJoinRequest[] = [
+  {
+    id: 'mjr-seed-1',
+    ministry_id: 'min-5',
+    ministry_name: 'Media & Livestream Studio',
+    member_id: 'mem-6',
+    applicant_name: 'Elijah Wright',
+    applicant_email: 'ewright@gmail.com',
+    applicant_phone: '+1 (555) 789-0123',
+    preferred_roles: ['Main Camera Operator', 'ProPresenter Slide Operator'],
+    availability: 'Sundays (1st & 2nd Service) and Saturday morning setups',
+    note: 'I have 2 years of experience running livestream slides and camera tripods at Living Waters.',
+    status: 'pending',
+    created_at: new Date(Date.now() - 3600000 * 18).toISOString()
+  },
+  {
+    id: 'mjr-seed-2',
+    ministry_id: 'min-1',
+    ministry_name: 'Voices of Grace Choir',
+    member_id: 'mem-7',
+    applicant_name: 'Rebecca Foster',
+    applicant_email: 'rfoster@gmail.com',
+    applicant_phone: '+1 (555) 890-1234',
+    preferred_roles: ['Soprano / Alto / Tenor Section Leaders'],
+    availability: 'Thursdays 6:30 PM rehearsals & Sunday morning worship',
+    note: 'Sang alto in campus worship fellowship and eager to join Voices of Grace Choir.',
+    status: 'pending',
+    created_at: new Date(Date.now() - 3600000 * 30).toISOString()
+  }
+];
+
 const initialFinancials: FinancialRecord[] = [
   { id: 'fin-1', contributor_name: 'David Miller', category: 'tithe', amount: 500, date: new Date(Date.now() - 2 * 86400000).toISOString(), payment_method: 'card', notes: 'Monthly Tithe' },
   { id: 'fin-2', contributor_name: 'Sarah Johnson', category: 'tithe', amount: 450, date: new Date(Date.now() - 3 * 86400000).toISOString(), payment_method: 'bank_transfer', notes: 'Pastoral Tithe' },
@@ -780,6 +811,7 @@ function migrateUnifiedDirectoryData(parsed: any): { db: any; changed: boolean }
 
   remapTableMemberIds('member_transfers');
   remapTableMemberIds('ministry_members');
+  remapTableMemberIds('ministry_join_requests');
   remapTableMemberIds('event_registrations');
   remapTableMemberIds('event_survey_responses');
 
@@ -837,6 +869,21 @@ function loadLocalDatabase() {
       if (!parsed.events || parsed.events.length === 0) parsed.events = initialEvents;
       if (!parsed.event_registrations || parsed.event_registrations.length === 0) parsed.event_registrations = initialEventRegistrations;
       if (!Array.isArray(parsed.ministry_members)) parsed.ministry_members = [];
+      if (!Array.isArray(parsed.ministry_join_requests)) {
+        let legacyJoinRequests: MinistryJoinRequest[] | null = null;
+        try {
+          const legacyRaw = localStorage.getItem('faithconnect_ministry_join_requests_v1');
+          if (legacyRaw) {
+            const legacyParsed = JSON.parse(legacyRaw);
+            if (Array.isArray(legacyParsed) && legacyParsed.length > 0) {
+              legacyJoinRequests = legacyParsed;
+            }
+          }
+        } catch {
+          // Ignore legacy join request parse errors
+        }
+        parsed.ministry_join_requests = legacyJoinRequests || initialJoinRequests;
+      }
       if (!Array.isArray(parsed.church_resources)) parsed.church_resources = [];
       if (!Array.isArray(parsed.event_surveys)) parsed.event_surveys = [];
       if (!Array.isArray(parsed.event_survey_questions)) parsed.event_survey_questions = [];
@@ -862,6 +909,7 @@ function loadLocalDatabase() {
     stream_chat_messages: initialMessages,
     ministries: initialMinistries,
     ministry_members: [],
+    ministry_join_requests: initialJoinRequests,
     church_resources: [],
     event_surveys: [],
     event_survey_questions: [],
@@ -1031,6 +1079,9 @@ class LocalQueryBuilder {
       const remaining = rows.filter(row => !this.filters.every(f => f(row)));
       localDb[this.tableName] = remaining;
       saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
+        window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'delete' } }));
+      }
       resolve({ data: null, error: null });
       return;
     }
@@ -1064,6 +1115,9 @@ class LocalQueryBuilder {
       });
       localDb[this.tableName] = updatedRows;
       saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
+        window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'update' } }));
+      }
       const returnedRows = updatedRows.filter(row => this.filters.every(f => f(row)));
       if (this.isSingle) {
         resolve({ data: returnedRows[0] || null, error: returnedRows[0] ? null : { message: 'Row not found' }, count: updatedCount });
@@ -1102,6 +1156,9 @@ class LocalQueryBuilder {
       });
       localDb[this.tableName] = [...rows, ...inserted];
       saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
+        window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'insert' } }));
+      }
 
       // Trigger realtime handlers if stream chat message
       if (this.tableName === 'stream_chat_messages') {

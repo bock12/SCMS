@@ -10,7 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
+import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import {
   getActiveConsoleForRoute,
@@ -22,12 +22,13 @@ import {
 import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { MemberResourcesPage } from './MemberResourcesPage';
 import { MemberEventSurveysPage } from './MemberEventSurveysPage';
+import { CalendarPage } from './CalendarPage';
+import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption } from './eventAccountService';
 import { getGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
 import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
-import { getRecurrenceBadge, getEventAccount } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updateMembershipStatus, updatePortalAccountStatus, enablePortalAccess, disablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { 
@@ -55,6 +56,23 @@ import {
   deleteNotification
 } from './inAppNotificationService';
 import type { InAppNotification } from './inAppNotificationService';
+import {
+  getMinistryRoster,
+  addMinistryMember,
+  updateMinistryMember,
+  removeMinistryMember
+} from './ministryMemberService';
+import {
+  approveMinistryJoinRequest,
+  declineMinistryJoinRequest,
+  getJoinRequestsForMember,
+  getJoinRequestsForMinistry,
+  leaveMinistryTeam,
+  MINISTRY_JOIN_REQUESTS_UPDATED_EVENT,
+  reopenMinistryJoinRequest,
+  submitMinistryJoinRequest,
+  withdrawMinistryJoinRequest
+} from './ministryJoinRequestService';
 
 const renderStyledMainTitle = (titleStr?: string) => {
   const title = (titleStr || 'FaithConnect').trim();
@@ -1010,7 +1028,7 @@ const AuthRoutePage = ({ profile, session }: { profile: Profile | null; session:
 const OverviewPage = ({ profile }: { profile: Profile | null }) => {
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
   const [liveStream, setLiveStream] = useState<Stream | null>(null);
-  const [upcomingEvents, setUpcomingEvents] = useState<ChurchEvent[]>([]);
+  const [upcomingEvents, setUpcomingEvents] = useState<{ event: ChurchEvent; nextStartTime: string; nextLocation: string }[]>([]);
   const [blessingClaimed, setBlessingClaimed] = useState<Record<string, boolean>>({});
   const [showCelebrationToast, setShowCelebrationToast] = useState(true);
 
@@ -1036,20 +1054,83 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
       try {
         const [{ data: sData }, { data: evData }] = await Promise.all([
           supabase.from('streams').select('*').eq('status', 'live').maybeSingle(),
-          supabase.from('church_events').select('*').order('start_time', { ascending: true }).limit(4)
+          supabase.from('events').select('*').order('start_time', { ascending: true })
         ]);
         if (!active) return;
         if (sData) setLiveStream(sData as Stream);
         if (evData && Array.isArray(evData)) {
-          setUpcomingEvents((evData as ChurchEvent[]).filter(ev => ev.status !== 'cancelled').slice(0, 3));
+          const allEvents = (evData as ChurchEvent[]).filter(ev => ev.status !== 'cancelled');
+          const now = new Date();
+          const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+          const horizonEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 180, 23, 59, 59, 999);
+
+          const rawOccurrences = allEvents.flatMap(ev =>
+            generateEventOccurrences(ev, startOfToday, horizonEnd)
+          );
+          const resolvedOccurrences = resolveOccurrencePreemption(rawOccurrences).filter(
+            occ => occ.status !== 'cancelled' && new Date(occ.end_time || occ.start_time).getTime() >= startOfToday.getTime()
+          );
+
+          const eventMap = new Map(allEvents.map(ev => [ev.id, ev]));
+          const soonestByEventId = new Map<string, { event: ChurchEvent; nextStartTime: string; nextLocation: string }>();
+
+          resolvedOccurrences.forEach(occ => {
+            const parent = eventMap.get(occ.event_id);
+            if (!parent) return;
+            const prev = soonestByEventId.get(occ.event_id);
+            if (!prev || new Date(occ.start_time).getTime() < new Date(prev.nextStartTime).getTime()) {
+              soonestByEventId.set(occ.event_id, {
+                event: parent,
+                nextStartTime: occ.start_time,
+                nextLocation: occ.override_location || occ.location || parent.location
+              });
+            }
+          });
+
+          // Include upcoming one-time/annual events beyond the 180-day horizon if fewer than 3 found
+          allEvents.forEach(ev => {
+            if (soonestByEventId.has(ev.id)) return;
+            const st = new Date(ev.start_time);
+            if (!Number.isNaN(st.getTime()) && st.getTime() >= startOfToday.getTime()) {
+              soonestByEventId.set(ev.id, {
+                event: ev,
+                nextStartTime: ev.start_time,
+                nextLocation: ev.location
+              });
+            }
+          });
+
+          const topUpcoming = Array.from(soonestByEventId.values())
+            .sort((a, b) => new Date(a.nextStartTime).getTime() - new Date(b.nextStartTime).getTime())
+            .slice(0, 3);
+
+          setUpcomingEvents(topUpcoming);
         }
       } catch (err) {
         console.warn('Unable to load overview highlights:', err);
       }
     };
     loadData();
+
+    const handleEventsSync = () => {
+      loadData();
+    };
+    const handleStorageSync = (e: StorageEvent) => {
+      if (
+        e.key === 'faithconnect_db_v2' ||
+        e.key === 'faithconnect_occurrence_overrides_v1' ||
+        e.key === 'faithconnect_event_accounts_v1'
+      ) {
+        loadData();
+      }
+    };
+
+    window.addEventListener('church_events_updated', handleEventsSync);
+    window.addEventListener('storage', handleStorageSync);
     return () => {
       active = false;
+      window.removeEventListener('church_events_updated', handleEventsSync);
+      window.removeEventListener('storage', handleStorageSync);
     };
   }, []);
 
@@ -1449,20 +1530,27 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
                     All Events
                   </Link>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {upcomingEvents.map((ev) => (
-                    <Link
-                      key={ev.id}
-                      to="/portal/calendar"
-                      className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200 hover:border-indigo-300 transition-colors space-y-1 min-w-0"
-                    >
-                      <p className="text-[11px] font-bold text-indigo-700 tabular-nums truncate">
-                        {new Date(ev.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                      </p>
-                      <h4 className="font-bold text-slate-900 text-xs truncate">{ev.title}</h4>
-                      <p className="text-[11px] text-slate-500 truncate">{ev.location || campusLabel}</p>
-                    </Link>
-                  ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {upcomingEvents.map(({ event: ev, nextStartTime, nextLocation }) => {
+                    const nextDateObj = new Date(nextStartTime);
+                    const dateParam = !Number.isNaN(nextDateObj.getTime()) ? formatLocalDateKey(nextDateObj) : '';
+                    const targetUrl = dateParam
+                      ? `/portal/calendar?event=${encodeURIComponent(ev.id)}&date=${encodeURIComponent(dateParam)}`
+                      : `/portal/calendar?event=${encodeURIComponent(ev.id)}`;
+                    return (
+                      <Link
+                        key={ev.id}
+                        to={targetUrl}
+                        className="p-3.5 rounded-xl bg-slate-50/70 border border-slate-200 hover:border-indigo-300 transition-colors space-y-1 min-w-0 block"
+                      >
+                        <p className="text-[11px] font-bold text-indigo-700 tabular-nums truncate">
+                          {nextDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </p>
+                        <h4 className="font-bold text-slate-900 text-xs truncate">{ev.title}</h4>
+                        <p className="text-[11px] text-slate-500 truncate">{nextLocation || campusLabel}</p>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2624,12 +2712,43 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
 // --- Ministries & Teams Congregation Page ---
 
+const AVAILABILITY_PRESETS = [
+  'Sunday 1st Service',
+  'Sunday 2nd Service',
+  'Midweek Services',
+  'Saturdays / Rehearsals',
+  'Flexible / Anytime'
+];
+
 const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const [ministries, setMinistries] = useState<Ministry[]>([]);
+  const [allActiveMemberships, setAllActiveMemberships] = useState<MinistryMember[]>([]);
+  const [myJoinRequests, setMyJoinRequests] = useState<MinistryJoinRequest[]>([]);
+  const [loadingMinistries, setLoadingMinistries] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedType, setSelectedType] = useState<'All' | 'social_fellowship' | 'service_department'>('All');
+  const [viewScope, setViewScope] = useState<'all' | 'my_teams' | 'pending'>('all');
+
   const [selectedMinistry, setSelectedMinistry] = useState<Ministry | null>(null);
+  const [preferredRoles, setPreferredRoles] = useState<string[]>([]);
+  const [selectedAvailabilityChips, setSelectedAvailabilityChips] = useState<string[]>([]);
+  const [customAvailability, setCustomAvailability] = useState('');
+  const [applicantPhone, setApplicantPhone] = useState('');
+  const [interestNote, setInterestNote] = useState('');
+  const [submittingInterest, setSubmittingInterest] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [interestSubmitted, setInterestSubmitted] = useState(false);
+  const [pageBanner, setPageBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showAllApplications, setShowAllApplications] = useState(false);
+  const [activeTeamModal, setActiveTeamModal] = useState<{ ministry: Ministry; membership: MinistryMember } | null>(null);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [leavingTeam, setLeavingTeam] = useState(false);
+
+  const closeTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
 
   const isLeader = Boolean(
@@ -2640,27 +2759,250 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   );
   const isAdmin = profile && ['super_admin', 'admin', 'pastor', 'district_admin'].includes(profile.primary_role);
 
+  const loadMinistriesAndStatus = async () => {
+    setLoadingMinistries(true);
+    setLoadError(null);
+    try {
+      const [{ data: minData, error: minErr }, { data: mmData }] = await Promise.all([
+        supabase.from('ministries').select('*'),
+        supabase.from('ministry_members').select('*')
+      ]);
+      if (minErr) throw minErr;
+      if (minData) setMinistries(minData as Ministry[]);
+      if (Array.isArray(mmData)) {
+        setAllActiveMemberships((mmData as MinistryMember[]).filter(m => m.status !== 'inactive'));
+      }
+      if (profile?.id) {
+        setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      } else {
+        setMyJoinRequests([]);
+      }
+    } catch (err: any) {
+      console.error('Failed to load ministries:', err);
+      setLoadError(err?.message || 'Unable to load ministries right now.');
+    } finally {
+      setLoadingMinistries(false);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase.from('ministries').select('*');
-      if (data) setMinistries(data as Ministry[]);
+    loadMinistriesAndStatus();
+  }, [profile?.id]);
+
+  useEffect(() => {
+    const handleSync = () => {
+      if (profile?.id) {
+        setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      }
+      supabase
+        .from('ministry_members')
+        .select('*')
+        .then(({ data }) => {
+          if (Array.isArray(data)) {
+            setAllActiveMemberships((data as MinistryMember[]).filter(m => m.status !== 'inactive'));
+          }
+        });
+      supabase
+        .from('ministries')
+        .select('*')
+        .then(({ data }) => {
+          if (data) setMinistries(data as Ministry[]);
+        });
     };
-    load();
+    window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, [profile?.id]);
+
+  const closeInterestModal = () => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setSelectedMinistry(null);
+    setInterestSubmitted(false);
+    setSubmittingInterest(false);
+    setSubmitError(null);
+    setPreferredRoles([]);
+    setSelectedAvailabilityChips([]);
+    setCustomAvailability('');
+    setInterestNote('');
+  };
+
+  useEffect(() => {
+    if (!selectedMinistry) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeInterestModal();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedMinistry]);
+
+  useEffect(() => {
+    if (!activeTeamModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !leavingTeam) {
+        setActiveTeamModal(null);
+        setLeaveConfirmOpen(false);
+        setLeaveReason('');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTeamModal, leavingTeam]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
   }, []);
 
-  const handleJoin = (e: React.FormEvent) => {
+  const openInterestModal = (ministry: Ministry) => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setSelectedMinistry(ministry);
+    setPreferredRoles([]);
+    setSelectedAvailabilityChips([]);
+    setCustomAvailability('');
+    setApplicantPhone(profile?.phone || '');
+    setInterestNote('');
+    setSubmitError(null);
+    setInterestSubmitted(false);
+  };
+
+  const togglePreferredRole = (role: string) => {
+    setPreferredRoles(prev =>
+      prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]
+    );
+  };
+
+  const toggleAvailabilityChip = (chip: string) => {
+    setSelectedAvailabilityChips(prev =>
+      prev.includes(chip) ? prev.filter(c => c !== chip) : [...prev, chip]
+    );
+  };
+
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setInterestSubmitted(true);
-    setTimeout(() => {
-      setInterestSubmitted(false);
-      setSelectedMinistry(null);
-    }, 2000);
+    if (!selectedMinistry) return;
+    if (!profile) {
+      setSubmitError('Please sign in with your church member account to express interest.');
+      return;
+    }
+
+    const combinedAvailability = [
+      ...selectedAvailabilityChips,
+      customAvailability.trim()
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    if (!combinedAvailability) {
+      setSubmitError('Select at least one availability option or enter your schedule.');
+      return;
+    }
+
+    setSubmittingInterest(true);
+    setSubmitError(null);
+    try {
+      await submitMinistryJoinRequest({
+        ministry: selectedMinistry,
+        profile,
+        preferredRoles,
+        availability: combinedAvailability,
+        note: interestNote,
+        phoneOverride: applicantPhone
+      });
+      setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      setInterestSubmitted(true);
+      setPageBanner({
+        type: 'success',
+        text: `Your interest in ${selectedMinistry.name} was submitted and ${selectedMinistry.leader_name} has been notified.`
+      });
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Unable to submit your request. Please try again.');
+    } finally {
+      setSubmittingInterest(false);
+    }
+  };
+
+  const handleWithdrawRequest = async (req: MinistryJoinRequest) => {
+    if (!profile?.id) return;
+    try {
+      await withdrawMinistryJoinRequest(req.id, profile.id);
+      setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      setPageBanner({
+        type: 'success',
+        text: `Withdrew your pending request for ${req.ministry_name}.`
+      });
+    } catch (err: any) {
+      setPageBanner({
+        type: 'error',
+        text: err?.message || 'Could not withdraw request.'
+      });
+    }
+  };
+
+  const handleLeaveTeam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTeamModal || !profile) return;
+    setLeavingTeam(true);
+    try {
+      await leaveMinistryTeam({
+        ministry: activeTeamModal.ministry,
+        profile,
+        membershipId: activeTeamModal.membership.id,
+        reason: leaveReason
+      });
+      const leftName = activeTeamModal.ministry.name;
+      setActiveTeamModal(null);
+      setLeaveConfirmOpen(false);
+      setLeaveReason('');
+      await loadMinistriesAndStatus();
+      setPageBanner({
+        type: 'success',
+        text: `You have stepped down from ${leftName}. Your team leader has been notified.`
+      });
+    } catch (err: any) {
+      setPageBanner({
+        type: 'error',
+        text: err?.message || 'Unable to update your team membership.'
+      });
+    } finally {
+      setLeavingTeam(false);
+    }
   };
 
   // Derive categories from data + default list including Men & Women
   const categoriesInDb: string[] = Array.from(new Set(ministries.map(m => String(m.category || '')))).filter(Boolean) as string[];
   const defaultCategories: string[] = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
   const categoriesList: string[] = Array.from(new Set([...defaultCategories, ...categoriesInDb])) as string[];
+
+  const myMembershipsByMinistryId = new Map<string, MinistryMember>();
+  if (profile?.id) {
+    allActiveMemberships
+      .filter(m => m.member_id === profile.id)
+      .forEach(m => myMembershipsByMinistryId.set(m.ministry_id, m));
+  }
+
+  const latestRequestByMinistryId = new Map<string, MinistryJoinRequest>();
+  myJoinRequests.forEach(req => {
+    if (!latestRequestByMinistryId.has(req.ministry_id)) {
+      latestRequestByMinistryId.set(req.ministry_id, req);
+    }
+  });
+
+  const pendingMyRequests = myJoinRequests.filter(r => r.status === 'pending');
+  const myTeamsCount = myMembershipsByMinistryId.size;
 
   const socialCount = ministries.filter(m => m.type === 'social_fellowship').length;
   const serviceCount = ministries.filter(m => (m.type || 'service_department') === 'service_department').length;
@@ -2669,27 +3011,266 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     const matchesCat = selectedCategory === 'All' || m.category.toLowerCase() === selectedCategory.toLowerCase();
     const itemType = m.type || 'service_department';
     const matchesType = selectedType === 'All' || itemType === selectedType;
-    return matchesCat && matchesType;
+
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      m.name.toLowerCase().includes(q) ||
+      (m.description || '').toLowerCase().includes(q) ||
+      (m.leader_name || '').toLowerCase().includes(q) ||
+      (m.roles_and_responsibilities || []).some(r => r.toLowerCase().includes(q));
+
+    const isMyTeam = myMembershipsByMinistryId.has(m.id);
+    const hasPending = latestRequestByMinistryId.get(m.id)?.status === 'pending';
+    const matchesScope =
+      viewScope === 'all' ||
+      (viewScope === 'my_teams' && isMyTeam) ||
+      (viewScope === 'pending' && hasPending);
+
+    return matchesCat && matchesType && matchesSearch && matchesScope;
   });
+
+  const resetAllFilters = () => {
+    setSearchQuery('');
+    setSelectedCategory('All');
+    setSelectedType('All');
+    setViewScope('all');
+  };
 
   return (
     <div className="space-y-6">
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 flex items-center gap-1">
-              <Building2 size={12} /> Grace Cathedral Groups & Departments
-            </span>
-            <span className="text-xs text-slate-400 font-semibold">• Active Ministries</span>
+          <div className="flex items-center gap-2 mb-1 text-xs text-slate-500 font-semibold">
+            <span className="text-indigo-700 font-bold">Grace Cathedral Groups &amp; Departments</span>
+            <span aria-hidden="true">·</span>
+            <span>{ministries.length} Active Ministries</span>
           </div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Ministries & Service Teams</h2>
+          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Ministries &amp; Service Teams</h2>
           <p className="text-slate-500 text-sm mt-0.5">Explore Social Fellowships (Women's, Youth, Men's) and Service Departments (Media, Choir, Ushers, Prayer).</p>
         </div>
 
-        <div className="flex flex-row items-center gap-2.5 w-full sm:w-auto">
-          {/* Category Dropdown Filter placed to the left of action buttons */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs flex-1 sm:flex-initial min-w-0 sm:min-w-[220px]">
+        <div className="flex flex-row flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {isLeader && (
+            <button
+              type="button"
+              onClick={() => navigate('/portal/leader?tab=roster')}
+              className="px-3.5 sm:px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap"
+            >
+              <Award size={14} /> Leader Console
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => navigate('/portal/admin?tab=ministries')}
+              className="px-3.5 sm:px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+            >
+              + Manage Departments
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Feedback Banner */}
+      {pageBanner && (
+        <div
+          className={`p-4 rounded-2xl border text-xs font-semibold flex items-center justify-between gap-3 ${
+            pageBanner.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {pageBanner.type === 'success' ? (
+              <CheckCircle2 size={17} className="text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle size={17} className="text-rose-600 shrink-0" />
+            )}
+            <span>{pageBanner.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPageBanner(null)}
+            className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+            aria-label="Dismiss notification"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* My Ministry Memberships & Applications Strip */}
+      {profile && (myTeamsCount > 0 || myJoinRequests.length > 0) && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-5 space-y-3 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-black text-slate-900">My Teams &amp; Ministry Applications</h3>
+              <p className="text-xs text-slate-500">
+                Track ministries you serve in and review the status of your interest submissions.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+              {[
+                { id: 'all', label: `All (${ministries.length})` },
+                { id: 'my_teams', label: `My Teams (${myTeamsCount})` },
+                { id: 'pending', label: `Pending (${pendingMyRequests.length})` }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setViewScope(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    viewScope === tab.id
+                      ? 'bg-white text-indigo-900 shadow-xs font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {myTeamsCount > 0 && (
+            <div className="space-y-2">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800 block">
+                Active Ministry Teams ({myTeamsCount})
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {Array.from(myMembershipsByMinistryId.entries()).map(([minId, mem]) => {
+                  const minObj = ministries.find(m => m.id === minId);
+                  if (!minObj) return null;
+                  return (
+                    <div
+                      key={mem.id}
+                      className="p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-200 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                          <span className="font-extrabold text-slate-900 truncate">{minObj.name}</span>
+                        </div>
+                        <p className="text-[11px] font-bold text-emerald-900 truncate">
+                          {mem.role_title} · <span className="capitalize font-semibold">{mem.status.replace('_', ' ')}</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500 truncate">{mem.duty || minObj.meeting_time}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLeaveConfirmOpen(false);
+                          setLeaveReason('');
+                          setActiveTeamModal({ ministry: minObj, membership: mem });
+                        }}
+                        className="px-2.5 py-1.5 bg-white hover:bg-emerald-600 hover:text-white border border-emerald-200 text-emerald-800 font-bold rounded-lg text-[11px] cursor-pointer shrink-0 transition-colors"
+                      >
+                        Team Details
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {myJoinRequests.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                  Interest Applications ({myJoinRequests.length})
+                </span>
+                {myJoinRequests.length > 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllApplications(prev => !prev)}
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                  >
+                    {showAllApplications ? 'Show fewer' : `Show all (${myJoinRequests.length})`}
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {(showAllApplications ? myJoinRequests : myJoinRequests.slice(0, 4)).map(req => (
+                  <div
+                    key={req.id}
+                    className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-start justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-slate-900 truncate">{req.ministry_name}</span>
+                        <span
+                          className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                            req.status === 'approved'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : req.status === 'pending'
+                              ? 'bg-amber-100 text-amber-900'
+                              : req.status === 'declined'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-slate-200 text-slate-600'
+                          }`}
+                        >
+                          {req.status}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 truncate">
+                        Interest: {req.preferred_roles.join(', ')}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        Submitted {new Date(req.created_at).toLocaleDateString()} · Availability: {req.availability}
+                      </p>
+                      {req.status === 'approved' && req.assigned_role_title && (
+                        <p className="text-[11px] font-bold text-emerald-700">
+                          Appointed: {req.assigned_role_title} ({req.assigned_duty})
+                        </p>
+                      )}
+                      {req.review_note && (
+                        <p className="text-[11px] italic text-slate-600">Leader note: &ldquo;{req.review_note}&rdquo;</p>
+                      )}
+                    </div>
+                    {req.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => handleWithdrawRequest(req)}
+                        className="px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:text-rose-700 bg-white border border-slate-200 hover:border-rose-200 rounded-lg cursor-pointer shrink-0 transition-colors"
+                      >
+                        Withdraw
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search, Category Filter & Ministry Type Segmented Tabs */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search size={15} className="absolute left-3.5 top-3 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search ministries, serving roles, or department leaders..."
+              className="w-full pl-10 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                aria-label="Clear search"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 bg-white border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs sm:min-w-[220px]">
             <Filter size={15} className="text-slate-400 shrink-0" />
             <select
               value={selectedCategory}
@@ -2707,197 +3288,540 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
               })}
             </select>
           </div>
+        </div>
 
-          {isLeader && (
-            <button
-              type="button"
-              onClick={() => navigate('/portal/leader')}
-              className="px-3.5 sm:px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              <Award size={14} /> Leader Console
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => navigate('/portal/admin?tab=ministries')}
-              className="px-3.5 sm:px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors cursor-pointer shrink-0"
-            >
-              + Manage Departments
-            </button>
-          )}
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
+          <button
+            type="button"
+            onClick={() => setSelectedType('All')}
+            className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
+              selectedType === 'All'
+                ? 'bg-white text-slate-900 shadow-sm font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Building2 size={14} className={`shrink-0 ${selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span className="truncate">All Ministries ({ministries.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedType('social_fellowship')}
+            className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
+              selectedType === 'social_fellowship'
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-100 font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Users size={14} className={`shrink-0 ${selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'}`} />
+            <span className="truncate">Social Fellowships ({socialCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedType('service_department')}
+            className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
+              selectedType === 'service_department'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Building2 size={14} className={`shrink-0 ${selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'}`} />
+            <span className="truncate">Service Departments ({serviceCount})</span>
+          </button>
         </div>
       </div>
 
-      {/* Ministry Type Filter Segmented Tabs */}
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80">
-        <button
-          type="button"
-          onClick={() => setSelectedType('All')}
-          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
-            selectedType === 'All'
-              ? 'bg-white text-slate-900 shadow-sm font-black'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-          }`}
-        >
-          <Building2 size={14} className={`shrink-0 ${selectedType === 'All' ? 'text-indigo-600' : 'text-slate-400'}`} />
-          <span className="truncate">All Ministries ({ministries.length})</span>
-        </button>
+      {/* Loading / Error / Empty States */}
+      {loadError && (
+        <div className="p-6 bg-rose-50 border border-rose-200 rounded-3xl text-center space-y-3">
+          <p className="text-xs font-bold text-rose-800">{loadError}</p>
+          <button
+            type="button"
+            onClick={loadMinistriesAndStatus}
+            className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold cursor-pointer hover:bg-rose-700"
+          >
+            Retry Loading Ministries
+          </button>
+        </div>
+      )}
 
-        <button
-          type="button"
-          onClick={() => setSelectedType('social_fellowship')}
-          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
-            selectedType === 'social_fellowship'
-              ? 'bg-amber-600 text-white shadow-md shadow-amber-100 font-black'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-          }`}
-        >
-          <Users size={14} className={`shrink-0 ${selectedType === 'social_fellowship' ? 'text-white' : 'text-amber-600'}`} />
-          <span className="truncate">👥 Social Fellowships ({socialCount})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedType('service_department')}
-          className={`px-2 sm:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 truncate ${
-            selectedType === 'service_department'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100 font-black'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-          }`}
-        >
-          <Building2 size={14} className={`shrink-0 ${selectedType === 'service_department' ? 'text-white' : 'text-indigo-600'}`} />
-          <span className="truncate">🛠️ Service Departments ({serviceCount})</span>
-        </button>
-      </div>
-
-      {/* Ministries Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredMinistries.map((m) => {
-          const roles = m.roles_and_responsibilities || [];
-          const isSocial = m.type === 'social_fellowship';
-
-          return (
-            <div key={m.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-3 flex-wrap gap-1.5">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {/* Ministry Type Badge */}
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1 ${
-                      isSocial 
-                        ? 'bg-amber-100 text-amber-900 border-amber-300' 
-                        : 'bg-indigo-100 text-indigo-900 border-indigo-200'
-                    }`}>
-                      {isSocial ? '👥 Social Fellowship' : '🛠️ Service Department'}
-                    </span>
-                    {/* Category Tag */}
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-slate-100 text-slate-700 border border-slate-200">
-                      {m.category}
-                    </span>
-                  </div>
-
-                  <span className="text-xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                    {m.member_count} Servants
-                  </span>
-                </div>
-
-                <h3 className="text-xl font-bold text-slate-900 mb-2">{m.name}</h3>
-                <p className="text-xs text-slate-600 leading-relaxed mb-4">{m.description}</p>
-
-                {/* Roles & Positions list */}
-                {roles.length > 0 && (
-                  <div className="space-y-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                    <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider block">
-                      Serving Opportunities & Roles
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {roles.map((r, i) => (
-                        <span key={i} className="px-2 py-0.5 bg-white border border-slate-200 text-slate-700 text-[10px] font-bold rounded-md">
-                          • {r}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-3 pt-3 border-t border-slate-100">
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Department Leader:</span>
-                  <span className="font-bold text-slate-800">{m.leader_name}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Gathering Schedule:</span>
-                  <span className="font-bold text-indigo-600">{m.meeting_time}</span>
-                </div>
-                <button 
-                  onClick={() => setSelectedMinistry(m)}
-                  className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
-                >
-                  Express Interest & Join Team
-                </button>
-              </div>
+      {loadingMinistries ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[1, 2, 3].map(n => (
+            <div key={n} className="bg-white rounded-3xl border border-slate-200 p-6 h-64 animate-pulse space-y-4">
+              <div className="h-4 bg-slate-100 rounded w-1/2" />
+              <div className="h-6 bg-slate-100 rounded w-3/4" />
+              <div className="h-12 bg-slate-100 rounded" />
+              <div className="h-10 bg-slate-100 rounded mt-auto" />
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      ) : filteredMinistries.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-10 text-center space-y-3">
+          <Building2 size={32} className="mx-auto text-slate-300" />
+          <h3 className="text-base font-extrabold text-slate-900">No Ministries Match Your Filters</h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            Try clearing your search query or switching back to all ministry types and categories.
+          </p>
+          <button
+            type="button"
+            onClick={resetAllFilters}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+          >
+            Reset All Filters
+          </button>
+        </div>
+      ) : (
+        /* Ministries Grid */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredMinistries.map((m) => {
+            const roles = m.roles_and_responsibilities || [];
+            const isSocial = m.type === 'social_fellowship';
+            const rosterCount = allActiveMemberships.filter(entry => entry.ministry_id === m.id).length;
+            const displayedServantCount = rosterCount > 0 ? Math.max(rosterCount, m.member_count || 0) : m.member_count;
+            const myMembership = myMembershipsByMinistryId.get(m.id);
+            const myRequest = latestRequestByMinistryId.get(m.id);
+            const isPending = myRequest?.status === 'pending';
+
+            return (
+              <div key={m.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2 text-[11px] font-semibold text-slate-500">
+                    <span className={isSocial ? 'text-amber-700 font-bold' : 'text-indigo-700 font-bold'}>
+                      {isSocial ? 'Social Fellowship' : 'Service Department'}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>{m.category}</span>
+                    <span className="ml-auto tabular-nums font-bold text-slate-600">
+                      {displayedServantCount} Servants
+                    </span>
+                  </div>
+
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{m.name}</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed mb-4">{m.description}</p>
+
+                  {/* Roles & Positions list */}
+                  {roles.length > 0 && (
+                    <div className="space-y-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                      <span className="text-[11px] font-bold text-slate-500 block">
+                        Serving Opportunities &amp; Roles
+                      </span>
+                      <ul className="text-[11px] text-slate-700 font-medium space-y-1 list-disc pl-4">
+                        {roles.map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3 pt-3 border-t border-slate-100">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Department Leader:</span>
+                    <span className="font-bold text-slate-800">{m.leader_name}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Gathering Schedule:</span>
+                    <span className="font-bold text-indigo-600">{m.meeting_time}</span>
+                  </div>
+
+                  {myMembership ? (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-emerald-900 font-bold min-w-0">
+                        <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                        <span className="truncate">Active Member · {myMembership.role_title}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLeaveConfirmOpen(false);
+                          setLeaveReason('');
+                          setActiveTeamModal({ ministry: m, membership: myMembership });
+                        }}
+                        className="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white border border-emerald-200 text-emerald-800 rounded-lg text-[10px] font-extrabold cursor-pointer shrink-0 transition-colors"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  ) : isPending && myRequest ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 py-2.5 px-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5">
+                        <Clock size={14} className="text-amber-600 shrink-0" />
+                        <span>Request Pending Review</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleWithdrawRequest(myRequest)}
+                        className="py-2.5 px-3 bg-white border border-slate-200 hover:border-rose-300 text-slate-600 hover:text-rose-700 text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0"
+                      >
+                        Withdraw
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {myRequest && (myRequest.status === 'declined' || myRequest.status === 'withdrawn') && (
+                        <p className="text-[11px] text-slate-500 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200">
+                          Previous request {myRequest.status} ({new Date(myRequest.updated_at || myRequest.created_at).toLocaleDateString()})
+                          {myRequest.review_note ? ` · "${myRequest.review_note}"` : ''}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => openInterestModal(m)}
+                        className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+                      >
+                        {myRequest && (myRequest.status === 'declined' || myRequest.status === 'withdrawn')
+                          ? 'Express Interest & Re-apply'
+                          : 'Express Interest & Join Team'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Express Interest Modal */}
       {selectedMinistry && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeInterestModal();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="join-ministry-title"
+            className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 my-auto"
+          >
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100">
               <div>
-                <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 font-black text-[10px] rounded uppercase">
-                  {selectedMinistry.category}
+                <span className="text-xs font-bold text-indigo-700">
+                  {selectedMinistry.category} · {selectedMinistry.meeting_time}
                 </span>
-                <h3 className="text-lg font-bold text-slate-900 mt-1">Join {selectedMinistry.name}</h3>
+                <h3 id="join-ministry-title" className="text-lg font-bold text-slate-900 mt-0.5">
+                  Join {selectedMinistry.name}
+                </h3>
               </div>
-              <button onClick={() => setSelectedMinistry(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-full hover:bg-slate-100">
+              <button
+                type="button"
+                onClick={closeInterestModal}
+                aria-label="Close modal"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-full hover:bg-slate-100"
+              >
                 <X size={20} />
               </button>
             </div>
 
             {interestSubmitted ? (
-              <div className="p-6 text-center space-y-2">
-                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
+              <div className="py-5 text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
                   <CheckCircle2 size={24} />
                 </div>
-                <h4 className="font-bold text-slate-900 text-base">Request Received!</h4>
-                <p className="text-xs text-slate-500">Department leader <strong className="text-slate-800">{selectedMinistry.leader_name}</strong> has been notified.</p>
+                <h4 className="font-bold text-slate-900 text-base">Request Submitted!</h4>
+                <p className="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">
+                  Your interest in <strong className="text-slate-900">{selectedMinistry.name}</strong> has been saved and{' '}
+                  <strong className="text-slate-900">{selectedMinistry.leader_name}</strong> has been notified for review.
+                </p>
+                <div className="pt-2 flex justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={closeInterestModal}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             ) : (
               <form onSubmit={handleJoin} className="space-y-4 text-xs">
                 <p className="text-xs text-slate-600">
-                  Let <strong className="text-slate-800">{selectedMinistry.leader_name}</strong> know about your desire to serve in {selectedMinistry.name}.
+                  Let <strong className="text-slate-800">{selectedMinistry.leader_name}</strong> know how you would like to serve in {selectedMinistry.name}.
                 </p>
 
-                {(selectedMinistry.roles_and_responsibilities || []).length > 0 && (
-                  <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl space-y-1.5">
-                    <span className="text-[10px] font-extrabold uppercase text-indigo-900 tracking-wider block">
-                      Available Roles in {selectedMinistry.name}:
-                    </span>
-                    <ul className="text-[11px] text-indigo-950 font-medium space-y-0.5 list-disc pl-4">
-                      {(selectedMinistry.roles_and_responsibilities || []).map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
+                <div className="grid grid-cols-3 gap-2 p-2.5 bg-indigo-50/70 border border-indigo-100 rounded-2xl text-[10px] font-bold text-indigo-900 text-center">
+                  <div>1. Submit Interest</div>
+                  <div className="border-x border-indigo-200/80">2. Leader Review</div>
+                  <div>3. Team Onboarding</div>
+                </div>
+
+                {submitError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold flex items-start gap-2">
+                    <AlertCircle size={15} className="text-rose-600 shrink-0 mt-0.5" />
+                    <span>{submitError}</span>
                   </div>
                 )}
 
-                <div>
-                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Your Availability</label>
-                  <input type="text" required placeholder="e.g. Available Saturdays and Sunday 1st Service" className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+                {profile && (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-500 block">Applicant</span>
+                      <span className="font-bold text-slate-900">{profile.first_name} {profile.last_name}</span>
+                      <span className="text-[11px] text-slate-500 block truncate">{profile.email}</span>
+                    </div>
+                    <div>
+                      <label htmlFor="join-phone-input" className="text-[11px] font-bold text-slate-500 block mb-1">
+                        Contact Phone *
+                      </label>
+                      <input
+                        id="join-phone-input"
+                        type="tel"
+                        required
+                        value={applicantPhone}
+                        onChange={(e) => setApplicantPhone(e.target.value)}
+                        placeholder="+232 76 000000"
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(selectedMinistry.roles_and_responsibilities || []).length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Preferred Serving Roles (select one or more)
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(selectedMinistry.roles_and_responsibilities || []).map((role) => {
+                        const selected = preferredRoles.includes(role);
+                        return (
+                          <button
+                            key={role}
+                            type="button"
+                            onClick={() => togglePreferredRole(role)}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              selected
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-indigo-300'
+                            }`}
+                          >
+                            {selected && <Check size={12} />}
+                            <span>{role}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Your Availability *
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {AVAILABILITY_PRESETS.map((slot) => {
+                      const active = selectedAvailabilityChips.includes(slot);
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          onClick={() => toggleAvailabilityChip(slot)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-indigo-50 text-indigo-800 border-indigo-400 font-bold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          {slot}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    value={customAvailability}
+                    onChange={(e) => setCustomAvailability(e.target.value)}
+                    placeholder="Additional schedule notes (e.g. Available 1st & 3rd Sundays)"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
+
                 <div>
-                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1">Brief Note / Spiritual Gifts</label>
-                  <textarea rows={3} placeholder="Tell us about previous experience or desire to serve..." className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <label htmlFor="join-note-input" className="text-xs font-bold text-slate-700 block mb-1">
+                    Brief Note / Spiritual Gifts
+                  </label>
+                  <textarea
+                    id="join-note-input"
+                    rows={3}
+                    value={interestNote}
+                    onChange={(e) => setInterestNote(e.target.value)}
+                    placeholder="Tell us about previous experience, gifts, or your desire to serve..."
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
                 </div>
-                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                  <button type="button" onClick={() => setSelectedMinistry(null)} className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-extrabold hover:bg-indigo-700 shadow-md shadow-indigo-100 cursor-pointer">Submit Interest</button>
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={closeInterestModal}
+                    className="px-4 py-2.5 text-slate-600 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingInterest}
+                    className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-extrabold hover:bg-indigo-700 disabled:bg-slate-400 shadow-md shadow-indigo-100 cursor-pointer"
+                  >
+                    {submittingInterest ? 'Submitting...' : 'Submit Interest'}
+                  </button>
                 </div>
               </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Active Team Workspace & Step-Down Modal */}
+      {activeTeamModal && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[105] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !leavingTeam) {
+              setActiveTeamModal(null);
+              setLeaveConfirmOpen(false);
+              setLeaveReason('');
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="my-team-modal-title"
+            className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 my-auto text-xs"
+          >
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">
+                  Active Ministry Team
+                </span>
+                <h3 id="my-team-modal-title" className="text-lg font-black text-slate-900 mt-0.5">
+                  {activeTeamModal.ministry.name}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Leader: {activeTeamModal.ministry.leader_name} · {activeTeamModal.ministry.meeting_time}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={leavingTeam}
+                onClick={() => {
+                  setActiveTeamModal(null);
+                  setLeaveConfirmOpen(false);
+                  setLeaveReason('');
+                }}
+                aria-label="Close team details"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full cursor-pointer disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-500">Appointed Role</span>
+                <span className="font-extrabold text-slate-900">{activeTeamModal.membership.role_title}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-500">Service Duty</span>
+                <span className="font-semibold text-slate-800 text-right">{activeTeamModal.membership.duty || 'Department Service'}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-500">Roster Status</span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800">
+                  {activeTeamModal.membership.status.replace('_', ' ')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-500">Joined Date</span>
+                <span className="font-semibold text-slate-700">
+                  {new Date(activeTeamModal.membership.joined_at).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-indigo-50/60 border border-indigo-100 rounded-2xl space-y-2">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-900 block">
+                Onboarding &amp; Service Readiness
+              </span>
+              <ul className="space-y-1.5 text-[11px] text-slate-700">
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  <span>Roster appointment confirmed ({activeTeamModal.membership.role_title})</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                  <span>
+                    {activeTeamModal.membership.status === 'in_training'
+                      ? `Attend orientation with ${activeTeamModal.ministry.leader_name}`
+                      : `Connected with ${activeTeamModal.ministry.leader_name}`}
+                  </span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Clock size={14} className="text-indigo-600 shrink-0" />
+                  <span>Next gathering: {activeTeamModal.ministry.meeting_time}</span>
+                </li>
+              </ul>
+            </div>
+
+            {leaveConfirmOpen ? (
+              <form onSubmit={handleLeaveTeam} className="p-4 bg-rose-50/70 border border-rose-200 rounded-2xl space-y-3">
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-rose-900">Step Down From {activeTeamModal.ministry.name}?</h4>
+                  <p className="text-[11px] text-rose-800">
+                    This removes you from the active team roster and notifies {activeTeamModal.ministry.leader_name}. You can re-apply anytime.
+                  </p>
+                </div>
+                <textarea
+                  rows={2}
+                  value={leaveReason}
+                  onChange={e => setLeaveReason(e.target.value)}
+                  placeholder="Optional note for your team leader (e.g. stepping back for a season or transferring teams)..."
+                  className="w-full p-2.5 bg-white border border-rose-200 rounded-xl text-xs text-slate-800 outline-none focus:ring-2 focus:ring-rose-500 resize-none"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={leavingTeam}
+                    onClick={() => setLeaveConfirmOpen(false)}
+                    className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                  >
+                    Keep Membership
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={leavingTeam}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl cursor-pointer disabled:opacity-60"
+                  >
+                    {leavingTeam ? 'Updating...' : 'Confirm Step Down'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLeaveConfirmOpen(true)}
+                  className="px-3.5 py-2 text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold rounded-xl cursor-pointer transition-colors"
+                >
+                  Step Down / Leave Team
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTeamModal(null);
+                    setLeaveConfirmOpen(false);
+                    setLeaveReason('');
+                  }}
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -2993,25 +3917,18 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   useEffect(() => {
     setMemberContributions(getMemberContributions(activeDept));
     setWelfareCampaigns(getWelfareCampaigns(activeDept));
-    setDeptNotifications(getDepartmentNotifications(activeDept));
 
     const handleWelfareUpd = (e: any) => {
       if (!e.detail || e.detail.department === activeDept) {
         setMemberContributions(getMemberContributions(activeDept));
         setWelfareCampaigns(getWelfareCampaigns(activeDept));
-        setDeptNotifications(getDepartmentNotifications(activeDept));
       }
-    };
-    const handleNotifUpd = () => {
-      setDeptNotifications(getDepartmentNotifications(activeDept));
     };
     window.addEventListener('dept_welfare_updated', handleWelfareUpd);
     window.addEventListener('dept_welfare_campaigns_updated', handleWelfareUpd);
-    window.addEventListener('dept_notification_sent', handleNotifUpd);
     return () => {
       window.removeEventListener('dept_welfare_updated', handleWelfareUpd);
       window.removeEventListener('dept_welfare_campaigns_updated', handleWelfareUpd);
-      window.removeEventListener('dept_notification_sent', handleNotifUpd);
     };
   }, [activeDept]);
 
@@ -3581,17 +4498,87 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     { item_name: 'Heavy-Duty Fluid Head Tripod & SDI Cables', quantity: 2, unit_price: 1000 }
   ]);
 
-  const [volunteers, setVolunteers] = useState<any[]>([
-    { id: 'v-1', name: 'Jonathan Davis', email: 'jdavis@gmail.com', phone: '+1 555-901-2345', status: 'pending', note: 'Sings tenor in college choir, eager to join worship team' },
-    { id: 'v-2', name: 'Maria Santos', email: 'msantos@gmail.com', phone: '+1 555-890-1234', status: 'pending', note: 'Interested in Sunday media slide operation' }
-  ]);
+  const [dbMinistries, setDbMinistries] = useState<Ministry[]>([]);
+  const [pendingJoinRequests, setPendingJoinRequests] = useState<MinistryJoinRequest[]>([]);
+  const [historyJoinRequests, setHistoryJoinRequests] = useState<MinistryJoinRequest[]>([]);
+  const [joinRequestTab, setJoinRequestTab] = useState<'pending' | 'history'>('pending');
+  const [reviewingJoinReq, setReviewingJoinReq] = useState<{
+    mode: 'approve' | 'decline';
+    req: MinistryJoinRequest;
+  } | null>(null);
+  const [reviewRoleTitle, setReviewRoleTitle] = useState('');
+  const [reviewDuty, setReviewDuty] = useState('');
+  const [reviewMemberStatus, setReviewMemberStatus] = useState<'active' | 'in_training' | 'on_leave'>('active');
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+
   const [notices, setNotices] = useState<any[]>([
     { id: 'n-1', dept: 'Media & IT Ministry', author: 'David Koroma', text: 'Multi-camera broadcast rehearsal for Easter Sunday streaming session on Friday 5 PM.', date: new Date().toISOString() },
     { id: 'n-2', dept: 'Voices of Grace Choir', author: 'Hannah Adams', text: 'Robes for Sunday 1st Service will be Royal Blue.', date: new Date(Date.now() - 86400000).toISOString() }
   ]);
   const [newNoticeText, setNewNoticeText] = useState('');
 
-  // Department Roster State & localStorage Persistence
+  useEffect(() => {
+    supabase
+      .from('ministries')
+      .select('*')
+      .then(({ data }) => {
+        if (data) {
+          const list = data as Ministry[];
+          setDbMinistries(list);
+          if (
+            !canSwitchDepts &&
+            profile &&
+            !(profile as any)?.assigned_department &&
+            !(profile as any)?.department_name
+          ) {
+            const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim().toLowerCase();
+            const ledMinistry = list.find(
+              m =>
+                (m.leader_id && m.leader_id === profile.id) ||
+                (fullName && (m.leader_name || '').trim().toLowerCase() === fullName)
+            );
+            if (ledMinistry?.name) {
+              setActiveDept(ledMinistry.name);
+            }
+          }
+        }
+      });
+  }, [canSwitchDepts, profile?.id]);
+
+  const findMatchingMinistry = (list: Ministry[], deptName: string): Ministry | undefined => {
+    const clean = (deptName || '').trim().toLowerCase();
+    if (!clean || list.length === 0) return undefined;
+    const exact = list.find(m => m.name.trim().toLowerCase() === clean);
+    if (exact) return exact;
+    const keywords = ['media', 'choir', 'voices', 'youth', 'children', 'usher', 'hospitality', 'prayer', 'women', 'men'];
+    const matchedKeyword = keywords.find(k => clean.includes(k));
+    if (matchedKeyword) {
+      return list.find(m => m.name.toLowerCase().includes(matchedKeyword));
+    }
+    return undefined;
+  };
+
+  const activeMinistryObj = findMatchingMinistry(dbMinistries, activeDept);
+
+  useEffect(() => {
+    const syncDeptNotifications = () => {
+      setDeptNotifications(getDepartmentNotifications(activeDept, activeMinistryObj?.name));
+    };
+    syncDeptNotifications();
+    window.addEventListener('dept_notification_sent', syncDeptNotifications);
+    window.addEventListener('dept_welfare_updated', syncDeptNotifications);
+    window.addEventListener('dept_welfare_campaigns_updated', syncDeptNotifications);
+    window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, syncDeptNotifications);
+    return () => {
+      window.removeEventListener('dept_notification_sent', syncDeptNotifications);
+      window.removeEventListener('dept_welfare_updated', syncDeptNotifications);
+      window.removeEventListener('dept_welfare_campaigns_updated', syncDeptNotifications);
+      window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, syncDeptNotifications);
+    };
+  }, [activeDept, activeMinistryObj?.id, activeMinistryObj?.name]);
+
+  // Department Roster State & localStorage + ministry_members Persistence
   const getInitialDeptRoster = (deptName: string) => {
     const saved = localStorage.getItem(`fc_roster_${deptName}`);
     if (saved) {
@@ -3625,9 +4612,91 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
   const [deptRoster, setDeptRoster] = useState<any[]>(() => getInitialDeptRoster(activeDept));
 
+  const formatRosterStatusLabel = (status: string): 'Active' | 'On Leave' | 'In Training' => {
+    if (status === 'on_leave' || status === 'On Leave') return 'On Leave';
+    if (status === 'in_training' || status === 'In Training') return 'In Training';
+    return 'Active';
+  };
+
+  const loadSyncedDeptRoster = async () => {
+    const fallback = getInitialDeptRoster(activeDept);
+    if (!activeMinistryObj?.id) {
+      setDeptRoster(fallback);
+      return;
+    }
+    try {
+      const persisted = await getMinistryRoster(activeMinistryObj.id);
+      if (persisted.length === 0) {
+        setDeptRoster(fallback);
+        return;
+      }
+      const mappedPersisted = persisted
+        .filter(entry => entry.status !== 'inactive')
+        .map(entry => ({
+          id: entry.member_id,
+          assignment_id: entry.id,
+          member_id: entry.member_id,
+          name: `${entry.member.first_name} ${entry.member.last_name}`.trim(),
+          role: entry.role_title,
+          status: formatRosterStatusLabel(entry.status),
+          duty: entry.duty || 'Department Member',
+          email: entry.member.email || '',
+          phone: entry.member.phone || '',
+          joined_date: (entry.joined_at || '').slice(0, 10)
+        }));
+      const persistedIds = new Set(mappedPersisted.map(m => m.member_id));
+      const persistedNames = new Set(mappedPersisted.map(m => m.name.toLowerCase()));
+      const merged = [
+        ...mappedPersisted,
+        ...fallback.filter(
+          f => !persistedIds.has(f.id) && !persistedNames.has((f.name || '').toLowerCase())
+        )
+      ];
+      setDeptRoster(merged);
+    } catch (err) {
+      console.warn('Unable to sync ministry_members roster:', err);
+      setDeptRoster(fallback);
+    }
+  };
+
   useEffect(() => {
-    setDeptRoster(getInitialDeptRoster(activeDept));
-  }, [activeDept]);
+    loadSyncedDeptRoster();
+  }, [activeDept, activeMinistryObj?.id]);
+
+  const refreshPendingJoinRequests = () => {
+    const allForDept = getJoinRequestsForMinistry({
+      ministryId: activeMinistryObj?.id,
+      ministryName: activeDept,
+      status: 'all'
+    });
+    setPendingJoinRequests(allForDept.filter(r => r.status === 'pending'));
+    setHistoryJoinRequests(allForDept.filter(r => r.status !== 'pending'));
+  };
+
+  useEffect(() => {
+    refreshPendingJoinRequests();
+    const handleReqUpdate = () => {
+      refreshPendingJoinRequests();
+      loadSyncedDeptRoster();
+    };
+    window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleReqUpdate);
+    window.addEventListener('storage', handleReqUpdate);
+    return () => {
+      window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleReqUpdate);
+      window.removeEventListener('storage', handleReqUpdate);
+    };
+  }, [activeDept, activeMinistryObj?.id]);
+
+  useEffect(() => {
+    if (!reviewingJoinReq) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !reviewSubmitting) {
+        setReviewingJoinReq(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [reviewingJoinReq, reviewSubmitting]);
 
   const updateDeptRoster = (newRoster: any[]) => {
     setDeptRoster(newRoster);
@@ -3682,9 +4751,27 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setEditRosterPhone(member.phone || '');
   };
 
-  const handleSaveRosterEdit = (e: React.FormEvent) => {
+  const mapUiStatusToDb = (status: 'Active' | 'On Leave' | 'In Training'): 'active' | 'on_leave' | 'in_training' => {
+    if (status === 'On Leave') return 'on_leave';
+    if (status === 'In Training') return 'in_training';
+    return 'active';
+  };
+
+  const handleSaveRosterEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRosterMember || !editRosterName.trim()) return;
+
+    if (editingRosterMember.assignment_id) {
+      try {
+        await updateMinistryMember(editingRosterMember.assignment_id, {
+          role_title: editRosterRole.trim() || 'Team Member',
+          duty: editRosterDuty.trim() || 'Sunday Duty',
+          status: mapUiStatusToDb(editRosterStatus)
+        });
+      } catch (err) {
+        console.warn('Could not update persisted ministry_members entry:', err);
+      }
+    }
 
     const updated = deptRoster.map(m => m.id === editingRosterMember.id ? {
       ...m,
@@ -3709,10 +4796,19 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setDeletingRosterMember(member);
   };
 
-  const confirmDeleteRosterMember = () => {
+  const confirmDeleteRosterMember = async () => {
     if (!deletingRosterMember) return;
     const memberId = deletingRosterMember.id;
     const memberName = deletingRosterMember.name;
+
+    if (deletingRosterMember.assignment_id) {
+      try {
+        await removeMinistryMember(deletingRosterMember.assignment_id);
+      } catch (err) {
+        console.warn('Could not remove persisted ministry_members entry:', err);
+      }
+    }
+
     const updated = deptRoster.filter(m => m.id !== memberId);
     updateDeptRoster(updated);
     if (viewingRosterMember?.id === memberId) setViewingRosterMember(null);
@@ -3734,22 +4830,44 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setShowAddRosterModal(true);
   };
 
-  const handleAddRosterMember = (e: React.FormEvent) => {
+  const handleAddRosterMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addRosterName.trim()) return;
 
+    const roleTitle = addRosterRole.trim() || 'Team Member';
+    const dutyText = addRosterDuty.trim() || 'General Ministry Duty';
+    let assignmentId: string | undefined;
+
+    if (selectedCongregationMemberId && activeMinistryObj?.id) {
+      try {
+        const saved = await addMinistryMember({
+          ministry_id: activeMinistryObj.id,
+          member_id: selectedCongregationMemberId,
+          role_title: roleTitle,
+          duty: dutyText,
+          status: mapUiStatusToDb(addRosterStatus),
+          created_by: profile?.id
+        });
+        assignmentId = saved.id;
+      } catch (err) {
+        console.warn('Could not persist congregation roster assignment:', err);
+      }
+    }
+
     const newMember = {
-      id: `r_${Date.now()}`,
+      id: selectedCongregationMemberId || `r_${Date.now()}`,
+      assignment_id: assignmentId,
+      member_id: selectedCongregationMemberId || undefined,
       name: addRosterName.trim(),
-      role: addRosterRole.trim() || 'Team Member',
-      duty: addRosterDuty.trim() || 'General Ministry Duty',
+      role: roleTitle,
+      duty: dutyText,
       status: addRosterStatus,
       email: addRosterEmail.trim(),
       phone: addRosterPhone.trim(),
       joined_date: new Date().toISOString().slice(0, 10)
     };
 
-    const updated = [...deptRoster, newMember];
+    const updated = [...deptRoster.filter(m => m.id !== newMember.id), newMember];
     updateDeptRoster(updated);
     setShowAddRosterModal(false);
     setProposalSuccessToast(`Appointed ${addRosterName.trim()} as ${newMember.role} in ${activeDept}!`);
@@ -3797,23 +4915,70 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     );
   }
 
-  const handleApproveVolunteer = (vId: string) => {
-    const vol = volunteers.find(v => v.id === vId);
-    if (vol) {
-      setVolunteers(prev => prev.filter(v => v.id !== vId));
-      const newMember = {
-        id: `r_${Date.now()}`,
-        name: vol.name,
-        role: 'Team Member',
-        status: 'Active',
-        duty: 'General Roster & Sunday Support',
-        email: vol.email || '',
-        phone: vol.phone || '',
-        joined_date: new Date().toISOString().slice(0, 10)
-      };
-      const updatedRoster = [...deptRoster, newMember];
-      updateDeptRoster(updatedRoster);
-      setProposalSuccessToast(`Approved ${vol.name} and added to ${activeDept} roster!`);
+  const openApproveJoinModal = (req: MinistryJoinRequest) => {
+    const firstPreferred =
+      req.preferred_roles.find(r => r && !r.toLowerCase().startsWith('open to')) || 'Team Member';
+    setReviewRoleTitle(firstPreferred);
+    setReviewDuty(req.availability || 'Sunday & Ministry Service Duty');
+    setReviewMemberStatus('active');
+    setReviewNote('');
+    setReviewingJoinReq({ mode: 'approve', req });
+  };
+
+  const openDeclineJoinModal = (req: MinistryJoinRequest) => {
+    setReviewNote('');
+    setReviewingJoinReq({ mode: 'decline', req });
+  };
+
+  const handleConfirmJoinReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewingJoinReq) return;
+    setReviewSubmitting(true);
+    try {
+      if (reviewingJoinReq.mode === 'approve') {
+        const result = await approveMinistryJoinRequest({
+          requestId: reviewingJoinReq.req.id,
+          reviewerProfile: profile,
+          roleTitle: reviewRoleTitle,
+          duty: reviewDuty,
+          memberStatus: reviewMemberStatus,
+          reviewNote
+        });
+        await loadSyncedDeptRoster();
+        refreshPendingJoinRequests();
+        setProposalSuccessToast(
+          `Approved ${reviewingJoinReq.req.applicant_name} as ${result.request.assigned_role_title} in ${reviewingJoinReq.req.ministry_name} and sent notification!`
+        );
+      } else {
+        await declineMinistryJoinRequest({
+          requestId: reviewingJoinReq.req.id,
+          reviewerProfile: profile,
+          reviewNote
+        });
+        refreshPendingJoinRequests();
+        setProposalSuccessToast(
+          `Updated request for ${reviewingJoinReq.req.applicant_name} and sent notification.`
+        );
+      }
+      setReviewingJoinReq(null);
+      setTimeout(() => setProposalSuccessToast(null), 5000);
+    } catch (err: any) {
+      setProposalSuccessToast(err?.message || 'Unable to process join request.');
+      setTimeout(() => setProposalSuccessToast(null), 5000);
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
+  const handleReopenJoinRequest = async (req: MinistryJoinRequest) => {
+    try {
+      await reopenMinistryJoinRequest(req.id, profile);
+      refreshPendingJoinRequests();
+      setJoinRequestTab('pending');
+      setProposalSuccessToast(`Re-opened ${req.applicant_name}'s request for review.`);
+      setTimeout(() => setProposalSuccessToast(null), 4000);
+    } catch (err: any) {
+      setProposalSuccessToast(err?.message || 'Could not re-open request.');
       setTimeout(() => setProposalSuccessToast(null), 4000);
     }
   };
@@ -4003,11 +5168,11 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
             <button
               type="button"
               onClick={() => setShowInAppNotifModal(true)}
-              className="relative p-2 sm:px-3 sm:py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all"
-              title="View In-App Contribution Reminders & Notifications"
+              className="relative p-2 sm:px-3 sm:py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 rounded-xl font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+              title="View Department Notifications & Join Requests"
             >
               <Bell size={15} className="text-purple-700 shrink-0" />
-              <span className="hidden sm:inline font-bold">Reminders</span>
+              <span className="hidden sm:inline font-bold">Notifications</span>
               {deptNotifications.filter(n => !n.is_read).length > 0 && (
                 <span className="w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-black flex items-center justify-center animate-pulse">
                   {deptNotifications.filter(n => !n.is_read).length}
@@ -4035,6 +5200,28 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   <option value="Outreach & Evangelism">Outreach & Evangelism</option>
                   <option value="Ushers & Hospitality">Ushers & Hospitality</option>
                   <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
+                  <option value="Men of Honor Fellowship">Men of Honor Fellowship</option>
+                  <option value="Women of Grace Guild">Women of Grace Guild</option>
+                  {dbMinistries
+                    .filter(
+                      m =>
+                        ![
+                          'Media & IT Ministry',
+                          'Voices of Grace Choir',
+                          'Kingdom Youth Ministry',
+                          'Children Ministry',
+                          'Outreach & Evangelism',
+                          'Ushers & Hospitality',
+                          'Intercessory Prayer Team',
+                          'Men of Honor Fellowship',
+                          'Women of Grace Guild'
+                        ].some(n => n.toLowerCase() === m.name.toLowerCase())
+                    )
+                    .map(m => (
+                      <option key={m.id} value={m.name}>
+                        {m.name}
+                      </option>
+                    ))}
                 </select>
               </div>
             ) : (
@@ -4080,6 +5267,11 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800 shrink-0">
             {deptRoster.length} Active
           </span>
+          {pendingJoinRequests.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white shrink-0">
+              {pendingJoinRequests.length}
+            </span>
+          )}
         </button>
 
         <button
@@ -4101,7 +5293,12 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
       {/* MEMBER TASKS & ACTION ITEMS WIDGET */}
       {(() => {
-        const allTasks = getMemberActionableTasks(activeDept, deptRoster, volunteers)
+        const mappedJoinVolunteers = pendingJoinRequests.map(req => ({
+          id: req.id,
+          name: req.applicant_name,
+          note: req.note || `Preferred: ${req.preferred_roles.join(', ')} (${req.availability})`
+        }));
+        const allTasks = getMemberActionableTasks(activeDept, deptRoster, mappedJoinVolunteers)
           .filter(t => !dismissedTaskIds.includes(t.id));
         const urgentCount = allTasks.filter(t => t.priority === 'urgent' || t.priority === 'high').length;
 
@@ -4264,12 +5461,14 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <button
                             type="button"
                             onClick={() => {
-                              handleApproveVolunteer(task.member_id);
-                              setDismissedTaskIds(prev => [...prev, task.id]);
+                              const matched = pendingJoinRequests.find(r => r.id === task.member_id);
+                              if (matched) {
+                                openApproveJoinModal(matched);
+                              }
                             }}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-[10px] flex items-center gap-1 cursor-pointer shadow-2xs"
                           >
-                            <Check size={11} /> Approve & Add
+                            <Check size={11} /> Review &amp; Appoint
                           </button>
                         )}
 
@@ -4953,37 +6152,146 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               )}
             </div>
 
-            {/* Volunteer Inquiries */}
+            {/* Volunteer / Team Join Inquiries */}
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <h3 className="font-extrabold text-slate-900 text-base">Pending Volunteer Requests ({volunteers.length})</h3>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded">
-                  Action Needed
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    Team Join Requests &amp; Review Log
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Submissions from Ministries &amp; Service Teams for {activeMinistryObj?.name || activeDept}.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setJoinRequestTab('pending')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                      joinRequestTab === 'pending'
+                        ? 'bg-white text-indigo-900 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Pending ({pendingJoinRequests.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJoinRequestTab('history')}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                      joinRequestTab === 'history'
+                        ? 'bg-white text-indigo-900 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Processed History ({historyJoinRequests.length})
+                  </button>
+                </div>
               </div>
 
-              {volunteers.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-4 text-center">No pending volunteer applications for {activeDept}.</p>
-              ) : (
-                <div className="space-y-3">
-                  {volunteers.map(vol => (
-                    <div key={vol.id} className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-2 text-xs">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-bold text-slate-900">{vol.name}</h4>
-                          <p className="text-slate-500">{vol.email} • {vol.phone}</p>
+              {joinRequestTab === 'pending' ? (
+                pendingJoinRequests.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-4 text-center">
+                    No pending join requests for {activeMinistryObj?.name || activeDept}.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {pendingJoinRequests.map(req => (
+                      <div key={req.id} className="p-4 bg-indigo-50/40 rounded-2xl border border-indigo-100 space-y-2.5 text-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+                          <div className="space-y-0.5">
+                            <h4 className="font-bold text-slate-900 text-sm">{req.applicant_name}</h4>
+                            <p className="text-slate-500 text-[11px]">
+                              {req.applicant_email} · {req.applicant_phone}
+                            </p>
+                            <p className="text-[11px] text-slate-500">
+                              Submitted {new Date(req.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => openDeclineJoinModal(req)}
+                              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-rose-300 text-slate-700 hover:text-rose-700 font-bold rounded-lg transition-colors cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openApproveJoinModal(req)}
+                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
+                            >
+                              Approve &amp; Appoint
+                            </button>
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleApproveVolunteer(vol.id)}
-                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
-                        >
-                          Approve & Add
-                        </button>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+                          <div className="bg-white p-2.5 rounded-xl border border-slate-200/80">
+                            <span className="font-bold text-slate-500 block mb-0.5">Preferred Role(s)</span>
+                            <span className="font-semibold text-indigo-900">{req.preferred_roles.join(', ')}</span>
+                          </div>
+                          <div className="bg-white p-2.5 rounded-xl border border-slate-200/80">
+                            <span className="font-bold text-slate-500 block mb-0.5">Availability</span>
+                            <span className="font-semibold text-slate-800">{req.availability}</span>
+                          </div>
+                        </div>
+
+                        {req.note && (
+                          <p className="text-slate-600 italic bg-white p-2.5 rounded-xl border border-slate-200">
+                            &ldquo;{req.note}&rdquo;
+                          </p>
+                        )}
                       </div>
-                      <p className="text-slate-600 italic bg-white p-2.5 rounded-xl border border-slate-200">
-                        "{vol.note}"
-                      </p>
+                    ))}
+                  </div>
+                )
+              ) : historyJoinRequests.length === 0 ? (
+                <p className="text-xs text-slate-400 italic py-4 text-center">
+                  No processed join requests yet for {activeMinistryObj?.name || activeDept}.
+                </p>
+              ) : (
+                <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                  {historyJoinRequests.map(req => (
+                    <div key={req.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5 text-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-extrabold text-slate-900">{req.applicant_name}</span>
+                          <span
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                              req.status === 'approved'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : req.status === 'declined'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {req.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-500">
+                            {req.reviewed_by_name ? `Reviewed by ${req.reviewed_by_name}` : 'Member update'} · {new Date(req.reviewed_at || req.updated_at || req.created_at).toLocaleDateString()}
+                          </span>
+                          {(req.status === 'declined' || req.status === 'withdrawn') && (
+                            <button
+                              type="button"
+                              onClick={() => handleReopenJoinRequest(req)}
+                              className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-bold cursor-pointer"
+                            >
+                              Re-open
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {req.assigned_role_title && (
+                        <p className="text-[11px] font-bold text-emerald-800">
+                          Appointed: {req.assigned_role_title} ({req.assigned_duty})
+                        </p>
+                      )}
+                      {req.review_note && (
+                        <p className="text-[11px] italic text-slate-600">&ldquo;{req.review_note}&rdquo;</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -7888,9 +9196,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
         </div>
       )}
 
-      {/* --- IN-APP CONTRIBUTION REMINDERS & NOTIFICATIONS MODAL --- */}
+      {/* --- IN-APP REMINDERS & NOTIFICATIONS MODAL --- */}
       {showInAppNotifModal && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[120] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[120] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl border border-slate-200 space-y-5 max-h-[85vh] flex flex-col">
             <div className="flex justify-between items-start pb-3 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -7899,12 +9207,12 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-black text-slate-900">In-App Reminders & Notifications</h3>
+                    <h3 className="text-lg font-black text-slate-900">Department Notifications</h3>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-100 text-purple-800">
                       {activeDept}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">System dispatch log for member contribution notifications.</p>
+                  <p className="text-xs text-slate-500">Dispatch log for team join requests and member contribution reminders.</p>
                 </div>
               </div>
 
@@ -7927,22 +9235,22 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               <button
                 type="button"
                 onClick={() => {
-                  markAllDeptNotificationsAsRead(activeDept);
-                  setDeptNotifications(getDepartmentNotifications(activeDept));
-                  setProposalSuccessToast('All in-app reminders marked as read');
+                  markAllDeptNotificationsAsRead(activeDept, activeMinistryObj?.name);
+                  setDeptNotifications(getDepartmentNotifications(activeDept, activeMinistryObj?.name));
+                  setProposalSuccessToast('All department notifications marked as read');
                   setTimeout(() => setProposalSuccessToast(null), 3000);
                 }}
-                className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-[11px] shadow-2xs cursor-pointer transition-all"
+                className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-[11px] shadow-xs cursor-pointer transition-all"
               >
                 ✓ Mark All Read
               </button>
             </div>
 
-            {/* List of In-App Reminders */}
+            {/* List of In-App Notifications */}
             <div className="space-y-3 overflow-y-auto pr-1 flex-1 text-xs">
               {deptNotifications.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
-                  No in-app reminders dispatched yet for {activeDept}. Click "Remind Pending" on any welfare drive or monthly dues tab to send instant reminders!
+                  No notifications dispatched yet for {activeDept}. Join requests and welfare reminders will appear here!
                 </div>
               ) : (
                 deptNotifications.map(notif => (
@@ -7958,9 +9266,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
                             notif.type === 'welfare_reminder' ? 'bg-purple-200 text-purple-900' :
                             notif.type === 'dues_reminder' ? 'bg-emerald-200 text-emerald-900' :
+                            notif.type === 'ministry_join_request' ? 'bg-amber-200 text-amber-900' :
                             'bg-indigo-200 text-indigo-900'
                           }`}>
-                            {notif.type.replace('_', ' ')}
+                            {notif.type.replace(/_/g, ' ')}
                           </span>
                           <span className="font-extrabold text-slate-900 text-xs">{notif.title}</span>
                         </div>
@@ -7974,10 +9283,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           type="button"
                           onClick={() => {
                             deleteNotification(notif.id);
-                            setDeptNotifications(getDepartmentNotifications(activeDept));
+                            setDeptNotifications(getDepartmentNotifications(activeDept, activeMinistryObj?.name));
                           }}
                           className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer transition-colors"
-                          title="Delete Reminder Log"
+                          title="Delete Notification"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -7988,20 +9297,39 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                       "{notif.message}"
                     </p>
 
-                    <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400 font-mono">
+                    <div className="flex items-center justify-between gap-2 pt-1 text-[10px] text-slate-400 font-mono">
                       <span>Sent by: {notif.sent_by} • {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!notif.is_read) {
-                            markNotificationAsRead(notif.id);
-                            setDeptNotifications(getDepartmentNotifications(activeDept));
-                          }
-                        }}
-                        className={`font-extrabold cursor-pointer ${notif.is_read ? 'text-emerald-700' : 'text-purple-700 hover:underline'}`}
-                      >
-                        {notif.is_read ? 'Read ✓' : 'Mark Read'}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {notif.type === 'ministry_join_request' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!notif.is_read) {
+                                markNotificationAsRead(notif.id);
+                                setDeptNotifications(getDepartmentNotifications(activeDept, activeMinistryObj?.name));
+                              }
+                              setShowInAppNotifModal(false);
+                              setJoinRequestTab('pending');
+                              setLeaderConsoleSubTab('roster');
+                            }}
+                            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-sans font-extrabold text-[11px] cursor-pointer transition-colors"
+                          >
+                            Review Request
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!notif.is_read) {
+                              markNotificationAsRead(notif.id);
+                              setDeptNotifications(getDepartmentNotifications(activeDept, activeMinistryObj?.name));
+                            }
+                          }}
+                          className={`font-extrabold cursor-pointer ${notif.is_read ? 'text-emerald-700' : 'text-purple-700 hover:underline'}`}
+                        >
+                          {notif.is_read ? 'Read ✓' : 'Mark Read'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -8019,6 +9347,203 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 Done
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- APPROVE / DECLINE MINISTRY JOIN REQUEST MODAL --- */}
+      {reviewingJoinReq && (
+        <div
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[125] flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !reviewSubmitting) {
+              setReviewingJoinReq(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl border border-slate-200 space-y-5 my-auto text-xs animate-in fade-in">
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="min-w-0">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  reviewingJoinReq.mode === 'approve'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}>
+                  {reviewingJoinReq.mode === 'approve' ? 'Approve & Appoint to Roster' : 'Decline Join Request'}
+                </span>
+                <h3 className="text-lg font-black text-slate-900 mt-1 truncate">
+                  {reviewingJoinReq.req.applicant_name}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium truncate">
+                  {reviewingJoinReq.req.ministry_name} · Submitted {new Date(reviewingJoinReq.req.created_at).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={reviewSubmitting}
+                onClick={() => setReviewingJoinReq(null)}
+                aria-label="Close review dialog"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                <span><strong className="text-slate-800">Email:</strong> {reviewingJoinReq.req.applicant_email || '—'}</span>
+                <span><strong className="text-slate-800">Phone:</strong> {reviewingJoinReq.req.applicant_phone || '—'}</span>
+              </div>
+              <div className="text-[11px] text-slate-600">
+                <strong className="text-slate-800">Availability:</strong> {reviewingJoinReq.req.availability || 'Not specified'}
+              </div>
+              {reviewingJoinReq.req.preferred_roles.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                    Preferred Roles {reviewingJoinReq.mode === 'approve' ? '(click to select)' : ''}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {reviewingJoinReq.req.preferred_roles.map((roleOpt, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={reviewingJoinReq.mode !== 'approve'}
+                        onClick={() => {
+                          if (reviewingJoinReq.mode === 'approve') {
+                            setReviewRoleTitle(roleOpt);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors ${
+                          reviewingJoinReq.mode === 'approve' && reviewRoleTitle === roleOpt
+                            ? 'bg-indigo-600 text-white border-indigo-600 cursor-pointer'
+                            : 'bg-white text-slate-700 border-slate-200 ' + (reviewingJoinReq.mode === 'approve' ? 'hover:border-indigo-300 cursor-pointer' : 'cursor-default')
+                        }`}
+                      >
+                        {roleOpt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {reviewingJoinReq.req.note && (
+                <p className="text-[11px] text-slate-600 italic bg-white p-2.5 rounded-xl border border-slate-200">
+                  &ldquo;{reviewingJoinReq.req.note}&rdquo;
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleConfirmJoinReview} className="space-y-4">
+              {reviewingJoinReq.mode === 'approve' && (
+                <>
+                  <div>
+                    <label className="font-extrabold text-slate-700 block mb-1">Appointed Team Role *</label>
+                    <input
+                      type="text"
+                      required
+                      value={reviewRoleTitle}
+                      onChange={e => setReviewRoleTitle(e.target.value)}
+                      placeholder="e.g. Camera Operator, Soprano Vocalist"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    {(activeMinistryObj?.roles_and_responsibilities || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {(activeMinistryObj?.roles_and_responsibilities || []).slice(0, 6).map((roleChip, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setReviewRoleTitle(roleChip)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                              reviewRoleTitle === roleChip
+                                ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            + {roleChip}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-extrabold text-slate-700 block mb-1">Assigned Service Duty *</label>
+                      <input
+                        type="text"
+                        required
+                        value={reviewDuty}
+                        onChange={e => setReviewDuty(e.target.value)}
+                        placeholder="e.g. Sunday 1st Service Camera"
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-extrabold text-slate-700 block mb-1">Initial Roster Status</label>
+                      <select
+                        value={reviewMemberStatus}
+                        onChange={e => setReviewMemberStatus(e.target.value as 'active' | 'in_training' | 'on_leave')}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="active">Active Team Member</option>
+                        <option value="in_training">In Training / Onboarding</option>
+                        <option value="on_leave">On Leave</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="font-extrabold text-slate-700 block mb-1">
+                  {reviewingJoinReq.mode === 'approve'
+                    ? 'Welcome / Onboarding Note (Optional)'
+                    : 'Reason or Next-Step Note (Optional)'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={reviewNote}
+                  onChange={e => setReviewNote(e.target.value)}
+                  placeholder={
+                    reviewingJoinReq.mode === 'approve'
+                      ? 'Welcome to the team! Rehearsal starts this Saturday at 4:00 PM.'
+                      : 'Thank you for volunteering. Our onboarding cohort opens next month, or check out Hospitality.'
+                  }
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={reviewSubmitting}
+                  onClick={() => setReviewingJoinReq(null)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={reviewSubmitting}
+                  className={`px-5 py-2.5 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60 ${
+                    reviewingJoinReq.mode === 'approve'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  {reviewingJoinReq.mode === 'approve' ? (
+                    <>
+                      <CheckCircle2 size={15} />
+                      <span>{reviewSubmitting ? 'Appointing...' : 'Confirm & Add to Roster'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <X size={15} />
+                      <span>{reviewSubmitting ? 'Updating...' : 'Confirm Decline'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -8948,820 +10473,6 @@ const PrayerPage = ({ profile }: { profile: Profile | null }) => {
           </div>
         ))}
       </div>
-    </div>
-  );
-};
-
-// --- Church Events & Calendar Page with "Notify Me" & Countdown Timers ---
-
-// --- Church Events & Calendar Page with Month Grid, RSVP & Calendar Downloads ---
-
-const CalendarPage = ({ profile }: { profile: Profile | null }) => {
-  const [events, setEvents] = useState<ChurchEvent[]>([]);
-  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Calendar View Mode: 'calendar' (Month Matrix) | 'agenda' (Cards List) | 'week'
-  const [viewMode, setViewMode] = useState<'calendar' | 'agenda' | 'week'>('calendar');
-
-  // Month navigation for Month Grid View
-  const [currentMonthDate, setCurrentMonthDate] = useState(new Date(2026, 10, 1)); // Default Nov 2026
-  const [selectedDayEvents, setSelectedDayEvents] = useState<{ dayNumber: number; dateStr: string; events: ChurchEvent[] } | null>(null);
-
-  // Filters
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [selectedAudience, setSelectedAudience] = useState<string>('All');
-  const [search, setSearch] = useState('');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [showQRPass, setShowQRPass] = useState<{ event: ChurchEvent; reg: EventRegistration } | null>(null);
-
-  const fetchEvents = async () => {
-    setLoading(true);
-    const [evtRes, regRes] = await Promise.all([
-      supabase.from('events').select('*').order('start_time', { ascending: true }),
-      supabase.from('event_registrations').select('*')
-    ]);
-
-    if (evtRes.data) setEvents(evtRes.data as ChurchEvent[]);
-    if (regRes.data) setRegistrations(regRes.data as EventRegistration[]);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    fetchEvents();
-  }, []);
-
-  const handleRSVPToggle = async (evt: ChurchEvent) => {
-    const userEmail = profile?.email || 'member@faithconnect.church';
-    const userName = profile ? `${profile.first_name} ${profile.last_name}` : 'Grace Cathedral Member';
-
-    try {
-      const existingReg = registrations.find(r =>
-        r.event_id === evt.id && (r.user_id === profile?.id || r.email === userEmail)
-      );
-
-      if (existingReg) {
-        const { error: deleteError } = await supabase
-          .from('event_registrations')
-          .delete()
-          .eq('id', existingReg.id);
-        if (deleteError) throw deleteError;
-
-        if (existingReg.status === 'confirmed') {
-          const newCount = Math.max(0, (evt.registered_count || 1) - 1);
-          const { error: countError } = await supabase
-            .from('events')
-            .update({ registered_count: newCount })
-            .eq('id', evt.id);
-          if (countError) throw countError;
-        }
-        setToastMessage(`Your RSVP for "${evt.title}" has been cancelled.`);
-      } else {
-        const isAtCapacity = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
-        const regStatus: EventRegistration['status'] = isAtCapacity ? 'waitlist' : 'confirmed';
-
-        const newReg: Omit<EventRegistration, 'id'> = {
-          event_id: evt.id,
-          user_id: profile?.auth_user_id || profile?.id,
-          member_id: profile?.id,
-          member_name: userName,
-          email: userEmail,
-          phone: profile?.phone || '',
-          registered_at: new Date().toISOString(),
-          status: regStatus
-        };
-        const { error: registrationError } = await supabase
-          .from('event_registrations')
-          .insert(newReg);
-        if (registrationError) throw registrationError;
-
-        if (!isAtCapacity) {
-          const newCount = (evt.registered_count || 0) + 1;
-          const { error: countError } = await supabase
-            .from('events')
-            .update({ registered_count: newCount })
-            .eq('id', evt.id);
-          if (countError) throw countError;
-          setToastMessage(`🎉 Seat confirmed for "${evt.title}"! We look forward to worshipping with you.`);
-        } else {
-          setToastMessage(`⏳ Event "${evt.title}" is currently at capacity. You have been added to the Waitlist!`);
-        }
-      }
-
-      await fetchEvents();
-    } catch (error: any) {
-      console.error('Event RSVP update failed:', error);
-      setToastMessage(error?.message || 'Unable to update your event registration. Please try again.');
-    }
-
-    setTimeout(() => setToastMessage(null), 4000);
-  };
-
-  const downloadICS = (evt: ChurchEvent) => {
-    const formatICSDate = (dtStr: string) => {
-      const dt = new Date(dtStr);
-      return dt.toISOString().replace(/-|:|\.\d\d\d/g, "");
-    };
-
-    const icsContent = [
-      "BEGIN:VCALENDAR",
-      "VERSION:2.0",
-      "PRODID:-//FaithConnect Grace Cathedral//EN",
-      "BEGIN:VEVENT",
-      `SUMMARY:${evt.title}`,
-      `DESCRIPTION:${(evt.description || '').replace(/\n/g, ' ')}`,
-      `LOCATION:${evt.location || 'Grace Cathedral Sanctuary'}`,
-      `DTSTART:${formatICSDate(evt.start_time)}`,
-      `DTEND:${formatICSDate(evt.end_time)}`,
-      "STATUS:CONFIRMED",
-      "END:VEVENT",
-      "END:VCALENDAR"
-    ].join("\r\n");
-
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${evt.title.replace(/\s+/g, '_').toLowerCase()}.ics`;
-    a.click();
-  };
-
-  const year = currentMonthDate.getFullYear();
-  const month = currentMonthDate.getMonth();
-  const firstDayOfMonth = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-  const featuredEvent = events.find(e => e.category === 'Conference' || e.registration_required) || events[0];
-
-  const categoriesList = ['All', 'Worship Service', 'Special Service', 'Conference', 'Youth Event', 'Community Outreach', 'Prayer & Fasting', 'Fellowship & Social'];
-
-  const filteredEvents = events.filter(evt => {
-    const matchesSearch = evt.title.toLowerCase().includes(search.toLowerCase()) || (evt.description || '').toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = selectedCategory === 'All' || evt.category === selectedCategory;
-    const matchesAudience = selectedAudience === 'All' || evt.target_audience === selectedAudience;
-    return matchesSearch && matchesCategory && matchesAudience;
-  });
-
-  const getEventUserReg = (evt: ChurchEvent) => {
-    const userEmail = profile?.email || 'member@faithconnect.church';
-    return registrations.find(r => r.event_id === evt.id && (r.user_id === profile?.id || r.email === userEmail));
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 flex items-center gap-1">
-              <Calendar size={12} /> Grace Cathedral Calendar
-            </span>
-            <span className="text-xs text-slate-400 font-semibold">• Faith & Fellowship Calendar</span>
-          </div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Church Events & Calendar</h2>
-          <p className="text-slate-500 text-sm mt-0.5">Explore Sunday services, conferences, youth rallies, and ministry gatherings.</p>
-        </div>
-
-        {/* View Switcher */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 self-start md:self-auto">
-          <button
-            onClick={() => setViewMode('calendar')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              viewMode === 'calendar' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Month Grid
-          </button>
-          <button
-            onClick={() => setViewMode('agenda')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              viewMode === 'agenda' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Program List
-          </button>
-          <button
-            onClick={() => setViewMode('week')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              viewMode === 'week' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            This Week
-          </button>
-        </div>
-      </div>
-
-      {/* Toast Feedback */}
-      {toastMessage && (
-        <div className="p-4 bg-indigo-600 text-white rounded-2xl text-xs font-bold shadow-lg flex items-center justify-between animate-in fade-in duration-200">
-          <div className="flex items-center gap-2">
-            <Sparkles size={18} className="text-amber-300 animate-bounce" />
-            <span>{toastMessage}</span>
-          </div>
-          <button onClick={() => setToastMessage(null)} className="text-white/80 hover:text-white cursor-pointer">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* Featured Church Event Hero Banner */}
-      {featuredEvent && (() => {
-        const featReg = getEventUserReg(featuredEvent);
-        const isFull = (featuredEvent.registered_count || 0) >= (featuredEvent.max_attendees || 350);
-        return (
-          <div className="relative rounded-3xl overflow-hidden bg-slate-900 text-white shadow-lg border border-slate-800">
-            <img
-              src={featuredEvent.featured_image || 'https://images.unsplash.com/photo-1475721027785-f74eccf877e2?auto=format&fit=crop&w=1200&q=80'}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-35"
-              referrerPolicy="no-referrer"
-            />
-            <div className="relative p-6 sm:p-8 md:p-10 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent">
-              <div className="space-y-3 max-w-2xl">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-3 py-1 bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider rounded-full shadow-sm">
-                    ⭐ Featured Church Program
-                  </span>
-                  {(() => {
-                    const rec = getRecurrenceBadge(featuredEvent.recurrence);
-                    return (
-                      <span className="px-3 py-1 bg-purple-500/30 text-purple-200 border border-purple-400/30 font-bold text-[10px] rounded-full flex items-center gap-1">
-                        <span>{rec.icon}</span>
-                        <span>{rec.label}</span>
-                      </span>
-                    );
-                  })()}
-                  {isFull && (
-                    <span className="px-2.5 py-0.5 bg-rose-500 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-full">
-                      At Capacity (Waitlist Open)
-                    </span>
-                  )}
-                  <span className="text-xs text-amber-200 font-bold">
-                    {new Date(featuredEvent.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </span>
-                </div>
-
-                <h3 className="text-2xl sm:text-4xl font-black tracking-tight leading-tight">{featuredEvent.title}</h3>
-                <p className="text-xs sm:text-sm text-slate-300 leading-relaxed line-clamp-2">{featuredEvent.description}</p>
-
-                <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-300 pt-1">
-                  <span className="flex items-center gap-1.5"><Clock size={14} className="text-amber-400" /> {new Date(featuredEvent.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="flex items-center gap-1.5"><MapPin size={14} className="text-amber-400" /> {featuredEvent.location}</span>
-                  <span className="flex items-center gap-1.5"><Users size={14} className="text-amber-400" /> {featuredEvent.organizer_name}</span>
-                  
-                  {/* Dedicated Event Treasury Account Badge */}
-                  {(() => {
-                    const acc = getEventAccount(featuredEvent.id, featuredEvent.title, featuredEvent.recurring_funding_allowance);
-                    return (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-mono font-bold">
-                        <Landmark size={13} className="text-emerald-400" />
-                        <span>{featuredEvent.account_number || acc.account_number}</span>
-                      </span>
-                    );
-                  })()}
-
-                  {/* Open in Maps Button */}
-                  {featuredEvent.location && (
-                    <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(featuredEvent.location)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-bold transition-all backdrop-blur-md"
-                      title="Open location in Google Maps"
-                    >
-                      <MapPin size={13} className="text-amber-300" /> Open in Maps
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-white/10 backdrop-blur-md p-5 rounded-2xl border border-white/20 text-center space-y-3 shrink-0 self-start md:self-auto min-w-[240px]">
-                <div>
-                  <span className="text-[10px] font-black uppercase text-amber-300 tracking-wider block">Seats & Capacity</span>
-                  <p className="text-lg font-black text-white mt-0.5">
-                    {featuredEvent.registered_count || 0} / {featuredEvent.max_attendees || 350} Registered
-                  </p>
-                </div>
-
-                {featReg ? (
-                  <button
-                    onClick={() => handleRSVPToggle(featuredEvent)}
-                    className={`w-full py-2.5 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-2 ${
-                      featReg.status === 'waitlist' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-500 hover:bg-emerald-600'
-                    }`}
-                  >
-                    {featReg.status === 'waitlist' ? <Clock size={16} /> : <CheckCircle2 size={16} />}
-                    <span>{featReg.status === 'waitlist' ? '⏳ Waitlisted (Cancel)' : "✓ Reserved (Cancel)"}</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleRSVPToggle(featuredEvent)}
-                    className={`w-full py-2.5 rounded-xl text-xs font-black transition-all shadow-md cursor-pointer flex items-center justify-center gap-2 ${
-                      isFull ? 'bg-amber-500 hover:bg-amber-600 text-slate-950' : 'bg-amber-400 hover:bg-amber-500 text-slate-950'
-                    }`}
-                  >
-                    <Sparkles size={16} /> {isFull ? '⏳ Join Waitlist' : 'Reserve Seat'}
-                  </button>
-                )}
-
-                <button
-                  onClick={() => downloadICS(featuredEvent)}
-                  className="w-full py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <Download size={13} /> Add to Calendar (.ics)
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* FILTER & SEARCH BAR */}
-      <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="relative">
-            <Search size={16} className="absolute left-3.5 top-3 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search church event..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:border-indigo-500 focus:bg-white transition-all"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-700">
-            <Filter size={14} className="text-slate-400 shrink-0" />
-            <select
-              value={selectedCategory}
-              onChange={e => setSelectedCategory(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 outline-none w-full cursor-pointer"
-            >
-              {categoriesList.map(c => (
-                <option key={c} value={c}>{c === 'All' ? 'All Categories' : c}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-700">
-            <Users size={14} className="text-slate-400 shrink-0" />
-            <select
-              value={selectedAudience}
-              onChange={e => setSelectedAudience(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 outline-none w-full cursor-pointer"
-            >
-              <option value="All">All Audiences</option>
-              <option value="All Congregation">All Congregation</option>
-              <option value="Youth & Teens">Youth & Teens</option>
-              <option value="Men">Men</option>
-              <option value="Women">Women</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* VIEW MODE 1: MONTH GRID MATRIX */}
-      {viewMode === 'calendar' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-3">
-              <h3 className="font-extrabold text-slate-900 text-lg">
-                {monthNames[month]} {year}
-              </h3>
-              <span className="text-xs text-slate-400 font-semibold">• Grace Cathedral Schedule</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentMonthDate(new Date(year, month - 1, 1))}
-                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                onClick={() => setCurrentMonthDate(new Date())}
-                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                Today
-              </button>
-              <button
-                onClick={() => setCurrentMonthDate(new Date(year, month + 1, 1))}
-                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Day Headers */}
-          <div className="grid grid-cols-7 text-center font-black text-slate-400 text-[10px] uppercase tracking-wider py-1 border-b border-slate-100">
-            <div>Sun</div>
-            <div>Mon</div>
-            <div>Tue</div>
-            <div>Wed</div>
-            <div>Thu</div>
-            <div>Fri</div>
-            <div>Sat</div>
-          </div>
-
-          {/* Calendar Grid Cells */}
-          <div className="grid grid-cols-7 gap-1.5">
-            {/* Blank leading days */}
-            {Array.from({ length: firstDayOfMonth }).map((_, idx) => (
-              <div key={`blank-${idx}`} className="h-24 sm:h-28 bg-slate-50/50 rounded-2xl border border-dashed border-slate-100 p-1.5 opacity-40" />
-            ))}
-
-            {/* Days in Month */}
-            {Array.from({ length: daysInMonth }).map((_, idx) => {
-              const dayNum = idx + 1;
-              const dateObj = new Date(year, month, dayNum);
-              const dateIsoStr = dateObj.toISOString().split('T')[0];
-              const isToday = new Date().toDateString() === dateObj.toDateString();
-
-              const dayEvts = filteredEvents.filter(e => {
-                const sDate = new Date(e.start_time).toISOString().split('T')[0];
-                return sDate === dateIsoStr;
-              });
-
-              return (
-                <div
-                  key={`day-${dayNum}`}
-                  onClick={() => dayEvts.length > 0 && setSelectedDayEvents({ dayNumber: dayNum, dateStr: dateIsoStr, events: dayEvts })}
-                  className={`h-24 sm:h-28 rounded-2xl border p-1.5 flex flex-col justify-between transition-all cursor-pointer ${
-                    isToday ? 'bg-indigo-50/60 border-indigo-300 ring-2 ring-indigo-200' : 
-                    dayEvts.length > 0 ? 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-xs' : 'bg-slate-50/50 border-slate-100'
-                  }`}
-                >
-                  <div className="flex justify-between items-center">
-                    <span className={`text-xs font-black ${isToday ? 'w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center' : 'text-slate-800'}`}>
-                      {dayNum}
-                    </span>
-                    {dayEvts.length > 0 && (
-                      <span className="text-[9px] font-black bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-full">
-                        {dayEvts.length}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1 overflow-hidden">
-                    {dayEvts.slice(0, 2).map(e => (
-                      <div
-                        key={e.id}
-                        className="text-[9px] font-bold p-1 rounded-lg bg-indigo-600 text-white truncate shadow-2xs"
-                        title={e.title}
-                      >
-                        {e.title}
-                      </div>
-                    ))}
-                    {dayEvts.length > 2 && (
-                      <div className="text-[8px] font-extrabold text-indigo-600 text-right pr-0.5">
-                        +{dayEvts.length - 2} more
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* VIEW MODE 2: PROGRAM LIST / AGENDA */}
-      {(viewMode === 'agenda' || viewMode === 'calendar') && (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-            <h3 className="font-extrabold text-slate-900 text-lg">Upcoming Program Roster</h3>
-            <span className="text-xs text-slate-500 font-bold">{filteredEvents.length} Events Listed</span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredEvents.map(evt => {
-              const startDate = new Date(evt.start_time);
-              const endDate = new Date(evt.end_time);
-              const userReg = getEventUserReg(evt);
-              const isFull = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
-
-              return (
-                <div key={evt.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between group">
-                  <div>
-                    <div className="relative h-40 w-full bg-slate-900 overflow-hidden">
-                      <img
-                        src={evt.featured_image || 'https://images.unsplash.com/photo-1510525009512-ad7fc13eefab?auto=format&fit=crop&w=800&q=80'}
-                        alt=""
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
-
-                      <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-1 flex-wrap">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="px-2.5 py-0.5 bg-white/90 text-slate-900 rounded-full text-[10px] font-black uppercase tracking-wider">
-                            {evt.category}
-                          </span>
-                          {(() => {
-                            const rec = getRecurrenceBadge(evt.recurrence);
-                            return (
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border flex items-center gap-1 shadow-sm ${rec.badgeColor}`}>
-                                <span>{rec.icon}</span>
-                                <span>{rec.label}</span>
-                              </span>
-                            );
-                          })()}
-                        </div>
-                        {userReg ? (
-                          <span className={`px-2.5 py-0.5 text-white rounded-full text-[10px] font-black uppercase flex items-center gap-1 shadow-sm ${
-                            userReg.status === 'waitlist' ? 'bg-amber-600' : 'bg-emerald-500'
-                          }`}>
-                            {userReg.status === 'waitlist' ? <Clock size={12} /> : <CheckCircle2 size={12} />}
-                            {userReg.status === 'waitlist' ? 'Waitlist Active' : 'Registered'}
-                          </span>
-                        ) : isFull ? (
-                          <span className="px-2 py-0.5 bg-rose-500 text-white rounded-full text-[10px] font-black uppercase shadow-sm">
-                            At Capacity
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="absolute bottom-3 left-3 text-white">
-                        <p className="text-[11px] font-bold text-amber-300">
-                          {startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-5 space-y-3">
-                      <h4 className="font-black text-slate-900 text-base leading-snug">{evt.title}</h4>
-                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{evt.description}</p>
-
-                      <div className="space-y-1.5 pt-2 border-t border-slate-100 text-xs text-slate-600">
-                        <div className="flex items-center gap-2 font-medium">
-                          <Clock size={14} className="text-indigo-600 shrink-0" />
-                          <span>{startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 font-medium min-w-0">
-                            <MapPin size={14} className="text-indigo-600 shrink-0" />
-                            <span className="truncate">{evt.location}</span>
-                          </div>
-                          {evt.location && (
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(evt.location)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 transition-colors"
-                              title="Open location in Google Maps"
-                            >
-                              <MapPin size={11} /> Open Maps
-                            </a>
-                          )}
-                        </div>
-                        {evt.recurrence_pattern && (
-                          <div className="flex items-center gap-1.5 text-purple-700 font-bold text-[11px]">
-                            <span>🔁</span>
-                            <span className="truncate">{evt.recurrence_pattern}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Dedicated Event Account Information Pill */}
-                      {(() => {
-                        const acc = getEventAccount(evt.id, evt.title, evt.recurring_funding_allowance);
-                        return (
-                          <div className="p-2.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between text-xs">
-                            <div className="flex items-center gap-1.5 font-bold text-slate-700">
-                              <Landmark size={14} className="text-emerald-600 shrink-0" />
-                              <span className="font-mono text-[11px] text-slate-900">{evt.account_number || acc.account_number}</span>
-                            </div>
-                            <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2 py-0.5 rounded-lg border border-emerald-200">
-                              Target: SLE {(evt.recurring_funding_allowance || acc.target_budget).toLocaleString()}
-                            </span>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => handleRSVPToggle(evt)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        userReg
-                          ? userReg.status === 'waitlist'
-                            ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : isFull
-                          ? 'bg-amber-500 text-slate-950 hover:bg-amber-600 shadow-sm font-black'
-                          : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                      }`}
-                    >
-                      {userReg ? (userReg.status === 'waitlist' ? <Clock size={14} /> : <Check size={14} />) : <Sparkles size={14} />}
-                      <span>
-                        {userReg
-                          ? userReg.status === 'waitlist'
-                            ? '⏳ Waitlisted'
-                            : '✓ Reserved'
-                          : isFull
-                          ? '⏳ Join Waitlist'
-                          : 'RSVP Seat'}
-                      </span>
-                    </button>
-
-                    <div className="flex items-center gap-1.5">
-                      {userReg && (
-                        <button
-                          onClick={() => setShowQRPass({ event: evt, reg: userReg })}
-                          className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-                          title="View My Event Check-In QR Pass"
-                        >
-                          <QrCode size={15} />
-                          <span>QR Pass</span>
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => downloadICS(evt)}
-                        title="Download .ics Calendar Invite"
-                        className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-xl border border-transparent hover:border-slate-200 cursor-pointer"
-                      >
-                        <Download size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* VIEW MODE 3: THIS WEEK VIEW */}
-      {viewMode === 'week' && (
-        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-          <h3 className="font-extrabold text-slate-900 text-lg border-b border-slate-100 pb-3">
-            Grace Cathedral Weekly Worship Schedule
-          </h3>
-
-          <div className="space-y-3">
-            {filteredEvents.map(evt => {
-              const userReg = getEventUserReg(evt);
-              const isFull = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
-              return (
-                <div key={evt.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-indigo-300 transition-colors">
-                  <div className="flex items-start gap-3.5">
-                    <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-sm shrink-0 shadow-sm">
-                      {new Date(evt.start_time).toLocaleDateString('en-US', { weekday: 'short' })}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-bold text-slate-900 text-sm">{evt.title}</h4>
-                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-black rounded uppercase">
-                          {evt.category}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
-                        <span className="flex items-center gap-1"><Clock size={12} /> {new Date(evt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="flex items-center gap-1"><MapPin size={12} /> {evt.location}</span>
-                        {evt.location && (
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(evt.location)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[11px] font-bold text-indigo-600 hover:underline inline-flex items-center gap-0.5"
-                          >
-                            Map &rarr;
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleRSVPToggle(evt)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer self-start sm:self-auto shrink-0 ${
-                      userReg 
-                        ? userReg.status === 'waitlist' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
-                        : isFull ? 'bg-amber-500 text-slate-950 hover:bg-amber-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                    }`}
-                  >
-                    {userReg ? (userReg.status === 'waitlist' ? '⏳ Waitlisted' : '✓ Reserved') : isFull ? '⏳ Join Waitlist' : 'RSVP Seat'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* DAY POPUP MODAL */}
-      {selectedDayEvents && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <div>
-                <span className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
-                  {selectedDayEvents.dateStr}
-                </span>
-                <h3 className="text-lg font-bold text-slate-900 mt-1">
-                  Scheduled Programs ({selectedDayEvents.events.length})
-                </h3>
-              </div>
-              <button onClick={() => setSelectedDayEvents(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-              {selectedDayEvents.events.map(evt => {
-                const userReg = getEventUserReg(evt);
-                const isFull = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
-                return (
-                  <div key={evt.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs">
-                    <div className="flex justify-between items-start gap-2">
-                      <h4 className="font-bold text-slate-900">{evt.title}</h4>
-                      <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded shrink-0">
-                        {evt.category}
-                      </span>
-                    </div>
-                    <p className="text-slate-600 line-clamp-2">{evt.description}</p>
-                    <div className="flex justify-between items-center text-slate-500 text-[11px] pt-1">
-                      <div className="flex items-center gap-2">
-                        <span><Clock size={12} className="inline mr-1 text-indigo-600" /> {new Date(evt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {evt.location && (
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(evt.location)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-600 font-bold hover:underline"
-                          >
-                            Maps
-                          </a>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => {
-                          handleRSVPToggle(evt);
-                          setSelectedDayEvents(null);
-                        }}
-                        className={`px-3 py-1 text-white rounded-lg font-bold transition-colors cursor-pointer ${
-                          userReg ? 'bg-slate-700' : isFull ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'
-                        }`}
-                      >
-                        {userReg ? (userReg.status === 'waitlist' ? 'Waitlisted' : 'Reserved') : isFull ? 'Waitlist' : 'RSVP Seat'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Member Personal QR Check-In Pass Modal */}
-      {showQRPass && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-[100] animate-in fade-in">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-slate-200 shadow-2xl text-center space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                Official Entry Pass
-              </span>
-              <button onClick={() => setShowQRPass(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div>
-              <h4 className="font-extrabold text-slate-900 text-base">{showQRPass.event.title}</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Show this QR Code at sanctuary doors to check in</p>
-            </div>
-
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex justify-center shadow-inner">
-              <QRCodeSVG 
-                value={`EVENT:${showQRPass.event.id}:REG:${showQRPass.reg.id}`}
-                size={180}
-                level="H"
-                includeMargin
-              />
-            </div>
-
-            <div className="p-3 bg-indigo-50 rounded-2xl text-xs text-indigo-950 font-medium space-y-1 text-left">
-              <p><strong>Attendee:</strong> {showQRPass.reg.member_name}</p>
-              <p><strong>Venue:</strong> {showQRPass.event.location}</p>
-              <p><strong>Date & Time:</strong> {new Date(showQRPass.event.start_time).toLocaleString()}</p>
-              <p><strong>Status:</strong> <span className="uppercase font-bold text-emerald-700">{showQRPass.reg.status}</span></p>
-            </div>
-
-            <button
-              onClick={() => window.print()}
-              className="w-full py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Printer size={15} /> Print / Save Pass
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

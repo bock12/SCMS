@@ -243,8 +243,23 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
       : [];
 
   const userDeptNames = new Set<string>();
-  if (profile.assigned_department) userDeptNames.add(normalizeText(profile.assigned_department));
-  if (profile.department_name) userDeptNames.add(normalizeText(profile.department_name));
+  const deptKeywords = ['media', 'choir', 'voices', 'youth', 'children', 'usher', 'hospitality', 'prayer', 'women', 'men'];
+  const addDeptWithAlias = (rawName?: string | null) => {
+    const norm = normalizeText(rawName);
+    if (!norm) return;
+    userDeptNames.add(norm);
+    const kw = deptKeywords.find(k => norm.includes(k));
+    if (kw) {
+      ministries.forEach(min => {
+        if (normalizeText(min.name).includes(kw)) {
+          userDeptNames.add(normalizeText(min.name));
+        }
+      });
+    }
+  };
+
+  addDeptWithAlias(profile.assigned_department);
+  addDeptWithAlias(profile.department_name);
 
   ministryMemberships.forEach(mm => {
     if (mm.status === 'inactive') return;
@@ -268,18 +283,28 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
         return;
       }
       const sysId = `inapp:${notif.id}`;
+      const isJoinRequest = notif.type === 'ministry_join_request';
+      const isJoinUpdate = notif.type === 'ministry_join_update';
       items.push({
         id: sysId,
         source: 'in_app',
         inAppId: notif.id,
-        category: 'announcements',
+        category: isJoinRequest ? 'approvals' : isJoinUpdate ? 'account' : 'announcements',
         title: notif.title.replace(/^[\p{Emoji}\s]+/u, '').trim() || notif.title,
         message: notif.message,
         timestamp: notif.created_at,
-        priority: notif.type === 'welfare_reminder' ? 'high' : 'normal',
+        priority: notif.type === 'welfare_reminder' || isJoinRequest || isJoinUpdate ? 'high' : 'normal',
         is_read: notif.is_read || readSet.has(sysId),
-        action_url: isLeaderRole ? '/portal/leader' : '/portal/ministries',
-        action_label: 'Open Ministry',
+        action_url: isJoinRequest
+          ? isLeaderRole
+            ? '/portal/leader?tab=roster'
+            : '/portal/admin?tab=ministries'
+          : isJoinUpdate
+          ? '/portal/ministries'
+          : isLeaderRole
+          ? '/portal/leader'
+          : '/portal/ministries',
+        action_label: isJoinRequest ? 'Review Request' : isJoinUpdate ? 'View Ministry' : 'Open Ministry',
         meta_label: `${notif.department_name} · ${notif.sent_by}`
       });
     });

@@ -5,7 +5,13 @@ export interface InAppNotification {
   recipient_member_id?: string;
   recipient_member_name?: string;
   department_name: string;
-  type: 'welfare_reminder' | 'dues_reminder' | 'drive_announcement' | 'general_notice';
+  type:
+    | 'welfare_reminder'
+    | 'dues_reminder'
+    | 'drive_announcement'
+    | 'general_notice'
+    | 'ministry_join_request'
+    | 'ministry_join_update';
   title: string;
   message: string;
   campaign_id?: string;
@@ -28,9 +34,14 @@ export function getAllNotifications(): InAppNotification[] {
   }
 }
 
-export function getDepartmentNotifications(deptName: string): InAppNotification[] {
+export function getDepartmentNotifications(deptName: string, aliasDeptName?: string): InAppNotification[] {
   const all = getAllNotifications();
-  return all.filter(n => n.department_name.toLowerCase() === deptName.toLowerCase());
+  const targetA = deptName.trim().toLowerCase();
+  const targetB = (aliasDeptName || '').trim().toLowerCase();
+  return all.filter(n => {
+    const d = (n.department_name || '').trim().toLowerCase();
+    return d === targetA || (Boolean(targetB) && d === targetB);
+  });
 }
 
 export function sendInAppNotification(notif: Omit<InAppNotification, 'id' | 'created_at' | 'is_read'>): InAppNotification {
@@ -105,9 +116,14 @@ export function markNotificationAsRead(id: string): void {
   window.dispatchEvent(new CustomEvent('dept_notification_sent', { detail: { id } }));
 }
 
-export function markAllDeptNotificationsAsRead(deptName: string): void {
+export function markAllDeptNotificationsAsRead(deptName: string, aliasDeptName?: string): void {
   const all = getAllNotifications();
-  const updated = all.map(n => n.department_name.toLowerCase() === deptName.toLowerCase() ? { ...n, is_read: true } : n);
+  const targetA = deptName.trim().toLowerCase();
+  const targetB = (aliasDeptName || '').trim().toLowerCase();
+  const updated = all.map(n => {
+    const d = (n.department_name || '').trim().toLowerCase();
+    return d === targetA || (Boolean(targetB) && d === targetB) ? { ...n, is_read: true } : n;
+  });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   window.dispatchEvent(new CustomEvent('dept_notification_sent', { detail: { department: deptName } }));
 }
