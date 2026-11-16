@@ -56,6 +56,8 @@ import {
   deleteNotification
 } from './inAppNotificationService';
 import type { InAppNotification } from './inAppNotificationService';
+import { hasEffectivePermission } from './permissionResolutionService';
+import { usePermissionResolution } from './usePermissionResolution';
 import {
   getMinistryRoster,
   addMinistryMember,
@@ -376,6 +378,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
+  const { resolution } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const can = (key: string) => hasEffectivePermission(resolution, key);
 
   useEffect(() => {
     const handleUpdate = (e: any) => {
@@ -387,11 +391,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   const isLeaderOrStaff =
-    ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) ||
+    can('manage_ministries') || can('manage_events') || can('view_attendance') ||
     Boolean(profile?.assigned_department || profile?.department_name);
-  const isAdminOrPastor = ['admin', 'super_admin', 'pastor', 'district_admin'].includes(role);
-  const isFinanceOfficer = role === 'finance_officer';
-  const canAccessFinance = isFinanceOfficer || isAdminOrPastor;
+  const isAdminOrPastor = [
+    'manage_roles', 'manage_members', 'manage_events', 'manage_ministries',
+    'manage_resources', 'manage_surveys', 'manage_streams'
+  ].some(can);
+  const canAccessFinance = can('view_finances') || can('manage_finances');
 
   const effectiveConsole: ConsoleKey =
     activeConsole === 'admin' && isAdminOrPastor
