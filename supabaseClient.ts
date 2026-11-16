@@ -27,6 +27,17 @@ const initialBranches: ChurchBranch[] = [
   { id: 'branch-4', district_id: 'dist-3', name: 'Cornerstone Praise Center', address: '312 Michigan Ave', city: 'Chicago', state: 'IL', is_main_branch: false }
 ];
 
+const initialSystemRoles = [
+  { id: 'mock-role-super-admin', name: 'super_admin', description: 'Church system administrator', is_system: true, is_active: true },
+  { id: 'mock-role-admin', name: 'admin', description: 'Church administrator', is_system: true, is_active: true },
+  { id: 'mock-role-district-admin', name: 'district_admin', description: 'District administrator', is_system: true, is_active: true },
+  { id: 'mock-role-pastor', name: 'pastor', description: 'Pastoral leadership', is_system: true, is_active: true },
+  { id: 'mock-role-finance-officer', name: 'finance_officer', description: 'Finance operations', is_system: true, is_active: true },
+  { id: 'mock-role-leader', name: 'leader', description: 'Ministry or group leader', is_system: true, is_active: true },
+  { id: 'mock-role-worker', name: 'worker', description: 'Church worker', is_system: true, is_active: true },
+  { id: 'mock-role-member', name: 'member', description: 'Church member', is_system: true, is_active: true }
+];
+
 const initialProfiles: Profile[] = [
   {
     id: 'usr-admin-1',
@@ -898,6 +909,22 @@ function loadLocalDatabase() {
       if (!Array.isArray(parsed.event_survey_questions)) parsed.event_survey_questions = [];
       if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
       if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
+      if (!Array.isArray(parsed.roles) || parsed.roles.length === 0) parsed.roles = initialSystemRoles;
+      if (!Array.isArray(parsed.profile_role_assignments) || parsed.profile_role_assignments.length === 0) {
+        const roleIds = new Map(initialSystemRoles.map(role => [role.name, role.id]));
+        parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => ({
+          id: `mock-assignment-${profile.id}`,
+          profile_id: profile.id,
+          role_id: roleIds.get(profile.primary_role || 'member') || roleIds.get('member'),
+          scope_type: 'church',
+          branch_id: null,
+          district_id: null,
+          assigned_by_profile_id: 'usr-admin-1',
+          assigned_at: profile.created_at || new Date().toISOString(),
+          expires_at: null,
+          is_active: true
+        }));
+      }
 
       const migrated = migrateUnifiedDirectoryData(parsed);
       if (migrated.changed) {
@@ -913,6 +940,19 @@ function loadLocalDatabase() {
     districts: initialDistricts,
     church_branches: initialBranches,
     profiles: initialProfiles.map(p => sanitizeProfileRecord(p)),
+    roles: initialSystemRoles,
+    profile_role_assignments: initialProfiles.map(profile => ({
+      id: `mock-assignment-${profile.id}`,
+      profile_id: profile.id,
+      role_id: initialSystemRoles.find(role => role.name === profile.primary_role)?.id || 'mock-role-member',
+      scope_type: 'church',
+      branch_id: null,
+      district_id: null,
+      assigned_by_profile_id: 'usr-admin-1',
+      assigned_at: profile.created_at,
+      expires_at: null,
+      is_active: true
+    })),
     member_transfers: initialTransfers,
     streams: initialStreams,
     stream_chat_messages: initialMessages,
