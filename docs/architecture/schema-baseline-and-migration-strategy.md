@@ -148,7 +148,7 @@ Verified live facts:
 - Application schema contains 50 public tables and 2 private tables.
 - The public and private tables have RLS enabled.
 - The current live project is already on the canonical `profiles`-based model; it is not an untouched legacy `members` database.
-- The live migration SQL source files for those 22 applied migrations have not yet been synchronized into this repository. The ledger proves which migration names were recorded, not the original SQL text.
+- The original SQL source for all 22 applied migrations has now been recovered directly from the `statements` arrays in the live Supabase migration ledger and archived under `supabase/recovered-live-migrations/`. Each recovered file was checked against its ledger version/name; representative files were byte-for-byte compared with the live ledger output.
 
 The export commit is `caddcf848668fd405de82bcea63d0a80dd39562a`. The workflow run is [Export Supabase Schema #8](https://github.com/bock12/SCMS/actions/runs/43777298275).
 
@@ -180,3 +180,24 @@ Preferred next sequence:
 6. Keep the eight historical `supabase/migrations` files quarantined as legacy history until a tested legacy upgrade path is documented.
 
 **No live database migration, reset, schema modification, or migration-ledger repair was performed during this review.**
+
+
+## 10. Recovery of the original live migration SQL (2026-11-16)
+
+The earlier repository search did not find the 22 SQL files in GitHub branches or tracked source files. A direct, read-only inspection of the live migration ledger revealed that `supabase_migrations.schema_migrations` stores a `statements text[]` column in addition to version and name.
+
+All 22 records contained exactly one SQL string in `statements[1]`. Those original recorded SQL strings were recovered and committed to:
+
+`supabase/recovered-live-migrations/`
+
+The directory contains 22 timestamped SQL files and a provenance README. Each SQL file preserves the recorded transaction boundaries. The ledger's `rollback` field was null for all 22 records, so no rollback SQL was available.
+
+Verification:
+- All 22 ledger versions and migration names were enumerated.
+- Every recovered SQL body was checked for `BEGIN;` at the start and `COMMIT;` at the end.
+- Three representative migrations (001, 016 and 022) were fetched back from GitHub and compared byte-for-byte with the corresponding ledger statement; all matched.
+- Recovery was read-only. No migration was reapplied and no live database object or data was modified.
+
+The files are deliberately stored outside `supabase/migrations`. They are an archival copy of what was applied, not an active deployment sequence. The eight historical files already in `supabase/migrations` must not be combined with these 22 until the fresh-install and legacy-upgrade paths are tested and formally selected.
+
+**Current status:** Original migration-source recovery is complete. The next task is to review the 22-file sequence and prepare a safe, portable fresh-install baseline. The live project migration ledger does not need repair merely to recover these source files.
