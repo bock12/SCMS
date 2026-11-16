@@ -432,7 +432,7 @@ export async function updateUnifiedMember(
   if (reloadError) throw reloadError;
 
   return {
-    profile: updatedRow as Profile,
+    profile: toDirectoryProfile(updatedRow),
     portalInvite
   };
 }
