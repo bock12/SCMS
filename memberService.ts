@@ -16,12 +16,13 @@ function createUuid(): string {
 function toDirectoryProfile(row: any): Profile {
   // New mock records use the canonical shape; this fallback keeps seeded legacy
   // demo records readable until the mock-data migration is completed.
-  if (row && 'portal_access_status' in row && 'record_status' in row) {
+  if (row && 'portal_access_status' in row) {
     return mapCanonicalProfileToProfile(row);
   }
   return {
     ...row,
     id: row.id,
+    primary_role: row.primary_role || 'member',
     branch_id: row.branch_id ?? null,
     email: row.email ?? '',
     phone: row.phone ?? '',
