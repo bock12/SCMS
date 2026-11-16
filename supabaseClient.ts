@@ -658,12 +658,13 @@ function sanitizeProfileRecord(rawProfile: any): Profile {
     ...rest
   } = rawProfile || {};
 
+  const isCanonicalProfile = 'portal_access_status' in rest || 'record_status' in rest;
   return {
     ...rest,
     email: (rest.email || '').trim().toLowerCase(),
     phone: rest.phone || '',
     auth_user_id: rest.auth_user_id !== undefined ? (rest.auth_user_id || null) : null,
-    status: rest.status || 'active',
+    ...(!isCanonicalProfile ? { status: rest.status || 'active' } : {}),
     membership_status: rest.membership_status || 'active',
     membership_date: rest.membership_date || (rest.created_at ? String(rest.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10))
   } as Profile;
