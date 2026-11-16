@@ -1,0 +1,200 @@
+name: Test SCMS Baseline on PostgreSQL 17
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/baseline/fresh_install.sql"
+      - "scripts/build-supabase-baseline.mjs"
+      - ".github/workflows/test-supabase-baseline-postgres.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-17:
+    name: Fresh install and security smoke tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scms_baseline_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scms_baseline_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: scms_baseline_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Prepare minimal Supabase platform prerequisites
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE ROLE service_role NOLOGIN BYPASSRLS;
+          CREATE SCHEMA auth;
+          CREATE FUNCTION auth.uid()
+          RETURNS uuid
+          LANGUAGE sql
+          STABLE
+          AS $$
+            SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+          $$;
+          GRANT USAGE ON SCHEMA auth TO authenticated;
+          GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
+          SQL
+
+      - name: Apply fresh-install baseline
+        run: psql -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
+
+      - name: Assert schema, RLS, policies and routines
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            v_public_tables integer;
+            v_private_tables integer;
+            v_rls_tables integer;
+            v_public_policies integer;
+            v_private_policies integer;
+            v_private_routines integer;
+          BEGIN
+            SELECT count(*) INTO v_public_tables
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+
+            SELECT count(*) INTO v_private_tables
+            FROM information_schema.tables
+            WHERE table_schema = 'private' AND table_type = 'BASE TABLE';
+
+            SELECT count(*) INTO v_rls_tables
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname IN ('public', 'private')
+              AND c.relkind = 'r'
+              AND c.relrowsecurity;
+
+            SELECT count(*) INTO v_public_policies
+            FROM pg_policies WHERE schemaname = 'public';
+
+            SELECT count(*) INTO v_private_policies
+            FROM pg_policies WHERE schemaname = 'private';
+
+            SELECT count(*) INTO v_private_routines
+            FROM information_schema.routines WHERE routine_schema = 'private';
+
+            IF v_public_tables <> 50 THEN
+              RAISE EXCEPTION 'Expected 50 public tables, found %', v_public_tables;
+            END IF;
+            IF v_private_tables <> 2 THEN
+              RAISE EXCEPTION 'Expected 2 private tables, found %', v_private_tables;
+            END IF;
+            IF v_rls_tables <> 52 THEN
+              RAISE EXCEPTION 'Expected RLS enabled on 52 tables, found %', v_rls_tables;
+            END IF;
+            IF v_public_policies <> 56 THEN
+              RAISE EXCEPTION 'Expected 56 public policies, found %', v_public_policies;
+            END IF;
+            IF v_private_policies <> 2 THEN
+              RAISE EXCEPTION 'Expected 2 private policies, found %', v_private_policies;
+            END IF;
+            IF v_private_routines <> 18 THEN
+              RAISE EXCEPTION 'Expected 18 private routines, found %', v_private_routines;
+            END IF;
+            IF to_regclass('public.members') IS NOT NULL THEN
+              RAISE EXCEPTION 'Legacy public.members table must not exist';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_extension e
+              JOIN pg_namespace n ON n.oid = e.extnamespace
+              WHERE e.extname = 'pgcrypto' AND n.nspname = 'extensions'
+            ) THEN
+              RAISE EXCEPTION 'pgcrypto must be installed in extensions schema';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_extension e
+              JOIN pg_namespace n ON n.oid = e.extnamespace
+              WHERE e.extname = 'btree_gist' AND n.nspname = 'extensions'
+            ) THEN
+              RAISE EXCEPTION 'btree_gist must be installed in extensions schema';
+            END IF;
+          END
+          $$;
+          SQL
+
+      - name: Verify profile row-level isolation
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.church_branches (id, name, code, country, is_main_branch)
+          VALUES
+            ('10000000-0000-4000-8000-000000000001', 'Test Branch A', 'TEST-A', 'Sierra Leone', true),
+            ('10000000-0000-4000-8000-000000000002', 'Test Branch B', 'TEST-B', 'Sierra Leone', false);
+
+          INSERT INTO public.profiles (
+            id, auth_user_id, branch_id, first_name, last_name
+          ) VALUES
+            ('20000000-0000-4000-8000-000000000001',
+             '30000000-0000-4000-8000-000000000001',
+             '10000000-0000-4000-8000-000000000001', 'Test', 'Member A'),
+            ('20000000-0000-4000-8000-000000000002',
+             '30000000-0000-4000-8000-000000000002',
+             '10000000-0000-4000-8000-000000000002', 'Test', 'Member B');
+          SQL
+
+          visible_rows="$(psql -v ON_ERROR_STOP=1 -Atc "
+            BEGIN;
+            SET LOCAL ROLE authenticated;
+            SELECT set_config('request.jwt.claim.sub',
+              '30000000-0000-4000-8000-000000000001', true);
+            SELECT count(*) FROM public.profiles;
+            COMMIT;
+          " | tail -n 1)"
+
+          if [ "$visible_rows" != "1" ]; then
+            echo "Expected authenticated member to see only their own profile; saw $visible_rows"
+            exit 1
+          fi
+
+      - name: Verify anonymous and unauthorized writes are denied
+        run: |
+          if psql -v ON_ERROR_STOP=1 -c "SET ROLE anon; SELECT * FROM public.profiles LIMIT 1;" >/tmp/anon-read.log 2>&1; then
+            echo "Anonymous role unexpectedly read profiles."
+            exit 1
+          fi
+
+          if psql -v ON_ERROR_STOP=1 -c "
+            BEGIN;
+            SET LOCAL ROLE authenticated;
+            SELECT set_config('request.jwt.claim.sub',
+              '30000000-0000-4000-8000-000000000001', true);
+            UPDATE public.profiles
+            SET membership_status = 'inactive'
+            WHERE auth_user_id = '30000000-0000-4000-8000-000000000001';
+            COMMIT;
+          " >/tmp/unauthorized-write.log 2>&1; then
+            echo "Authenticated role unexpectedly changed a protected membership field."
+            exit 1
+          fi
+
+          echo "Anonymous profile reads and protected membership writes were denied as expected."
