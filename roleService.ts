@@ -1,19 +1,7 @@
-import { CustomRole, MemberRoleAssignment, PermissionKey, Profile } from './types';
+import { CustomRole, MemberRoleAssignment, PermissionKey } from './types';
 
 const ROLES_STORAGE_KEY = 'faithconnect_custom_roles_v1';
 const ASSIGNMENTS_STORAGE_KEY = 'faithconnect_member_role_assignments_v1';
-
-export const ALL_PERMISSIONS: { key: PermissionKey; label: string; description: string }[] = [
-  { key: 'manage_finances', label: 'Manage Finances & Giving', description: 'Access financial ledger, record tithes, manage fund categories and payment options.' },
-  { key: 'approve_requisitions', label: 'Approve Requisitions & Expenses', description: 'Approve or disburse internal ministry and event funding requests.' },
-  { key: 'manage_events', label: 'Manage Church Events & Workspace', description: 'Create events, set order of service, manage run of show and rosters.' },
-  { key: 'manage_event_budgets', label: 'Manage & Approve Event Budgets', description: 'Create event budgets and review/approve event financial proposals.' },
-  { key: 'event_check_in', label: 'Perform Event Check-Ins', description: 'Mark attendees present/absent via manual roster or QR pass scanner.' },
-  { key: 'manage_members', label: 'Manage Congregation Profiles', description: 'View member database, edit roles, baptism details, and contact info.' },
-  { key: 'manage_ministries', label: 'Manage Ministry Departments', description: 'Oversee department leads, volunteer teams, and internal requisitions.' },
-  { key: 'manage_streams', label: 'Manage Live Broadcasts', description: 'Schedule YouTube/Facebook live streams and moderate chat.' },
-  { key: 'generate_reports', label: 'Generate PDF Audit Reports', description: 'Export tax statements, financial audit summaries, and closeout reports.' }
-];
 
 export const INITIAL_ROLES: CustomRole[] = [
   {
@@ -104,6 +92,7 @@ export const INITIAL_ROLES: CustomRole[] = [
   }
 ];
 
+// Legacy ministry appointment metadata only; never use these local records for access control.
 export const getCustomRoles = (): CustomRole[] => {
   try {
     const raw = localStorage.getItem(ROLES_STORAGE_KEY);
@@ -149,55 +138,6 @@ export const saveRoleAssignments = (assignments: MemberRoleAssignment[]): void =
   }
 };
 
-export function getUserPermissions(profile: Profile | null): PermissionKey[] {
-  if (!profile) return [];
-
-  const role = profile.primary_role || 'member';
-
-  // Super admins, admins, pastors get full system permissions
-  if (['super_admin', 'admin', 'pastor'].includes(role)) {
-    return ALL_PERMISSIONS.map(p => p.key);
-  }
-
-  const rolePermissionsSet = new Set<PermissionKey>();
-
-  // Add default primary_role permissions
-  if (role === 'finance_officer') {
-    ['manage_finances', 'approve_requisitions', 'manage_event_budgets', 'generate_reports'].forEach(k => rolePermissionsSet.add(k as PermissionKey));
-  } else if (role === 'leader') {
-    ['manage_ministries', 'manage_events', 'event_check_in'].forEach(k => rolePermissionsSet.add(k as PermissionKey));
-  } else if (role === 'worker') {
-    ['event_check_in', 'manage_streams'].forEach(k => rolePermissionsSet.add(k as PermissionKey));
-  }
-
-  // Add permissions from custom role assignments in localStorage
-  try {
-    const assignments = getRoleAssignments();
-    // Only an explicit linked profile ID can grant application permissions.
-    // Name-based matching can accidentally grant permissions to the wrong account.
-    const userAssignments = assignments.filter(a => a.profile_id === profile.id);
-
-    if (userAssignments.length > 0) {
-      const customRoles = getCustomRoles();
-      userAssignments.forEach(asgn => {
-        const customRole = customRoles.find(r => r.id === asgn.role_id);
-        if (customRole && customRole.permissions) {
-          customRole.permissions.forEach(p => rolePermissionsSet.add(p));
-        }
-      });
-    }
-  } catch (e) {
-    console.error("Error evaluating user permissions:", e);
-  }
-
-  return Array.from(rolePermissionsSet);
-}
-
-export function hasPermission(profile: Profile | null, permissionKey: PermissionKey): boolean {
-  if (!profile) return false;
-  if (['super_admin', 'admin', 'pastor'].includes(profile.primary_role)) return true;
-  
-  const userPerms = getUserPermissions(profile);
-  return userPerms.includes(permissionKey);
-}
-
+// The helpers above maintain ministry appointment labels for existing ministry workflows.
+// They are not an authorization source. Application permissions are resolved only by
+// permissionResolutionService.ts from roles, permissions, role_permissions, and assignments.
