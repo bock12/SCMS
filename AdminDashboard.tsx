@@ -1204,10 +1204,10 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
                       </td>
                       <td className="px-5 py-3.5">{renderAssignedRoleBadges(user.id)}</td>
                       <td className="px-5 py-3.5">
-                        <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="max-w-full px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-indigo-200 rounded-xl font-extrabold text-xs text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs">
+                        {canManageRoles && <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="max-w-full px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-indigo-200 rounded-xl font-extrabold text-xs text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs">
                           <option value="">Assign a system role...</option>
                           {systemRoles.map(role => <option key={role.id} value={role.id}>{role.name.replace(/_/g, ' ')}</option>)}
-                        </select>
+                        </select>}
                       </td>
                     </tr>
                   ))}
@@ -1431,10 +1431,10 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
                         {/* Role & Credential Status */}
                         <td className="px-5 py-3.5 space-y-1">
                           {renderAssignedRoleBadges(user.id)}
-                          <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="mt-1 max-w-full px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-bold text-indigo-700 bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
+                          {canManageRoles && <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="mt-1 max-w-full px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-bold text-indigo-700 bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
                             <option value="">Assign role...</option>
                             {systemRoles.map(role => <option key={role.id} value={role.id}>{role.name.replace(/_/g, ' ')}</option>)}
-                          </select>
+                          </select>}
 
                           <div className="mt-1">
                             {hasLogin ? (
