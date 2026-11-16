@@ -38,6 +38,37 @@ const initialSystemRoles = [
   { id: 'mock-role-member', name: 'member', description: 'Church member', is_system: true, is_active: true }
 ];
 
+const initialPermissions = [
+  { id: 'mock-perm-view-members', key: 'view_members', module: 'members', description: 'View member directory records' },
+  { id: 'mock-perm-manage-members', key: 'manage_members', module: 'members', description: 'Create and manage member records' },
+  { id: 'mock-perm-member-transfers', key: 'manage_member_transfers', module: 'members', description: 'Approve and manage branch transfers' },
+  { id: 'mock-perm-manage-roles', key: 'manage_roles', module: 'authorization', description: 'Manage role assignments' },
+  { id: 'mock-perm-manage-branches', key: 'manage_branches', module: 'church', description: 'Manage districts and branches' },
+  { id: 'mock-perm-manage-ministries', key: 'manage_ministries', module: 'ministries', description: 'Manage ministries and departments' },
+  { id: 'mock-perm-view-finances', key: 'view_finances', module: 'finance', description: 'View financial information' },
+  { id: 'mock-perm-manage-finances', key: 'manage_finances', module: 'finance', description: 'Create financial transactions' },
+  { id: 'mock-perm-approve-finances', key: 'approve_finances', module: 'finance', description: 'Approve financial transactions' },
+  { id: 'mock-perm-post-journals', key: 'post_journals', module: 'finance', description: 'Post accounting journal entries' },
+  { id: 'mock-perm-manage-events', key: 'manage_events', module: 'events', description: 'Manage church events' },
+  { id: 'mock-perm-manage-attendance', key: 'manage_attendance', module: 'attendance', description: 'Manage attendance' },
+  { id: 'mock-perm-manage-welfare', key: 'manage_welfare', module: 'welfare', description: 'Manage welfare cases' },
+  { id: 'mock-perm-view-audit-logs', key: 'view_audit_logs', module: 'audit', description: 'View audit history' }
+];
+
+const initialRolePermissions = [
+  ['super_admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance','view_audit_logs']],
+  ['admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance','view_audit_logs']],
+  ['district_admin', ['view_members','manage_members','manage_member_transfers','manage_ministries','manage_events','manage_attendance']],
+  ['pastor', ['view_members','manage_ministries','manage_events','manage_attendance']],
+  ['finance_officer', ['view_finances','manage_finances','approve_finances','post_journals']]
+].flatMap(([roleName, permissionKeys]: any) => {
+  const role = initialSystemRoles.find(item => item.name === roleName);
+  return permissionKeys.map((key: string) => ({
+    role_id: role?.id,
+    permission_id: initialPermissions.find(permission => permission.key === key)?.id
+  })).filter(link => link.role_id && link.permission_id);
+});
+
 const initialProfiles: Profile[] = [
   {
     id: 'usr-admin-1',
@@ -910,6 +941,8 @@ function loadLocalDatabase() {
       if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
       if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
       if (!Array.isArray(parsed.roles) || parsed.roles.length === 0) parsed.roles = initialSystemRoles;
+      if (!Array.isArray(parsed.permissions) || parsed.permissions.length === 0) parsed.permissions = initialPermissions;
+      if (!Array.isArray(parsed.role_permissions) || parsed.role_permissions.length === 0) parsed.role_permissions = initialRolePermissions;
       if (!Array.isArray(parsed.profile_role_assignments) || parsed.profile_role_assignments.length === 0) {
         const roleIds = new Map(initialSystemRoles.map(role => [role.name, role.id]));
         parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => ({
@@ -941,6 +974,8 @@ function loadLocalDatabase() {
     church_branches: initialBranches,
     profiles: initialProfiles.map(p => sanitizeProfileRecord(p)),
     roles: initialSystemRoles,
+    permissions: initialPermissions,
+    role_permissions: initialRolePermissions,
     profile_role_assignments: initialProfiles.map(profile => ({
       id: `mock-assignment-${profile.id}`,
       profile_id: profile.id,
@@ -1755,12 +1790,19 @@ export const supabase = {
     }
 
     const actorAssignments = (localDb.profile_role_assignments || []).filter((item: any) =>
-      item.profile_id === actor.id && item.is_active
+      item.profile_id === actor.id && item.is_active &&
+      (!item.expires_at || new Date(item.expires_at).getTime() > Date.now())
     );
-    const actorRoleNames = actorAssignments
-      .map((assignment: any) => (localDb.roles || []).find((role: any) => role.id === assignment.role_id)?.name)
-      .filter(Boolean);
-    if (!actorRoleNames.some((name: string) => ['super_admin', 'admin'].includes(name))) {
+    const actorRoleIds = new Set(actorAssignments
+      .filter((assignment: any) => (localDb.roles || []).some((role: any) => role.id === assignment.role_id && role.is_active))
+      .map((assignment: any) => assignment.role_id));
+    const actorPermissionIds = new Set((localDb.role_permissions || [])
+      .filter((link: any) => actorRoleIds.has(link.role_id))
+      .map((link: any) => link.permission_id));
+    const canManageRoles = (localDb.permissions || []).some((permission: any) =>
+      permission.key === 'manage_roles' && actorPermissionIds.has(permission.id)
+    );
+    if (!canManageRoles) {
       return { data: null, error: { code: '42501', message: 'You do not have permission to manage system roles.' } };
     }
 
