@@ -19,6 +19,8 @@ import {
   X
 } from 'lucide-react';
 import type { Profile } from './types';
+import { hasEffectivePermission } from './permissionResolutionService';
+import { usePermissionResolution } from './usePermissionResolution';
 import {
   clearDismissedSystemNotifications,
   dismissSystemNotification,
@@ -439,13 +441,18 @@ export const HeaderUserMenu: React.FC<HeaderUserMenuProps> = ({
 
   const role = profile.primary_role || 'member';
   const roleLabel = role.replace(/_/g, ' ');
+  const { resolution } = usePermissionResolution(profile.id, profile.branch_id);
+  const can = (key: string) => hasEffectivePermission(resolution, key);
   const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Member';
   const initials = getInitials(profile);
 
-  const isAdminOrPastor = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(role);
-  const canAccessFinance = role === 'finance_officer' || isAdminOrPastor;
+  const isAdminOrPastor = [
+    'manage_roles', 'manage_members', 'manage_events', 'manage_ministries',
+    'manage_resources', 'manage_surveys', 'manage_streams'
+  ].some(can);
+  const canAccessFinance = can('view_finances') || can('manage_finances');
   const isLeaderOrStaff =
-    ['admin', 'super_admin', 'pastor', 'district_admin', 'leader', 'worker'].includes(role) ||
+    can('manage_ministries') || can('manage_events') || can('view_attendance') ||
     Boolean(profile.assigned_department || profile.department_name);
 
   const availableConsoles: {
