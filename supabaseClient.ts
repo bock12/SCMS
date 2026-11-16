@@ -1812,20 +1812,34 @@ export const supabase = {
 
     const actorAssignments = (localDb.profile_role_assignments || []).filter((item: any) =>
       item.profile_id === actor.id && item.is_active &&
-      (!item.expires_at || new Date(item.expires_at).getTime() > Date.now())
+      new Date(item.assigned_at || 0).getTime() <= Date.now() &&
+      (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()) &&
+      (localDb.roles || []).some((role: any) => role.id === item.role_id && role.is_active) &&
+      (localDb.role_permissions || []).some((link: any) =>
+        link.role_id === item.role_id &&
+        (localDb.permissions || []).some((permission: any) =>
+          permission.id === link.permission_id && permission.key === 'manage_roles'
+        )
+      )
     );
-    const actorRoleIds = new Set(actorAssignments
-      .filter((assignment: any) => (localDb.roles || []).some((role: any) => role.id === assignment.role_id && role.is_active))
-      .map((assignment: any) => assignment.role_id));
-    const actorPermissionIds = new Set((localDb.role_permissions || [])
-      .filter((link: any) => actorRoleIds.has(link.role_id))
-      .map((link: any) => link.permission_id));
-    const canManageRoles = (localDb.permissions || []).some((permission: any) =>
-      permission.key === 'manage_roles' && actorPermissionIds.has(permission.id)
-    );
-    if (!canManageRoles) {
-      return { data: null, error: { code: '42501', message: 'You do not have permission to manage system roles.' } };
-    }
+    const actorCanManageScope = (scopeType: string, branchId: string | null, districtId: string | null) =>
+      actorAssignments.some((assignment: any) => {
+        if (assignment.scope_type === 'church') return true;
+        if (scopeType === 'church') return false;
+        if (scopeType === 'branch') {
+          const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+          return (assignment.scope_type === 'branch' && assignment.branch_id === branchId) ||
+            (assignment.scope_type === 'district' && Boolean(branch?.district_id) && assignment.district_id === branch.district_id);
+        }
+        if (scopeType === 'district') {
+          if (assignment.scope_type === 'district') return assignment.district_id === districtId;
+          if (assignment.scope_type === 'branch') {
+            const assignedBranch = (localDb.church_branches || []).find((item: any) => item.id === assignment.branch_id);
+            return Boolean(assignedBranch?.district_id) && assignedBranch.district_id === districtId;
+          }
+        }
+        return false;
+      });
 
     if (functionName === 'assign_profile_role') {
       const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
@@ -1835,6 +1849,9 @@ export const supabase = {
         (p_scope_type === 'church' && p_branch_id === null && p_district_id === null) ||
         (p_scope_type === 'branch' && Boolean(p_branch_id) && p_district_id === null) ||
         (p_scope_type === 'district' && Boolean(p_district_id) && p_branch_id === null);
+      if (!actorCanManageScope(p_scope_type, p_branch_id, p_district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
       if (!targetExists || !role || !validScope) {
         return { data: null, error: { code: '22023', message: 'The selected member, role, or assignment scope is invalid.' } };
       }
@@ -1870,6 +1887,9 @@ export const supabase = {
         item.id === args.p_assignment_id && item.is_active
       );
       if (!assignment) return { data: false, error: null };
+      if (!actorCanManageScope(assignment.scope_type, assignment.branch_id, assignment.district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
       localDb.profile_role_assignments = localDb.profile_role_assignments.map((item: any) =>
         item.id === assignment.id ? { ...item, is_active: false } : item
       );
