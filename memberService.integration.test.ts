@@ -309,6 +309,33 @@ describe('Unified canonical Member Directory (profiles)', () => {
     expect(row.status).toBeUndefined();
   });
 
+
+  test('requires approved transfer workflow for branch changes and protects linked login email', async () => {
+    const member = await registerUnifiedMember({
+      first_name: 'Alusine',
+      last_name: 'Jalloh',
+      branch_id: 'branch-1',
+      membership_date: '2026-11-16',
+      email: 'alusine.jalloh@example.org',
+      enable_portal_access: false
+    });
+
+    await expect(updateUnifiedMember(member.profile.id, {
+      first_name: 'Alusine',
+      last_name: 'Jalloh',
+      branch_id: 'branch-2'
+    })).rejects.toThrow('approved member transfer workflow');
+
+    const linked = await enablePortalAccess(member.profile.id);
+    await expect(updateUnifiedMember(member.profile.id, {
+      first_name: 'Alusine',
+      last_name: 'Jalloh',
+      email: 'new.alusine@example.org'
+    })).rejects.toThrow('Update the login email through the portal account workflow');
+    expect((await getMembers()).find(profile => profile.id === linked.profile.id)?.email)
+      .toBe('alusine.jalloh@example.org');
+  });
+
   test('does not allow portal activation or suspension without a linked auth account', async () => {
     const created = await registerUnifiedMember({
       first_name: 'Sia',
