@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { hasEffectivePermission } from './permissionResolutionService';
+import { usePermissionResolution } from './usePermissionResolution';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
@@ -23,6 +25,9 @@ type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gatewa
 const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways'];
 
 export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
+  const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const canAccessFinance = hasEffectivePermission(financePermissions, 'view_finances')
+    || hasEffectivePermission(financePermissions, 'manage_finances');
   const location = useLocation();
   const navigate = useNavigate();
   const resolveTabFromSearch = (search: string): FinanceWorkspaceTab => {
@@ -1196,6 +1201,13 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     printWindow.document.write(htmlContent);
     printWindow.document.close();
   };
+
+  if (financePermissionsLoading) {
+    return <div className="p-10 text-center text-slate-500">Loading finance permissions…</div>;
+  }
+  if (!profile || !canAccessFinance) {
+    return <div className="p-10 text-center text-slate-500 font-bold">Access denied. Your active role assignments do not grant finance access.</div>;
+  }
 
   return (
     <div className="space-y-6 pb-24 lg:pb-0">
