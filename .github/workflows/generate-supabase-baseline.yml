@@ -1,0 +1,53 @@
+name: Generate SCMS Fresh-Install Baseline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/build-supabase-baseline.mjs"
+      - "scripts/build-supabase-baseline.test.mjs"
+      - "supabase/recovered-live-migrations/**"
+      - ".github/workflows/generate-supabase-baseline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scms-fresh-install-baseline
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate and verify inactive SQL baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Run baseline generator tests
+        run: bun test scripts/build-supabase-baseline.test.mjs
+
+      - name: Generate consolidated baseline
+        run: bun scripts/build-supabase-baseline.mjs
+
+      - name: Verify generated baseline is reproducible
+        run: bun scripts/build-supabase-baseline.mjs --check
+
+      - name: Commit generated baseline when changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/baseline/fresh_install.sql
+          if git diff --cached --quiet; then
+            echo "Generated baseline is unchanged."
+          else
+            git commit -m "chore(db): regenerate inactive fresh-install baseline"
+            git push origin HEAD:main
+          fi
