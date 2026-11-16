@@ -35,7 +35,6 @@ import {
 
 const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: { requiredPermission: string; profile: Profile | null; resolution: PermissionResolution | null }) => {
   const permLabel = PERMISSION_LABELS[requiredPermission] || requiredPermission;
-  const permInfo = undefined;
   const userPerms = resolution?.permissions || [];
 
   return (
@@ -59,7 +58,6 @@ const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: {
           <Key size={14} className="text-indigo-600" />
           <span>{permLabel}</span>
         </div>
-        <p className="text-slate-500 text-[11px] leading-relaxed">{permInfo?.description}</p>
       </div>
 
       <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl text-left text-xs space-y-2 max-w-md mx-auto">
