@@ -4,27 +4,33 @@
 
 The canonical development database is the hosted Supabase project **SCMS-Development** (project ref: `fpzcwetpcwswhxmyeqzh`, PostgreSQL 17.11).
 
-The live database was provisioned through 22 canonical migrations on 2026-11-14. Their exact names and version IDs are recorded in the Supabase migration ledger. The generated root-level `database.types.ts` is a client type snapshot; it is **not** a SQL baseline.
+The live database was provisioned through 22 canonical migrations on 2026-11-14. The generated root-level `database.types.ts` is a client type snapshot; it is **not** a SQL baseline.
+
+## Recovered live migrations
+
+The exact SQL statements for all 22 applied canonical migrations were recovered read-only from `supabase_migrations.schema_migrations.statements[1]` and committed under:
+
+`supabase/recovered-live-migrations/`
+
+That directory contains:
+- 22 original SQL files in ledger version order.
+- A README documenting provenance, verification and safe-use rules.
+
+The recovered statements match the SQL stored in the live migration ledger. Three representative files were verified byte-for-byte. The ledger contains no rollback statements for these migrations.
+
+**Important:** This is an archival source directory, not the active Supabase CLI migration directory. Do not move these files into `supabase/migrations` or replay them against SCMS-Development. The eight older files already in `supabase/migrations` belong to a different legacy migration path. A clean install and legacy upgrade strategy must be tested separately before changing the active migration path.
 
 ## Current schema snapshot
 
-The current live schema-only export is stored at `supabase/schema.sql` and was committed on 2026-11-15.
+The current live schema-only export is stored at `supabase/schema.sql`.
 
 - It reflects the live public/private application DDL at export time.
 - It contains no application table data.
 - It was generated with PostgreSQL 17 `pg_dump`.
-- It currently includes the `extensions` schema, which contains Supabase-managed extension integration functions and platform plumbing.
+- It includes the `extensions` schema, which contains Supabase-managed extension integration functions and platform plumbing.
 - It was generated without ownership and privilege statements.
 
-**Important:** Treat this file as a read-only reference snapshot, not as an approved restore script or executable migration. Do not run it against the existing development database. A clean portable baseline still needs to be curated and tested.
-
-## Migration safety and source of truth
-
-The older eight migration files under `supabase/migrations` belong to the earlier legacy schema history. They reference the former `public.members` model and must not be blindly replayed against the already-provisioned SCMS-Development database.
-
-The live project has 22 applied canonical migrations named `scms_001` through `scms_022`. Their migration ledger records are present in Supabase, but the exact SQL source files have not yet been synchronized into this repository. Do not invent or recreate those 22 files from their names alone.
-
-The baseline/migration strategy and supported paths are documented in `docs/architecture/schema-baseline-and-migration-strategy.md`.
+Treat this file as a read-only reference snapshot, not as an approved restore script or executable migration. A clean portable baseline still needs to be curated and tested.
 
 ## Export the live application schema (GitHub Actions)
 
@@ -51,9 +57,9 @@ For a local Windows environment, `scripts/export-supabase-schema.ps1` is availab
 
 1. Do not replay the historical migration chain on the canonical development project.
 2. Do not restore the current schema snapshot directly into a live project.
-3. Recover the 22 original canonical migration SQL files if possible.
-4. Otherwise, curate a portable baseline that excludes Supabase-managed extension plumbing while retaining required extension declarations and application-owned DDL.
-5. Test a clean install on a disposable PostgreSQL 17/Supabase project.
+3. Use the recovered live SQL files as migration provenance, not as a sequence to replay on the already-provisioned database.
+4. Curate and test a clean fresh-install baseline, preserving required application extensions, DDL, RLS, grants, functions and triggers.
+5. Test a legacy upgrade path separately against a disposable database.
 6. Compare the disposable schema and behavior with SCMS-Development.
 7. Review RLS, grants, triggers, security-definer functions, and extension dependencies.
 8. Obtain explicit approval before any migration-ledger repair or schema deployment to the live project.
