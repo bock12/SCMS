@@ -965,8 +965,28 @@ function loadLocalDatabase() {
       if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
       if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
       if (!Array.isArray(parsed.roles) || parsed.roles.length === 0) parsed.roles = initialSystemRoles;
-      if (!Array.isArray(parsed.permissions) || parsed.permissions.length === 0) parsed.permissions = initialPermissions;
-      if (!Array.isArray(parsed.role_permissions) || parsed.role_permissions.length === 0) parsed.role_permissions = initialRolePermissions;
+      if (!Array.isArray(parsed.permissions)) parsed.permissions = [];
+      const existingPermissionKeys = new Set(parsed.permissions.map((permission: any) => permission.key));
+      parsed.permissions = [
+        ...parsed.permissions,
+        ...initialPermissions.filter(permission => !existingPermissionKeys.has(permission.key))
+      ];
+      if (!Array.isArray(parsed.role_permissions)) parsed.role_permissions = [];
+      const roleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
+      const permissionIdsByKey = new Map((parsed.permissions || []).map((permission: any) => [permission.key, permission.id]));
+      const seededRolePermissionLinks = initialRolePermissions.map(link => {
+        const seedRole = initialSystemRoles.find(role => role.id === link.role_id);
+        const seedPermission = initialPermissions.find(permission => permission.id === link.permission_id);
+        return {
+          role_id: seedRole ? roleIdsByName.get(seedRole.name) : null,
+          permission_id: seedPermission ? permissionIdsByKey.get(seedPermission.key) : null
+        };
+      }).filter((link: any) => link.role_id && link.permission_id);
+      const existingRolePermissionKeys = new Set(parsed.role_permissions.map((link: any) => `${link.role_id}:${link.permission_id}`));
+      parsed.role_permissions = [
+        ...parsed.role_permissions,
+        ...seededRolePermissionLinks.filter((link: any) => !existingRolePermissionKeys.has(`${link.role_id}:${link.permission_id}`))
+      ];
       if (!Array.isArray(parsed.profile_role_assignments) || parsed.profile_role_assignments.length === 0) {
         const roleIds = new Map(initialSystemRoles.map(role => [role.name, role.id]));
         parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => ({
