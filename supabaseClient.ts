@@ -1,6 +1,14 @@
 import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
 
 // Storage keys
+function createMockUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16);
+    return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
+
 const DB_STORAGE_KEY = 'faithconnect_db_v2';
 const SESSION_STORAGE_KEY = 'faithconnect_auth_session_v2';
 const USERS_STORAGE_KEY = 'faithconnect_auth_users_v2';
@@ -1298,7 +1306,7 @@ const localAuth = {
       };
     }
 
-    const newId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newId = createMockUuid();
     const userData = {
       id: newId,
       email: normalizedEmail,
@@ -1311,7 +1319,7 @@ const localAuth = {
 
     const firstBranch = localDb.church_branches?.[0]?.id || 'branch-1';
     const newProfile: Profile = sanitizeProfileRecord({
-      id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: createMockUuid(),
       auth_user_id: newId,
       branch_id: options?.data?.branch_id || firstBranch,
       first_name: options?.data?.first_name || 'Faithful',
@@ -1388,7 +1396,7 @@ const localAuth = {
       return { data: null, error: { message: 'Another portal account already uses this email address.' } };
     }
 
-    const authUserId = targetProfile.auth_user_id || `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const authUserId = targetProfile.auth_user_id || createMockUuid();
     // Remove previous email entry if email changed for the same authUserId
     for (const [key, value] of Object.entries(users)) {
       if (value.id === authUserId && key !== normalizedEmail) {
@@ -1430,7 +1438,7 @@ const localAuth = {
             ...p,
             auth_user_id: authUserId,
             email: normalizedEmail,
-            primary_role: primaryRole || p.primary_role || 'member',
+            portal_access_status: 'invited',
             status: p.status === 'archived' ? 'active' : (p.status || 'active')
           })
         : p
@@ -1483,7 +1491,7 @@ const localAuth = {
     if (!profile) {
       return { data: { user: null, session: null }, error: { message: 'This portal account is not linked to a directory person. Please contact a church administrator.' } };
     }
-    if (profile.status === 'suspended' || profile.status === 'archived') {
+    if (profile.portal_access_status === 'suspended' || profile.status === 'suspended' || profile.status === 'archived') {
       return { data: { user: null, session: null }, error: { message: 'This portal account is suspended or archived.' } };
     }
 
@@ -1527,7 +1535,7 @@ const localAuth = {
 
     localDb.profiles = (localDb.profiles || []).map((item: any) =>
       (item.id === profileId || item.auth_user_id === authUserId)
-        ? sanitizeProfileRecord({ ...item, auth_user_id: null })
+        ? sanitizeProfileRecord({ ...item, auth_user_id: null, portal_access_status: 'not_invited' })
         : item
     );
     saveLocalDatabase(localDb);
@@ -1555,7 +1563,7 @@ const localAuth = {
       return { data: { user: null }, error: { message: 'An account with this email already exists.' } };
     }
 
-    const newId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newId = createMockUuid();
     const userMetadata = options?.data || {};
     const setupToken = password ? undefined : `setup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     users[normalizedEmail] = {
@@ -1575,7 +1583,7 @@ const localAuth = {
       );
     } else {
       const newProfile: Profile = sanitizeProfileRecord({
-        id: `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: createMockUuid(),
         auth_user_id: newId,
         branch_id: userMetadata.branch_id || firstBranch,
         first_name: userMetadata.first_name || 'Faithful',
