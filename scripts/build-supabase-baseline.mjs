@@ -30,7 +30,9 @@ create extension if not exists btree_gist with schema extensions;
 
 do $scms_baseline_preflight$
 begin
-  if to_regnamespace('auth') is null or to_regprocedure('auth.uid()') is null then
+  if to_regnamespace('auth') is null
+     or to_regclass('auth.users') is null
+     or to_regprocedure('auth.uid()') is null then
     raise exception 'SCMS baseline requires auth.users, auth.uid(), and the Supabase Auth schema';
   end if;
 

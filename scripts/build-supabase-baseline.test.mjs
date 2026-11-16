@@ -30,6 +30,7 @@ describe("composeBaseline", () => {
     const output = composeBaseline(input);
     expect(output).toContain("create extension if not exists pgcrypto with schema extensions;");
     expect(output).toContain("create extension if not exists btree_gist with schema extensions;");
+    expect(output).toContain("to_regclass('auth.users') is null");
     expect(output).toContain("to_regprocedure('public.rls_auto_enable()')");
     expect(output).not.toMatch(/alter\s+extension\s+btree_gist\s+set\s+schema/i);
     expect(output).not.toMatch(/create\s+extension\s+if\s+not\s+exists\s+pgcrypto\s*;/i);
