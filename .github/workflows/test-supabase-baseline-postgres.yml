@@ -221,6 +221,88 @@ jobs:
 
           echo "Anonymous profile reads and protected membership writes were denied as expected."
 
+      - name: Verify protected domain tables deny direct authenticated mutations
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $scms_mutation_grants$
+          DECLARE
+            v_table text;
+            v_tables text[] := ARRAY[
+              'public.member_transfers',
+              'public.roles',
+              'public.role_permissions',
+              'public.profile_role_assignments',
+              'public.ministries',
+              'public.ministry_members',
+              'public.cells',
+              'public.cell_members',
+              'public.events',
+              'public.attendance_sessions',
+              'public.attendance_records',
+              'public.church_resources',
+              'public.event_surveys',
+              'public.event_survey_questions',
+              'public.event_survey_responses',
+              'public.event_survey_answers',
+              'public.financial_documents',
+              'public.giving_records',
+              'public.budgets',
+              'public.budget_lines',
+              'public.journal_entries',
+              'public.journal_lines',
+              'public.welfare_cases',
+              'public.welfare_assistance',
+              'public.welfare_campaigns',
+              'public.welfare_contributions',
+              'public.streams',
+              'public.notifications'
+            ];
+          BEGIN
+            FOREACH v_table IN ARRAY v_tables LOOP
+              IF has_table_privilege('authenticated', v_table, 'INSERT')
+                 OR has_table_privilege('authenticated', v_table, 'UPDATE')
+                 OR has_table_privilege('authenticated', v_table, 'DELETE') THEN
+                RAISE EXCEPTION 'Authenticated role has unexpected direct DML privilege on %', v_table;
+              END IF;
+            END LOOP;
+
+            IF NOT has_column_privilege('authenticated', 'public.profiles', 'first_name', 'UPDATE') THEN
+              RAISE EXCEPTION 'Expected self-profile first_name column update grant is missing';
+            END IF;
+            IF has_column_privilege('authenticated', 'public.profiles', 'membership_status', 'UPDATE') THEN
+              RAISE EXCEPTION 'Authenticated role must not directly update membership_status';
+            END IF;
+            IF has_column_privilege('authenticated', 'public.profiles', 'portal_access_status', 'UPDATE') THEN
+              RAISE EXCEPTION 'Authenticated role must not directly update portal_access_status';
+            END IF;
+            IF NOT has_table_privilege('authenticated', 'public.event_registrations', 'INSERT') THEN
+              RAISE EXCEPTION 'Expected self-registration INSERT grant is missing';
+            END IF;
+            IF has_table_privilege('authenticated', 'public.event_registrations', 'UPDATE')
+               OR has_table_privilege('authenticated', 'public.event_registrations', 'DELETE') THEN
+              RAISE EXCEPTION 'Event registrations must not expose direct UPDATE or DELETE';
+            END IF;
+            IF NOT has_table_privilege('authenticated', 'public.stream_chat_messages', 'INSERT') THEN
+              RAISE EXCEPTION 'Expected stream chat INSERT grant is missing';
+            END IF;
+            IF NOT has_column_privilege('authenticated', 'public.notification_recipients', 'read_at', 'UPDATE') THEN
+              RAISE EXCEPTION 'Expected notification read_at column update grant is missing';
+            END IF;
+            IF has_table_privilege('authenticated', 'public.notification_recipients', 'DELETE') THEN
+              RAISE EXCEPTION 'Notification recipients must not expose direct DELETE';
+            END IF;
+
+            IF to_regclass('public.financial_records') IS NOT NULL
+               OR to_regclass('public.prayer_requests') IS NOT NULL
+               OR to_regclass('public.ministry_join_requests') IS NOT NULL THEN
+              RAISE EXCEPTION 'Legacy mock-only tables must not silently enter the production baseline without an explicit schema/security design';
+            END IF;
+          END
+          $scms_mutation_grants$;
+          SQL
+
+          echo "Protected domain tables deny direct authenticated DML; approved narrow grants remain intact."
+
       - name: Verify role assignment writes require manage_roles
         run: |
           if psql -v ON_ERROR_STOP=1 -c "
