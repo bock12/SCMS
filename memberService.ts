@@ -1,5 +1,34 @@
 import type { AppRole, MembershipStatus, PortalAccountStatus, Profile } from './types';
+import { mapCanonicalProfileToProfile, mapProfileInputToCanonicalInsert, mapProfileInputToCanonicalUpdate } from './memberProfileMapper';
 import { supabase } from './supabaseClient';
+
+function createUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // RFC 4122 v4 fallback for browsers without crypto.randomUUID.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16);
+    return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16);
+  });
+}
+
+function toDirectoryProfile(row: any): Profile {
+  // New mock records use the canonical shape; this fallback keeps seeded legacy
+  // demo records readable until the mock-data migration is completed.
+  if (row && 'portal_access_status' in row && 'record_status' in row) {
+    return mapCanonicalProfileToProfile(row);
+  }
+  return {
+    ...row,
+    id: row.id,
+    branch_id: row.branch_id ?? null,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    portal_access_status: row.portal_access_status ??
+      (row.auth_user_id ? (row.status === 'suspended' ? 'suspended' : 'active') : 'not_invited')
+  } as Profile;
+}
 
 /** Accepts only real calendar dates in the canonical YYYY-MM-DD format. */
 function isValidIsoDate(value: string): boolean {
@@ -73,7 +102,7 @@ export async function getMembers(): Promise<Profile[]> {
     .order('first_name', { ascending: true });
 
   if (error) throw error;
-  return (data || []) as Profile[];
+  return (data || []).map(toDirectoryProfile);
 }
 
 export interface PortalInvitationInfo {
@@ -193,30 +222,26 @@ export async function registerUnifiedMember(
 
   await assertUniqueContactDetails(email, phone);
 
-  const personId = `per_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const newProfilePayload: Profile = {
+  const personId = createUuid();
+  const newProfilePayload = {
     id: personId,
-    auth_user_id: null,
-    branch_id: branchId,
-    first_name: firstName,
-    last_name: lastName,
-    email,
-    phone,
-    gender: input.gender || 'other',
-    avatar_url: input.avatar_url || `https://picsum.photos/seed/${personId}/200`,
-    primary_role: input.primary_role || 'member',
-    status: input.portal_status || 'active',
-    membership_status: input.membership_status || 'active',
-    membership_date: membershipDate,
-    department_name: input.assigned_department,
-    assigned_department: input.assigned_department,
-    created_at: new Date().toISOString(),
-    is_baptized: Boolean(input.is_baptized),
-    baptism_date: input.is_baptized ? (input.baptism_date || undefined) : undefined,
-    baptized_by: input.is_baptized ? (input.baptized_by?.trim() || undefined) : undefined,
-    date_of_birth: input.date_of_birth || undefined,
-    marital_status: input.marital_status || undefined,
-    marriage_date: input.marital_status === 'Married' ? (input.marriage_date || undefined) : undefined
+    ...mapProfileInputToCanonicalInsert({
+      first_name: firstName,
+      last_name: lastName,
+      branch_id: branchId,
+      membership_date: membershipDate,
+      membership_status: input.membership_status || 'active',
+      email,
+      phone,
+      gender: input.gender || 'other',
+      avatar_url: input.avatar_url || `https://picsum.photos/seed/${personId}/200`,
+      is_baptized: Boolean(input.is_baptized),
+      baptism_date: input.is_baptized ? (input.baptism_date || null) : null,
+      baptized_by_name_snapshot: input.is_baptized ? (input.baptized_by?.trim() || null) : null,
+      date_of_birth: input.date_of_birth || null,
+      marital_status: input.marital_status || null,
+      marriage_date: input.marital_status === 'Married' ? (input.marriage_date || null) : null
+    })
   };
 
   const { data: inserted, error: insertError } = await supabase
@@ -226,7 +251,8 @@ export async function registerUnifiedMember(
     .single();
 
   if (insertError) throw insertError;
-  const savedProfile = (Array.isArray(inserted) ? inserted[0] : inserted) as Profile;
+  const savedRow = Array.isArray(inserted) ? inserted[0] : inserted;
+  const savedProfile = toDirectoryProfile(savedRow);
   if (!savedProfile) throw new Error('The member directory record was not created.');
 
   if (!enablePortal) {
@@ -238,12 +264,15 @@ export async function registerUnifiedMember(
     email,
     firstName,
     lastName,
-    primaryRole: savedProfile.primary_role
+    primaryRole: input.primary_role || 'member'
   });
 
   if (inviteError || !inviteData) {
-    await supabase.from('profiles').delete().eq('id', savedProfile.id);
-    throw new Error(inviteError?.message || 'Unable to provision portal access for this member.');
+    // The church member is already saved. Never delete a person record because
+    // the optional portal invitation failed; an administrator can retry later.
+    throw new Error(
+      `Member record was saved, but portal access could not be enabled: ${inviteError?.message || 'Unknown invitation error'} You can enable Portal Access later from the member record.`
+    );
   }
 
   const { data: refreshed } = await supabase
@@ -253,7 +282,7 @@ export async function registerUnifiedMember(
     .maybeSingle();
 
   return {
-    profile: (refreshed || { ...savedProfile, auth_user_id: inviteData.authUserId }) as Profile,
+    profile: toDirectoryProfile(refreshed || { ...savedRow, auth_user_id: inviteData.authUserId, portal_access_status: 'invited' }),
     portalInvite: inviteData
   };
 }
@@ -336,7 +365,7 @@ export async function updateUnifiedMember(
 
   await assertUniqueContactDetails(email, phone, personId);
 
-  const updates: Partial<Profile> = {
+  const updates = mapProfileInputToCanonicalUpdate({
     first_name: firstName,
     last_name: lastName,
     email,
@@ -346,24 +375,17 @@ export async function updateUnifiedMember(
     ...(input.avatar_url !== undefined ? { avatar_url: input.avatar_url } : {}),
     ...(input.membership_status !== undefined ? { membership_status: input.membership_status } : {}),
     ...(input.membership_date !== undefined ? { membership_date: input.membership_date } : {}),
-    ...(input.assigned_department !== undefined
-      ? { assigned_department: input.assigned_department, department_name: input.assigned_department }
-      : {}),
-    ...(input.primary_role !== undefined ? { primary_role: input.primary_role } : {}),
-    ...(input.portal_status !== undefined ? { status: input.portal_status } : {}),
     ...(input.is_baptized !== undefined ? { is_baptized: input.is_baptized } : {}),
-    ...(input.is_baptized !== undefined
-      ? {
-          baptism_date: input.is_baptized ? (input.baptism_date || undefined) : undefined,
-          baptized_by: input.is_baptized ? (input.baptized_by?.trim() || undefined) : undefined
-        }
-      : {}),
-    ...(input.date_of_birth !== undefined ? { date_of_birth: input.date_of_birth || undefined } : {}),
+    ...(input.is_baptized !== undefined ? {
+      baptism_date: input.is_baptized ? (input.baptism_date || null) : null,
+      baptized_by_name_snapshot: input.is_baptized ? (input.baptized_by?.trim() || null) : null
+    } : {}),
+    ...(input.date_of_birth !== undefined ? { date_of_birth: input.date_of_birth || null } : {}),
     ...(input.marital_status !== undefined ? { marital_status: input.marital_status } : {}),
-    ...(input.marital_status !== undefined
-      ? { marriage_date: input.marital_status === 'Married' ? (input.marriage_date || undefined) : undefined }
-      : {})
-  };
+    ...(input.marital_status !== undefined ? {
+      marriage_date: input.marital_status === 'Married' ? (input.marriage_date || null) : null
+    } : {})
+  });
 
   const { error: updateError } = await supabase
     .from('profiles')
@@ -414,7 +436,7 @@ export async function updateMembershipStatus(
     .select('*')
     .single();
   if (error) throw error;
-  return data as Profile;
+  return toDirectoryProfile(data);
 }
 
 /** Updates portal account status (`active` / `suspended` / `archived`) independently of church membership. */
@@ -425,7 +447,7 @@ export async function updatePortalAccountStatus(
   validateMemberAttributes({ portal_status: portalStatus });
   const { data, error } = await supabase
     .from('profiles')
-    .update({ status: portalStatus })
+    .update({ portal_access_status: portalStatus === 'active' ? 'active' : 'suspended', status: portalStatus })
     .eq('id', personId)
     .select('*')
     .single();
@@ -472,7 +494,7 @@ export async function enablePortalAccess(
     .single();
   if (reloadError) throw reloadError;
 
-  return { profile: updated as Profile, portalInvite: inviteData };
+  return { profile: toDirectoryProfile(updated), portalInvite: inviteData };
 }
 
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
