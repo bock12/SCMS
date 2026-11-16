@@ -6,6 +6,7 @@ on:
     paths:
       - "supabase/baseline/fresh_install.sql"
       - "supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql"
+      - "supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -73,6 +74,9 @@ jobs:
 
       - name: Apply forward role-assignment operations
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql
+
+      - name: Apply complete authorization permission catalog
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql
 
       - name: Assert schema, RLS, policies and routines
         run: |
