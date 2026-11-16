@@ -350,6 +350,12 @@ export async function updateUnifiedMember(
   const email = input.email !== undefined ? normalizeMemberEmail(input.email) : (current.email || '');
   const phone = input.phone !== undefined ? input.phone.trim() : (current.phone || '');
 
+  if (input.branch_id !== undefined && input.branch_id !== current.branch_id) {
+    throw new Error('A member’s branch can only be changed through the approved member transfer workflow.');
+  }
+  if (current.auth_user_id && input.email !== undefined && email !== (current.email || '')) {
+    throw new Error('This member has portal access. Update the login email through the portal account workflow to keep both records synchronized.');
+  }
   if (input.enable_portal_access && !email) {
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
@@ -418,7 +424,9 @@ export async function updateUnifiedMember(
       primaryRole: input.primary_role || current.primary_role
     });
     if (inviteError || !inviteData) {
-      throw new Error(inviteError?.message || 'Unable to enable portal access for this member.');
+      throw new Error(
+        `Member changes were saved, but portal access could not be enabled: ${inviteError?.message || 'Unknown invitation error'} You can retry Portal Access later.`
+      );
     }
     portalInvite = inviteData;
   } else if (input.enable_portal_access === false && current.auth_user_id) {
