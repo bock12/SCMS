@@ -168,14 +168,43 @@ jobs:
              '10000000-0000-4000-8000-000000000002', 'Test', 'Member B');
           SQL
 
-          visible_rows="$(psql -v ON_ERROR_STOP=1 -Atc "
+          visible_rows="$(psql -v ON_ERROR_STOP=1 -Atq -c "
             BEGIN;
             SET LOCAL ROLE authenticated;
             SELECT set_config('request.jwt.claim.sub',
               '30000000-0000-4000-8000-000000000001', true);
             SELECT count(*) FROM public.profiles;
             COMMIT;
-          " | tail -n 1)"
+          " | grep -E '^[0-9]+
+
+          if [ "$visible_rows" != "1" ]; then
+            echo "Expected authenticated member to see only their own profile; saw $visible_rows"
+            exit 1
+          fi
+
+      - name: Verify anonymous and unauthorized writes are denied
+        run: |
+          if psql -v ON_ERROR_STOP=1 -c "SET ROLE anon; SELECT * FROM public.profiles LIMIT 1;" >/tmp/anon-read.log 2>&1; then
+            echo "Anonymous role unexpectedly read profiles."
+            exit 1
+          fi
+
+          if psql -v ON_ERROR_STOP=1 -c "
+            BEGIN;
+            SET LOCAL ROLE authenticated;
+            SELECT set_config('request.jwt.claim.sub',
+              '30000000-0000-4000-8000-000000000001', true);
+            UPDATE public.profiles
+            SET membership_status = 'inactive'
+            WHERE auth_user_id = '30000000-0000-4000-8000-000000000001';
+            COMMIT;
+          " >/tmp/unauthorized-write.log 2>&1; then
+            echo "Authenticated role unexpectedly changed a protected membership field."
+            exit 1
+          fi
+
+          echo "Anonymous profile reads and protected membership writes were denied as expected."
+ | tail -n 1)"
 
           if [ "$visible_rows" != "1" ]; then
             echo "Expected authenticated member to see only their own profile; saw $visible_rows"
