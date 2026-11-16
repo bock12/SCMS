@@ -192,7 +192,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'users' && (
             can('manage_members') 
-              ? <UsersTab /> 
+              ? <UsersTab canManageRoles={can('manage_roles')} /> 
               : <PermissionRestrictedCard requiredPermission="manage_roles" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'roles' && (
@@ -553,7 +553,7 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
 
 // --- Congregation Users Tab ---
 
-const UsersTab = () => {
+const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
   const [users, setUsers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<ChurchBranch[]>([]);
   const [systemRoles, setSystemRoles] = useState<SystemRole[]>([]);
@@ -617,12 +617,17 @@ const UsersTab = () => {
     if (branchesRes.data) {
       setBranches(branchesRes.data as ChurchBranch[]);
     }
-    try {
-      const roleData = await getProfileRoleData();
-      setSystemRoles(roleData.roles);
-      setRoleAssignments(roleData.assignments);
-    } catch (error) {
-      console.error('Unable to load system role assignments:', error);
+    if (canManageRoles) {
+      try {
+        const roleData = await getProfileRoleData();
+        setSystemRoles(roleData.roles);
+        setRoleAssignments(roleData.assignments);
+      } catch (error) {
+        console.error('Unable to load system role assignments:', error);
+        setSystemRoles([]);
+        setRoleAssignments([]);
+      }
+    } else {
       setSystemRoles([]);
       setRoleAssignments([]);
     }
@@ -631,16 +636,16 @@ const UsersTab = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [canManageRoles]);
 
-  const getActiveRoleAssignments = (profileId: string) => roleAssignments.filter(item => item.profile_id === profileId && item.is_active);
+  const getActiveRoleAssignments = (profileId: string) => roleAssignments.filter(item => item.profile_id === profileId && item.is_active && (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()) && systemRoles.some(role => role.id === item.role_id && role.is_active));
   const getAssignedRoleNames = (profileId: string) => getActiveRoleAssignments(profileId).map(item => systemRoles.find(role => role.id === item.role_id)?.name || 'Unknown role');
   const renderAssignedRoleBadges = (profileId: string) => {
     const assignments = getActiveRoleAssignments(profileId);
     if (!assignments.length) return <span className="text-[10px] text-slate-400 italic">No system role assigned</span>;
     return <div className="flex flex-wrap items-center gap-1.5">{assignments.map(item => {
       const role = systemRoles.find(candidate => candidate.id === item.role_id);
-      return <span key={item.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-extrabold uppercase">{role?.name.replace(/_/g, ' ') || 'Unknown role'}<button type="button" title="Remove role assignment" onClick={() => handleRemoveRoleAssignment(item)} className="text-indigo-400 hover:text-rose-600"><X size={11} /></button></span>;
+      return <span key={item.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-extrabold uppercase">{role?.name.replace(/_/g, ' ') || 'Unknown role'}{canManageRoles && <button type="button" title="Remove role assignment" onClick={() => handleRemoveRoleAssignment(item)} className="text-indigo-400 hover:text-rose-600"><X size={11} /></button>}</span>;
     })}</div>;
   };
 
@@ -810,7 +815,7 @@ const UsersTab = () => {
   };
 
   const handleRoleChange = async (userId: string, roleId: string) => {
-    if (!roleId) return;
+    if (!canManageRoles || !roleId) return;
     const selectedSystemRole = systemRoles.find(role => role.id === roleId);
     if (!selectedSystemRole) return;
     try {
@@ -824,6 +829,7 @@ const UsersTab = () => {
   };
 
   const handleRemoveRoleAssignment = async (assignment: ProfileRoleAssignment) => {
+    if (!canManageRoles) return;
     try {
       await deactivateProfileRoleAssignment(assignment.id);
       setRoleAssignments(prev => prev.filter(item => item.id !== assignment.id));
@@ -1068,7 +1074,7 @@ const UsersTab = () => {
             <span className="truncate">Directory ({totalCount})</span>
           </button>
 
-          <button
+          {canManageRoles && <button
             type="button"
             onClick={() => setUserTabSubView('assign_roles')}
             className={`px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center ${
@@ -1079,7 +1085,7 @@ const UsersTab = () => {
           >
             <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
             <span className="truncate">Assign Roles</span>
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -1096,7 +1102,7 @@ const UsersTab = () => {
         </div>
       )}
 
-      {userTabSubView === 'assign_roles' ? (
+      {canManageRoles && userTabSubView === 'assign_roles' ? (
         /* DEDICATED ASSIGN ROLES SECTION */
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
