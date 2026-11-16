@@ -282,7 +282,7 @@ jobs:
           SET LOCAL ROLE authenticated;
           SELECT set_config('request.jwt.claim.sub',
             '30000000-0000-4000-8000-000000000001', true);
-          DO $$
+          DO $scms$
           BEGIN
             IF NOT private.has_permission('manage_members',
               '10000000-0000-4000-8000-000000000001') THEN
@@ -296,7 +296,7 @@ jobs:
               RAISE EXCEPTION 'Active scoped role did not grant access to its branch.';
             END IF;
           END
-          $;
+          $scms$;
           ROLLBACK;
           SQL
 
@@ -312,7 +312,7 @@ jobs:
               RAISE EXCEPTION 'Inactive system role unexpectedly retained branch access.';
             END IF;
           END
-          $;
+          $scms$;
           ROLLBACK;
           UPDATE public.roles SET is_active = true WHERE name = 'district_admin';
           SQL
