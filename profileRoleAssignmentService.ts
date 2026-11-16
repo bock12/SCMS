@@ -27,7 +27,7 @@ export async function getProfileRoleData(): Promise<{
 }> {
   const [rolesResult, assignmentsResult] = await Promise.all([
     supabase.from('roles').select('*').eq('is_active', true).order('name', { ascending: true }),
-    supabase.from('profile_role_assignments').select('*').eq('is_active', true).order('assigned_at', { ascending: false })
+    supabase.from('profile_role_assignments').select('*').order('assigned_at', { ascending: false })
   ]);
 
   if (rolesResult.error) throw new Error(rolesResult.error.message || 'Unable to load system roles.');
