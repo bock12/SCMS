@@ -398,7 +398,11 @@ export async function updateUnifiedMember(
     // "Archived portal account" means revoke its login link; it does not archive
     // or delete the church member record.
     await supabase.auth.revokePortalAccess(personId);
-  } else if (input.portal_status !== undefined) {
+  } else if (input.portal_status === 'active' && !current.auth_user_id && !input.enable_portal_access) {
+    throw new Error('Portal access must be enabled before the account can be marked active.');
+  } else if (input.portal_status === 'suspended' && !current.auth_user_id) {
+    throw new Error('This member has no linked portal account to suspend.');
+  } else if (input.portal_status !== undefined && input.portal_status !== 'active') {
     await supabase.from('profiles')
       .update({ portal_access_status: input.portal_status })
       .eq('id', personId);
@@ -455,6 +459,18 @@ export async function updatePortalAccountStatus(
   portalStatus: PortalAccountStatus
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
+  if (portalStatus === 'active') {
+    const { data: existing, error: lookupError } = await supabase
+      .from('profiles').select('auth_user_id').eq('id', personId).maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing?.auth_user_id) throw new Error('Portal access must be enabled before the account can be marked active.');
+  }
+  if (portalStatus === 'suspended') {
+    const { data: existing, error: lookupError } = await supabase
+      .from('profiles').select('auth_user_id').eq('id', personId).maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing?.auth_user_id) throw new Error('This member has no linked portal account to suspend.');
+  }
   if (portalStatus === 'archived') {
     await supabase.auth.revokePortalAccess(personId);
     const { data, error } = await supabase.from('profiles').select('*').eq('id', personId).single();
