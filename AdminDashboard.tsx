@@ -8,7 +8,9 @@ import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } fro
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { ResourcesAdminTab } from './ResourcesAdminTab';
 import { EventSurveysAdminTab } from './EventSurveysAdminTab';
-import { hasPermission, getUserPermissions, ALL_PERMISSIONS, getCustomRoles, getRoleAssignments } from './roleService';
+import { ALL_PERMISSIONS, getCustomRoles, getRoleAssignments } from './roleService';
+import { hasEffectivePermission, type PermissionResolution } from './permissionResolutionService';
+import { usePermissionResolution } from './usePermissionResolution';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
@@ -31,9 +33,9 @@ import {
   Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette, Award
 } from 'lucide-react';
 
-const PermissionRestrictedCard = ({ requiredPermission, profile }: { requiredPermission: string; profile: Profile | null }) => {
+const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: { requiredPermission: string; profile: Profile | null; resolution: PermissionResolution | null }) => {
   const permInfo = ALL_PERMISSIONS.find(p => p.key === requiredPermission);
-  const userPerms = getUserPermissions(profile);
+  const userPerms = resolution?.permissions || [];
 
   return (
     <div className="bg-white rounded-3xl border border-rose-200 p-8 sm:p-12 shadow-md text-center max-w-2xl mx-auto my-8 space-y-6 animate-in fade-in">
@@ -46,7 +48,7 @@ const PermissionRestrictedCard = ({ requiredPermission, profile }: { requiredPer
         </span>
         <h3 className="text-2xl font-black text-slate-900 tracking-tight">System Role Permission Enforcement</h3>
         <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-          Your current account role (<strong className="capitalize text-slate-900">{profile?.primary_role?.replace('_', ' ') || 'Member'}</strong>) does not hold the required permission to access this administrative module.
+          Your active role assignments do not grant the required permission for this branch or church scope.
         </p>
       </div>
 
@@ -86,6 +88,8 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
+  const { resolution, loading: permissionsLoading, error: permissionError } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const can = (permissionKey: string) => hasEffectivePermission(resolution, permissionKey);
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = (searchParams.get('tab') as any) || 'overview';
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
@@ -100,12 +104,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
     return () => window.removeEventListener('church-profile-updated', handleUpdate);
   }, []);
 
-  if (!profile || !['super_admin', 'admin', 'pastor', 'finance_officer', 'district_admin'].includes(profile.primary_role)) {
+  if (permissionsLoading) {
+    return <div className="flex items-center justify-center h-96 text-slate-500">Loading your role permissions…</div>;
+  }
+
+  const canOpenAdmin = [
+    'manage_roles', 'manage_members', 'manage_events', 'manage_ministries',
+    'manage_finances', 'manage_resources', 'manage_surveys', 'manage_streams'
+  ].some(can);
+
+  if (!profile || permissionError || !canOpenAdmin) {
     return (
       <div className="flex flex-col items-center justify-center h-96 text-center">
         <ShieldAlert size={64} className="text-red-500 mb-4" />
         <h2 className="text-2xl font-bold text-slate-800">Access Denied</h2>
-        <p className="text-slate-500">You do not have leadership permissions to view this administrative area.</p>
+        <p className="text-slate-500">{permissionError || 'Your active role assignments do not grant access to this administrative area.'}</p>
       </div>
     );
   }
@@ -164,44 +177,44 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           {/* Active Tab Content Render with Permission Enforcement */}
           {currentTab === 'overview' && <OverviewTab onSwitchTab={setTab} />}
           {currentTab === 'events' && (
-            hasPermission(profile, 'manage_events') 
+            can('manage_events') 
               ? <EventsAdminTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'resources' && (
-            hasPermission(profile, 'manage_events')
-              ? <ResourcesAdminTab profile={profile} />
-              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
+            can('manage_resources')
+              ? <ResourcesAdminTab profile={profile} resolution={resolution} />
+              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'surveys' && (
-            hasPermission(profile, 'manage_events')
-              ? <EventSurveysAdminTab profile={profile} />
-              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} />
+            can('manage_surveys')
+              ? <EventSurveysAdminTab profile={profile} resolution={resolution} />
+              : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'users' && (
-            hasPermission(profile, 'manage_members') 
+            can('manage_members') 
               ? <UsersTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'roles' && (
-            hasPermission(profile, 'manage_members') 
+            can('manage_roles') 
               ? <RolesAndPermissionsTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'ministries' && (
-            hasPermission(profile, 'manage_ministries') 
-              ? <MinistriesAdminTab profile={profile} /> 
-              : <PermissionRestrictedCard requiredPermission="manage_ministries" profile={profile} />
+            can('manage_ministries') 
+              ? <MinistriesAdminTab profile={profile} resolution={resolution} /> 
+              : <PermissionRestrictedCard requiredPermission="manage_ministries" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'financials' && (
-            hasPermission(profile, 'manage_finances') 
+            can('manage_finances') 
               ? <FinancialsAdminTab /> 
-              : <PermissionRestrictedCard requiredPermission="manage_finances" profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_finances" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'streaming' && (
-            hasPermission(profile, 'manage_streams') 
-              ? <StreamingTab profile={profile} /> 
-              : <PermissionRestrictedCard requiredPermission="manage_streams" profile={profile} />
+            can('manage_streams') 
+              ? <StreamingTab profile={profile} resolution={resolution} /> 
+              : <PermissionRestrictedCard requiredPermission="manage_streams" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'multitenant' && <MultiTenantTab />}
           {currentTab === 'settings' && <ChurchSettingsTab />}
