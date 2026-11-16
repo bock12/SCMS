@@ -144,7 +144,8 @@ describe('database-backed permission resolution', () => {
     data.rolePermissions.push({ role_id: 'role-future', permission_id: 'perm-finance' });
 
     const result = resolveEffectivePermissions(data);
-    expect(result.permissions).not.toContain('manage_finances');
+    // manage_finances remains granted by the valid district assignment.
+    expect(result.permissions).toContain('manage_finances');
     expect(result.assignmentIds).not.toContain('inactive-assignment');
     expect(result.assignmentIds).not.toContain('expired-assignment');
     expect(result.assignmentIds).not.toContain('other-profile-assignment');
