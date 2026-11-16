@@ -52,7 +52,16 @@ const initialPermissions = [
   { id: 'mock-perm-manage-events', key: 'manage_events', module: 'events', description: 'Manage church events' },
   { id: 'mock-perm-manage-attendance', key: 'manage_attendance', module: 'attendance', description: 'Manage attendance' },
   { id: 'mock-perm-manage-welfare', key: 'manage_welfare', module: 'welfare', description: 'Manage welfare cases' },
-  { id: 'mock-perm-view-audit-logs', key: 'view_audit_logs', module: 'audit', description: 'View audit history' }
+  { id: 'mock-perm-view-audit-logs', key: 'view_audit_logs', module: 'audit', description: 'View audit history' },
+  { id: 'mock-perm-manage-resources', key: 'manage_resources', module: 'resources', description: 'Manage church resources' },
+  { id: 'mock-perm-manage-surveys', key: 'manage_surveys', module: 'surveys', description: 'Manage event surveys' },
+  { id: 'mock-perm-manage-streams', key: 'manage_streams', module: 'streaming', description: 'Manage live streams' },
+  { id: 'mock-perm-view-events', key: 'view_events', module: 'events', description: 'View church events' },
+  { id: 'mock-perm-view-attendance', key: 'view_attendance', module: 'attendance', description: 'View attendance records' },
+  { id: 'mock-perm-view-resources', key: 'view_resources', module: 'resources', description: 'View published resources' },
+  { id: 'mock-perm-view-streams', key: 'view_streams', module: 'streaming', description: 'View live streams' },
+  { id: 'mock-perm-register-events', key: 'register_for_events', module: 'events', description: 'Register for events' },
+  { id: 'mock-perm-stream-chat', key: 'send_stream_chat', module: 'streaming', description: 'Send stream chat messages' }
 ];
 
 const initialRolePermissions = [
@@ -60,7 +69,19 @@ const initialRolePermissions = [
   ['admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance','view_audit_logs']],
   ['district_admin', ['view_members','manage_members','manage_member_transfers','manage_ministries','manage_events','manage_attendance']],
   ['pastor', ['view_members','manage_ministries','manage_events','manage_attendance']],
-  ['finance_officer', ['view_finances','manage_finances','approve_finances','post_journals']]
+  ['finance_officer', ['view_finances','manage_finances','approve_finances','post_journals']],
+  ['super_admin', ['manage_resources','manage_surveys','manage_streams']],
+  ['admin', ['manage_resources','manage_surveys','manage_streams']],
+  ['district_admin', ['manage_resources','manage_surveys','manage_streams']],
+  ['pastor', ['manage_resources','manage_surveys','manage_streams']],
+  ['super_admin', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['admin', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['district_admin', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['pastor', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['finance_officer', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['leader', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['worker', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['member', ['view_events','view_resources','view_streams','register_for_events','send_stream_chat']]
 ].flatMap(([roleName, permissionKeys]: any) => {
   const role = initialSystemRoles.find(item => item.name === roleName);
   return permissionKeys.map((key: string) => ({
