@@ -79,8 +79,10 @@ describe('Unified canonical Member Directory (profiles)', () => {
 
     expect(result.portalInvite).toBeDefined();
     expect(result.profile.auth_user_id).toBe(result.portalInvite?.authUserId);
+    expect(result.profile.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(result.profile.portal_access_status).toBe('invited');
     expect(result.profile.email).toBe('samuel.bangura@example.org');
-    expect(result.profile.primary_role).toBe('leader');
+    expect(result.profile.primary_role).toBe('member'); // Roles are assigned separately, not stored on profiles.
     expect(hasPortalAccess(result.profile)).toBe(true);
 
     const rawDb = JSON.parse(memoryStorage.getItem('faithconnect_db_v2') || '{}');
@@ -112,6 +114,40 @@ describe('Unified canonical Member Directory (profiles)', () => {
     });
     expect(postActivationSignIn.error).toBeNull();
     expect(postActivationSignIn.data.user?.id).toBe(result.profile.auth_user_id);
+  });
+
+
+  test('retains the saved member record when optional portal provisioning fails', async () => {
+    const originalProvision = supabase.auth.provisionPortalAccess;
+    supabase.auth.provisionPortalAccess = async () => ({
+      data: null,
+      error: { message: 'Mock invitation provider unavailable.' }
+    }) as any;
+
+    let savedId = '';
+    try {
+      await expect(registerUnifiedMember({
+        first_name: 'Finda',
+        last_name: 'Turay',
+        branch_id: 'branch-1',
+        membership_date: '2026-11-16',
+        email: 'finda.turay@example.org',
+        enable_portal_access: true
+      })).rejects.toThrow('Member record was saved, but portal access could not be enabled');
+
+      const saved = (await getMembers()).find(person => person.email === 'finda.turay@example.org');
+      expect(saved).toBeDefined();
+      expect(saved?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      expect(saved?.auth_user_id ?? null).toBeNull();
+      expect(saved?.membership_status).toBe('active');
+      expect(saved?.portal_access_status).toBe('not_invited');
+      savedId = saved!.id;
+    } finally {
+      supabase.auth.provisionPortalAccess = originalProvision;
+    }
+
+    // The failed optional step must not remove the directory person.
+    expect((await getMembers()).some(person => person.id === savedId)).toBe(true);
   });
 
   test('rejects unknown-email sign-in without creating an auth user or person', async () => {
