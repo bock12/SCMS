@@ -201,3 +201,97 @@ Verification:
 The files are deliberately stored outside `supabase/migrations`. They are an archival copy of what was applied, not an active deployment sequence. The eight historical files already in `supabase/migrations` must not be combined with these 22 until the fresh-install and legacy-upgrade paths are tested and formally selected.
 
 **Current status:** Original migration-source recovery is complete. The next task is to review the 22-file sequence and prepare a safe, portable fresh-install baseline. The live project migration ledger does not need repair merely to recover these source files.
+
+
+
+## 11. Recovered migration sequence review (2026-11-16)
+
+**Review status:** Static SQL review and live catalog comparison completed. A clean fresh-install baseline has not yet been produced or tested.
+
+### 11.1 Scope and verification method
+
+The review covered all 22 archived SQL files in timestamp order, their transaction boundaries, extension dependencies, table and index definitions, role/permission seeds, RLS policies, grants, functions, triggers, and later hardening migrations. Read-only catalog queries were run against SCMS-Development. No DDL, migration, seed, or data changes were made during this review.
+
+Live catalog results:
+- PostgreSQL 17.11.
+- 50 public application tables and 2 private tables.
+- 56 public RLS policies and 2 private RLS policies.
+- 18 routines in the private schema.
+- RLS enabled on all 52 application tables.
+- Extensions relevant to the application: `pgcrypto` and `btree_gist`, both installed in `extensions`.
+- The schema snapshot contains extension/platform objects beyond the application schema and is not a portable baseline.
+
+The 22-file sequence accounts for the application tables and core database objects represented in the live catalog. This is a catalog-level consistency review, not a byte-for-byte diff of every generated pg_dump statement against a reconstructed replay in a disposable Supabase instance.
+
+### 11.2 Migration sequence reviewed
+
+| Migration | Reviewed purpose |
+|---|---|
+| 001 — church foundation | Creates private schema, currencies, singleton church settings, districts and branches; seeds SLE. |
+| 002 — unified profiles and transfers | Creates profiles as the single person/member directory, optional auth link, portal and membership states, and transfer history. |
+| 003 — database authorization | Creates roles, permissions, role-permission mappings, scoped profile role assignments and trusted permission helper functions. |
+| 004 — ministries and cells | Creates unified ministry/department/fellowship structure and branch-consistent cells and memberships. |
+| 005 — foundation RLS and grants | Enables RLS, limits grants, and establishes scoped read policies for foundation tables. |
+| 006 — security and FK indexes | Revokes Data API execution of the existing Supabase RLS event-trigger function and adds FK indexes. |
+| 007 — events and attendance | Creates events, registrations, attendance sessions/records, permissions and scoped read/registration policies. |
+| 008 — resources and surveys | Creates resources, event surveys, questions, responses, answers and atomic survey-submission RPC. |
+| 009 — streaming | Creates streams/chat and isolates stream credential references in the private schema. |
+| 010 — resource visibility hardening | Replaces the initial resource policy so members-only and staff-only visibility require a linked profile or appropriate permission. |
+| 011 — finance foundation | Creates chart of accounts, funds, financial years/periods, financial accounts and calendar-period validation. |
+| 012 — double-entry journal ledger | Creates journal entries/lines, balance and immutability enforcement, posting and reversal routines. |
+| 013 — private schema hardening | Moves btree_gist into extensions and adds deny-all policy for stream credential storage. |
+| 014 — financial documents, budgets and payments | Creates financial documents, giving, budgets, payment transactions and private provider payload storage. |
+| 015 — threshold approval schema | Creates versioned policies, non-overlapping threshold bands, approval steps, requests, decisions and approval links. |
+| 016 — financial approval and posting workflows | Adds approval decisions, document-to-journal linking, posting checks and budget submission routines. |
+| 017 — financial workflow hardening | Makes document and budget approval fail closed when no active policy/band exists; hardens financial document and budget-line immutability. |
+| 018 — finance FK indexes | Adds remaining FK and lookup indexes. |
+| 019 — welfare, notifications and audit | Creates welfare cases/assistance/campaigns/contributions, notifications/recipients and audit log storage. |
+| 020 — welfare/audit hardening | Requires welfare financial links to reference posted documents, checks branch/currency consistency, adds role mappings and append-only audit enforcement. |
+| 021 — welfare FK indexes | Adds welfare lookup indexes. |
+| 022 — journal approval enforcement | Adds explicit journal policy-check state, approval submission, approval-aware posting and approval-routed reversals. |
+
+### 11.3 Findings and implementation implications
+
+1. **The recovered files are an archive, not a ready-to-run baseline.** They assume a Supabase environment with the `auth` schema, `auth.uid()`, Supabase roles, the existing `public.rls_auto_enable()` function and platform-managed schemas. Migration 006 explicitly revokes access to that existing platform function. A generic PostgreSQL 17 instance will not provide all those prerequisites.
+
+2. **Extension placement must be normalized in the baseline.** The application requires `pgcrypto` and `btree_gist`. The live project has both in `extensions`; migration 011 creates btree_gist before migration 013 moves it. A curated baseline should create/use the supported extensions schema and install required extensions in their intended final location, rather than replaying this intermediate placement.
+
+3. **Do not copy the whole `extensions` schema from the pg_dump.** The snapshot includes hundreds of extension/platform integration functions (243 were observed in the prior catalog inspection) and seven event triggers. These are not all SCMS-owned application objects. The baseline must declare required extensions and let the target Supabase platform install/manage its own extension internals and event triggers.
+
+4. **Application writes are not yet a complete authenticated-client API.** The migrations deliberately revoke table privileges and mostly grant SELECT to `authenticated`, with narrow exceptions (event self-registration and notification read marking). They provide a small set of private RPCs for surveys, approvals, journal posting/reversal and financial linking, but do not yet provide the full secure create/update workflows for members, ministries, cells, events, attendance, resources, welfare and financial drafts. This is a security-conscious schema foundation, not an integrated CRUD backend. Do not solve this by granting broad table writes; add scoped, validated RPCs or trusted server-side operations as each module is integrated.
+
+5. **Finance access is assigned narrowly.** The live role-permission mapping gives finance permissions to `finance_officer`. The `super_admin` and `admin` roles have chart-of-accounts and period-management permissions but do not currently have `view_finances`, `manage_finances`, `approve_finances` or `post_journals`. This may be intentional separation of duties, but it means a user assigned only `super_admin` cannot pass the finance read/post permission checks. Confirm the desired policy before changing role mappings.
+
+6. **Threshold approval configuration is intentionally incomplete.** There are currently zero approval policy rows. Migrations 017 and 022 fail closed for financial documents, budgets and non-document journals when the required active policy/band is missing. Finance workflows should remain unavailable for posting until approval thresholds and approver permissions are configured and tested.
+
+7. **Some useful bootstrap data is outside the 22 migration SQL bodies.** Live data currently includes one SLE currency, one church settings row, one main branch, one linked super-admin profile/role assignment, 45 chart-of-account rows, one financial year and 12 periods. The migrations seed currencies and role/permission definitions, but the church/branch/admin setup and the 45-account/2026 period data were separately provisioned. The live project has zero funds, approval policies, events and ministries. A reproducible setup needs a clearly separated, idempotent application seed/bootstrap stage; account-specific Auth users must be provisioned separately and never copied as fixed IDs or passwords.
+
+8. **Audit storage is append-only, but full audit coverage is not automatic.** The schema prevents updates/deletes to audit rows. Module write operations still need to emit trustworthy audit records through database triggers or trusted server-side workflows; the existence of the table alone does not prove all business actions are logged.
+
+9. **RLS coverage is present, but integration tests remain essential.** All 52 application tables have RLS enabled. The tables are not FORCE ROW LEVEL SECURITY; privileged table owners and Supabase service-role operations can bypass RLS by design. No service-role secret may be exposed to a browser. All normal client paths must be tested with real authenticated sessions, scope assignments and negative cross-branch cases.
+
+10. **The resource visibility hardening migration is important.** Migration 008's first authenticated policy allowed any authenticated profile to read published members-only resources; migration 010 replaced it so members-only requires a linked profile and staff-only requires manage_resources. Preserve the final policy, not the intermediate version.
+
+11. **Financial document and journal lifecycle is deliberately strict.** Posted journals and linked posted financial documents are immutable; corrections use reversal entries. Reversal entries are sent through the journal approval workflow. Welfare assistance/contribution links are required to point to posted financial documents after migration 020.
+
+12. **The survey submission RPC is atomic.** It validates respondent eligibility, active survey dates, required questions and survey/question relationships before inserting a response and answers. The client must still validate answer values against each question type; the database routine does not provide comprehensive semantic validation for every JSON answer format.
+
+### 11.4 Live security/performance advisor results
+
+The security advisor returned one warning: **Leaked Password Protection is disabled** in Supabase Auth. This is an Auth dashboard setting, not a schema defect; enable it before production.
+
+The performance advisor returned 125 informational unused-index findings. The application tables are effectively empty, so these findings are expected at this stage and are not a reason to drop the indexes. The previous advisor run found no missing FK indexes.
+
+### 11.5 Baseline preparation decision
+
+The next deliverable should be a curated Supabase-compatible fresh-install baseline and separate idempotent bootstrap data script, with these properties:
+
+- Uses the final canonical `profiles` model only; no legacy `members` table.
+- Creates application-owned schemas, tables, constraints, indexes, RLS policies, grants, functions and triggers in dependency order.
+- Installs only required extensions in the correct schema; does not dump Supabase-managed extension plumbing.
+- Preserves final hardening from migrations 010, 017, 020 and 022 rather than intermediate definitions.
+- Separates reusable role/permission seeds from church-specific setup, chart-of-accounts seed data, calendar periods and account-specific Auth bootstrap.
+- Documents Supabase platform prerequisites and has no dependency on a developer's personal Auth UUID, password or secret.
+- Is tested in a disposable Supabase-compatible PostgreSQL 17 environment before being considered deployable.
+
+**No live database changes were made during this review.** The archived migrations remain outside the active migration directory. No fresh-install baseline has been activated, and no migration ledger changes are authorized by this review.
