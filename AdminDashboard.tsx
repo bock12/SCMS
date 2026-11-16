@@ -215,8 +215,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
               ? <StreamingTab profile={profile} /> 
               : <PermissionRestrictedCard requiredPermission="manage_streams" profile={profile} resolution={resolution} />
           )}
-          {currentTab === 'multitenant' && <MultiTenantTab />}
-          {currentTab === 'settings' && <ChurchSettingsTab />}
+          {currentTab === 'multitenant' && (
+            can('manage_branches') ? <MultiTenantTab /> : <PermissionRestrictedCard requiredPermission="manage_branches" profile={profile} resolution={resolution} />
+          )}
+          {currentTab === 'settings' && (
+            can('manage_branches') ? <ChurchSettingsTab /> : <PermissionRestrictedCard requiredPermission="manage_branches" profile={profile} resolution={resolution} />
+          )}
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION BAR (Fixed at bottom on < md screens) */}
