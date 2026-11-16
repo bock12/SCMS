@@ -175,7 +175,7 @@ jobs:
               '30000000-0000-4000-8000-000000000001', true);
             SELECT count(*) FROM public.profiles;
             COMMIT;
-          " | grep -E '^[0-9]+
+          " | sed -n '2p')"
 
           if [ "$visible_rows" != "1" ]; then
             echo "Expected authenticated member to see only their own profile; saw $visible_rows"
