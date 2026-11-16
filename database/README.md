@@ -31,7 +31,7 @@ bun scripts/build-supabase-baseline.mjs --check
 bun test scripts/build-supabase-baseline.test.mjs
 ```
 
-The generated `supabase/baseline/fresh_install.sql` is deliberately outside `supabase/migrations`. It is a draft, expects Supabase platform Auth schemas/roles, and must be replay-tested against a disposable PostgreSQL 17/Supabase environment before activation. It is not a restore script for the live project.
+The generated `supabase/baseline/fresh_install.sql` is deliberately outside `supabase/migrations`. It has passed a disposable PostgreSQL 17.12 replay using minimal test-only Supabase Auth stubs, including schema-count, RLS, profile isolation and restricted-write smoke tests. This is not a full Supabase platform replay, so a disposable Supabase project replay and broader module tests are still required before activation. It is not a restore script for the live project.
 
 The baseline retains schema-coupled SLE, role and permission seeds. Church-specific settings, main branch and current calendar periods are separated into the editable bootstrap template. The 45-account chart of accounts, funds, approval thresholds and Auth-user bootstrap remain separate review/setup tasks.
 

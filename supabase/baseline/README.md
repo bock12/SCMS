@@ -54,3 +54,12 @@ The 45-account starter chart currently in SCMS-Development is a church-specific 
 8. Only after successful review, decide whether to adopt a versioned baseline migration strategy.
 
 **Never run this draft against SCMS-Development.** The current development database remains the reference environment. The recovered archive remains immutable evidence, and the existing eight legacy migrations remain untouched.
+
+
+## Automated PostgreSQL 17 test result
+
+The baseline was successfully executed on a fresh PostgreSQL 17.12 database in GitHub Actions using minimal test-only stubs for Supabase Auth (`auth.users`, `auth.uid()`, and the Supabase database roles). The test confirmed the expected 50 public tables, 2 private tables, RLS on all 52 tables, 56 public policies, 2 private policies, 18 private routines, and the required extension placement. It also passed a profile self-read isolation check, anonymous profile-read denial, and protected membership-field update denial.
+
+Run: [Test SCMS Baseline on PostgreSQL 17](https://github.com/bock12/SCMS/actions/runs/43783222414) — success.
+
+This validates PostgreSQL 17 compatibility and selected authorization behavior, not the full Supabase platform. A disposable Supabase project replay and end-to-end module tests are still required. Keep the baseline inactive until those checks and a separate review are complete.

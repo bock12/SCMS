@@ -314,3 +314,23 @@ Reusable currency/role/permission seeds remain alongside the schema because late
 **Validation status:** generator unit tests are added, but the SQL baseline has not yet been generated in a checked-out repository or replay-tested against a disposable Supabase/PostgreSQL 17 target. The current environment has no local `psql`, PostgreSQL server or Docker runtime. Do not activate or deploy the baseline until disposable replay and authorization tests pass.
 
 No changes were made to SCMS-Development. The eight legacy migrations and all 22 recovered migration files remain untouched.
+
+
+## Validation update — 2026-11-16
+
+The generated baseline has now been executed successfully in a disposable PostgreSQL 17.12 container in GitHub Actions, with minimal test-only Supabase Auth schema/function/role stubs. The run validated:
+
+- Baseline SQL executes from an empty database without SQL errors.
+- 50 public tables and 2 private tables are created.
+- RLS is enabled on all 52 application tables.
+- 56 public policies and 2 private policies are created.
+- 18 private-schema routines are created.
+- `pgcrypto` and `btree_gist` are installed in the `extensions` schema.
+- The legacy `public.members` table is absent.
+- An authenticated test profile can see only its own profile row.
+- The anonymous role cannot read profiles.
+- An authenticated user cannot update protected membership lifecycle fields.
+
+**Test run:** [Test SCMS Baseline on PostgreSQL 17](https://github.com/bock12/SCMS/actions/runs/43783222414) — success.
+
+This is a PostgreSQL 17 compatibility and security smoke test using minimal stand-ins for Supabase Auth. It is not a full disposable Supabase project test and does not recreate Supabase's complete platform services or event triggers. The baseline remains inactive. A real disposable Supabase project replay and broader module workflow tests are still required before deployment approval.
