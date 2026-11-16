@@ -30,7 +30,15 @@ Affected callers:
 
 **Required decision:** map giving/finance UI to the real finance-document/giving/journal workflow; decide whether prayer requests and ministry join requests belong in the production schema and define their lifecycle, scope, retention, and permissions before adding tables/policies. Do not create permissive compatibility tables merely to make mock calls pass.
 
-### Critical — C2: Stream administration Edge Functions are conceptual placeholders
+### Critical — C2: The generic mock query builder accepts DML without authorization
+
+`supabaseClient.ts` implements `LocalQueryBuilder.insert/update/delete` by directly mutating localStorage-backed `localDb`. The generic `then()` execution path applies filters and writes records without checking the active profile, effective permission, role assignment state, branch/district scope, or a policy equivalent. There are a few integrity-specific special cases (for example, unique auth-user/profile links), and role-assignment RPCs have a separate simulation, but generic table DML is not protected by the database authorization model.
+
+**Actual enforcement:** none in generic mock CRUD. This is acceptable only as a development data adapter and must never be interpreted as evidence that a user is authorized. It can make direct writes appear successful even though the PostgreSQL baseline denies them.
+
+**Required decision:** retain the mock adapter for convenient development login, but add explicit development warnings and use PostgreSQL integration tests as the authority for authorization. Do not attempt to duplicate all RLS logic in the mock; that would create a second, potentially divergent security implementation.
+
+### Critical — C3: Stream administration Edge Functions are conceptual placeholders
 
 `AdminDashboard.tsx` invokes `supabase.functions.invoke('stream-admin')` to regenerate stream credentials. The only implementation found is `edge_functions.ts`, explicitly marked as conceptual and not a deployable Edge Function. It contains a placeholder comment for authorization and generates a key with `Math.random()`; it does not verify JWT identity, role assignment, scope, stream ownership, or securely persist/revoke a credential. The playback function returns a hard-coded example URL.
 
