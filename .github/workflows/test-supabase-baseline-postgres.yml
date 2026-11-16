@@ -8,6 +8,7 @@ on:
       - "supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql"
       - "supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql"
       - "supabase/migrations/20261116000300_require_active_role_for_branch_access.sql"
+      - "supabase/migrations/20261116000400_align_administrative_finance_permissions.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -81,6 +82,9 @@ jobs:
 
       - name: Apply active-role branch access hardening
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000300_require_active_role_for_branch_access.sql
+
+      - name: Apply administrative finance permission alignment
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000400_align_administrative_finance_permissions.sql
 
       - name: Assert schema, RLS, policies and routines
         run: |
