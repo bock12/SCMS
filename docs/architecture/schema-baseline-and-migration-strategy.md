@@ -1,6 +1,6 @@
 # SCMS Schema Baseline and Migration Strategy
 
-- **Status:** Architecture/deployment decision required; no database changes made
+- **Status:** Live schema snapshot captured; canonical baseline curation and migration synchronization in progress
 - **Date:** 2026-11-13
 - **Scope:** Root `schema.sql` and `supabase/migrations/`
 - **Related decisions:** [ADR-0001 — Unified Member Directory](ADR-0001-unified-member-directory.md), [Member Directory RLS Access Matrix](../security/member-directory-rls-access-matrix.md)
@@ -135,3 +135,48 @@ In particular:
 ## 8. Current deployment gate
 
 **No production Supabase migration or RLS policy change is authorized by this document.** Repository-only inspection cannot verify a live database's migration history or data. A production change requires a reviewed preflight report, disposable-database test results, a backup/rollback plan, and explicit approval.
+
+
+## 9. Live SCMS-Development baseline evidence (2026-11-15)
+
+The live development project has now been inspected directly and its current application schema exported to `supabase/schema.sql`.
+
+Verified live facts:
+
+- PostgreSQL server version: 17.11.
+- Canonical migration ledger contains exactly 22 entries, `scms_001_church_foundation` through `scms_022_journal_approval_enforcement`, all with version IDs beginning `20261114`.
+- Application schema contains 50 public tables and 2 private tables.
+- The public and private tables have RLS enabled.
+- The current live project is already on the canonical `profiles`-based model; it is not an untouched legacy `members` database.
+- The live migration SQL source files for those 22 applied migrations have not yet been synchronized into this repository. The ledger proves which migration names were recorded, not the original SQL text.
+
+The export commit is `caddcf848668fd405de82bcea63d0a80dd39562a`. The workflow run is [Export Supabase Schema #8](https://github.com/bock12/SCMS/actions/runs/43777298275).
+
+### 9.1 Important limitation of the current export
+
+`supabase/schema.sql` is a schema-only snapshot generated with PostgreSQL 17 `pg_dump`. It is useful as evidence of the current live DDL, but **it is not yet approved as a clean, portable fresh-install baseline or as an executable migration**.
+
+The export currently includes the `extensions` schema. A live catalog inspection found 243 functions in that schema, including Supabase-managed extension integration functions, as well as seven database event triggers. Installed extensions include `btree_gist`, `pg_stat_statements`, `pgcrypto`, and `uuid-ossp` in the `extensions` schema, plus Supabase-managed extensions. Copying every object from `extensions` into a new project could duplicate or conflict with platform-managed objects. The export also does not contain custom roles or data, and it was produced without ownership or privilege statements.
+
+Therefore:
+- Do not restore `supabase/schema.sql` directly into SCMS-Development or another live project.
+- Do not treat it as a migration to be inserted into the migration ledger.
+- Do not replay the eight historical repository migrations on SCMS-Development.
+- Keep this export as a read-only schema snapshot until a portable baseline has been curated and tested.
+
+Supabase's current CLI documentation recommends `supabase db dump` for schema exports because it excludes Supabase-managed schemas and schemas created by extensions. It also explains that a first `supabase db pull` can establish a baseline migration and record it as already applied, but this project must first reconcile the actual remote migration ledger with the repository. See [Supabase CLI reference](https://supabase.com/docs/reference/cli/introduction) and [local development workflow](https://supabase.com/docs/guides/local-development/cli-workflows).
+
+### 9.2 Migration synchronization decision
+
+The 22 live migration names and versions are now known, but the source SQL for those migrations must be recovered or reconstructed and reviewed before migration history can be considered synchronized.
+
+Preferred next sequence:
+
+1. Preserve `supabase/schema.sql` as a clearly labelled live snapshot.
+2. Recover the exact SQL bodies for the 22 applied migrations from the original migration source or deployment artifacts, if available.
+3. If the exact source cannot be recovered, create a reviewed canonical baseline from the live schema, excluding Supabase-managed extension plumbing and preserving required application extensions, RLS, grants, functions, and triggers.
+4. Validate the baseline against a disposable Supabase-compatible PostgreSQL 17 database; test all functions, policies, triggers, exclusion constraints, and extension dependencies.
+5. Establish a migration-ledger adoption plan for SCMS-Development that marks the existing database state as baselined without reapplying existing objects. This is a separate, explicitly reviewed operation.
+6. Keep the eight historical `supabase/migrations` files quarantined as legacy history until a tested legacy upgrade path is documented.
+
+**No live database migration, reset, schema modification, or migration-ledger repair was performed during this review.**
