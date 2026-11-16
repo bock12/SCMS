@@ -295,3 +295,22 @@ The next deliverable should be a curated Supabase-compatible fresh-install basel
 - Is tested in a disposable Supabase-compatible PostgreSQL 17 environment before being considered deployable.
 
 **No live database changes were made during this review.** The archived migrations remain outside the active migration directory. No fresh-install baseline has been activated, and no migration ledger changes are authorized by this review.
+
+ 
+## 12. Fresh-install baseline preparation (2026-11-16)
+
+A deterministic baseline generator has been added:
+- `scripts/build-supabase-baseline.mjs`
+- `scripts/build-supabase-baseline.test.mjs`
+- `supabase/baseline/README.md`
+- `supabase/baseline/church-bootstrap.template.sql`
+
+The generator composes the exact 22 recovered migration bodies in sequence, consolidates their transaction wrappers, normalizes the two required extensions into the final `extensions` schema, removes the intermediate extension relocation statement, and conditionally applies the revoke to Supabase's platform-managed `public.rls_auto_enable()` function. It rejects incomplete sequences, missing source transaction wrappers, platform event-trigger DDL and legacy `public.members` table creation.
+
+The output path is `supabase/baseline/fresh_install.sql`, deliberately outside `supabase/migrations`. The generated SQL is inactive and guarded for a fresh Supabase database. It requires Supabase Auth and platform roles; it does not attempt to recreate Supabase platform internals.
+
+Reusable currency/role/permission seeds remain alongside the schema because later constraints and permission mappings depend on them. Church-specific church settings, main branch and current calendar year/periods are separated into an editable bootstrap template. The live 45-account starter chart, funds, approval policies and Auth-user setup remain separate review tasks.
+
+**Validation status:** generator unit tests are added, but the SQL baseline has not yet been generated in a checked-out repository or replay-tested against a disposable Supabase/PostgreSQL 17 target. The current environment has no local `psql`, PostgreSQL server or Docker runtime. Do not activate or deploy the baseline until disposable replay and authorization tests pass.
+
+No changes were made to SCMS-Development. The eight legacy migrations and all 22 recovered migration files remain untouched.
