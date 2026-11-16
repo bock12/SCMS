@@ -8,8 +8,8 @@ import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } fro
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { ResourcesAdminTab } from './ResourcesAdminTab';
 import { EventSurveysAdminTab } from './EventSurveysAdminTab';
-import { ALL_PERMISSIONS, getCustomRoles, getRoleAssignments } from './roleService';
-import { hasEffectivePermission, type PermissionResolution } from './permissionResolutionService';
+import { getCustomRoles, getRoleAssignments } from './roleService';
+import { hasEffectivePermission, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
@@ -34,7 +34,8 @@ import {
 } from 'lucide-react';
 
 const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: { requiredPermission: string; profile: Profile | null; resolution: PermissionResolution | null }) => {
-  const permInfo = ALL_PERMISSIONS.find(p => p.key === requiredPermission);
+  const permLabel = PERMISSION_LABELS[requiredPermission] || requiredPermission;
+  const permInfo = undefined;
   const userPerms = resolution?.permissions || [];
 
   return (
@@ -56,7 +57,7 @@ const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: {
         <div className="font-extrabold text-indigo-700 uppercase tracking-wider text-[10px]">Required System Permission:</div>
         <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
           <Key size={14} className="text-indigo-600" />
-          <span>{permInfo?.label || requiredPermission}</span>
+          <span>{permLabel}</span>
         </div>
         <p className="text-slate-500 text-[11px] leading-relaxed">{permInfo?.description}</p>
       </div>
@@ -67,7 +68,7 @@ const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: {
           {userPerms.map(pKey => (
             <span key={pKey} className="px-2 py-1 bg-white border border-amber-300 text-amber-900 rounded-lg font-bold text-[10px] flex items-center gap-1">
               <Check size={12} className="text-amber-600" />
-              <span>{ALL_PERMISSIONS.find(p => p.key === pKey)?.label || pKey}</span>
+              <span>{PERMISSION_LABELS[pKey] || pKey}</span>
             </span>
           ))}
           {userPerms.length === 0 && (
