@@ -1,5 +1,31 @@
 import { supabase } from './supabaseClient';
 
+export const PERMISSION_LABELS: Record<string, string> = {
+  view_members: 'View members',
+  manage_members: 'Manage members',
+  manage_member_transfers: 'Manage member transfers',
+  manage_roles: 'Manage roles',
+  manage_branches: 'Manage branches',
+  manage_ministries: 'Manage ministries',
+  view_finances: 'View finances',
+  manage_finances: 'Manage finances',
+  approve_finances: 'Approve finances',
+  post_journals: 'Post journals',
+  manage_events: 'Manage events',
+  manage_attendance: 'Manage attendance',
+  manage_welfare: 'Manage welfare',
+  view_audit_logs: 'View audit logs',
+  manage_resources: 'Manage resources',
+  manage_surveys: 'Manage surveys',
+  manage_streams: 'Manage live streams',
+  view_events: 'View events',
+  view_attendance: 'View attendance',
+  view_resources: 'View resources',
+  view_streams: 'View live streams',
+  register_for_events: 'Register for events',
+  send_stream_chat: 'Send stream chat messages'
+};
+
 export type AuthorizationScopeType = 'church' | 'district' | 'branch';
 
 export interface AuthorizationRole {
