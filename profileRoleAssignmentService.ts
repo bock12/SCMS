@@ -47,45 +47,25 @@ export async function assignProfileRole(input: {
   branch_id?: string | null;
   district_id?: string | null;
 }): Promise<ProfileRoleAssignment> {
-  const scopeType = input.scope_type || 'church';
-  const existingResult = await supabase
-    .from('profile_role_assignments')
-    .select('*')
-    .eq('profile_id', input.profile_id)
-    .eq('role_id', input.role_id)
-    .eq('scope_type', scopeType)
-    .eq('is_active', true)
-    .maybeSingle();
+  const result = await supabase.rpc('assign_profile_role', {
+    p_profile_id: input.profile_id,
+    p_role_id: input.role_id,
+    p_scope_type: input.scope_type || 'church',
+    p_branch_id: input.branch_id ?? null,
+    p_district_id: input.district_id ?? null
+  });
 
-  if (existingResult.error) throw new Error(existingResult.error.message || 'Unable to check existing role assignment.');
-  if (existingResult.data) return existingResult.data as ProfileRoleAssignment;
-
-  const insertResult = await supabase
-    .from('profile_role_assignments')
-    .insert({
-      profile_id: input.profile_id,
-      role_id: input.role_id,
-      scope_type: scopeType,
-      branch_id: input.branch_id ?? null,
-      district_id: input.district_id ?? null,
-      assigned_by_profile_id: input.assigned_by_profile_id ?? null,
-      is_active: true
-    })
-    .select('*')
-    .single();
-
-  if (insertResult.error || !insertResult.data) {
-    throw new Error(insertResult.error?.message || 'Unable to save member role assignment.');
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || 'Unable to save member role assignment.');
   }
 
-  return insertResult.data as ProfileRoleAssignment;
+  return result.data as ProfileRoleAssignment;
 }
 
 export async function deactivateProfileRoleAssignment(assignmentId: string): Promise<void> {
-  const result = await supabase
-    .from('profile_role_assignments')
-    .update({ is_active: false })
-    .eq('id', assignmentId);
+  const result = await supabase.rpc('deactivate_profile_role_assignment', {
+    p_assignment_id: assignmentId
+  });
 
   if (result.error) throw new Error(result.error.message || 'Unable to remove member role assignment.');
 }
