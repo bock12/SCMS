@@ -1500,6 +1500,12 @@ const localAuth = {
       password: newPassword,
       setup_token: undefined
     };
+    localDb.profiles = (localDb.profiles || []).map((item: any) =>
+      item.auth_user_id === user.id
+        ? sanitizeProfileRecord({ ...item, portal_access_status: 'active', status: 'active' })
+        : item
+    );
+    saveLocalDatabase(localDb);
     saveStoredUsers(users);
 
     const session = {
@@ -1660,7 +1666,7 @@ const localAuth = {
         error: { message: 'This portal account is not linked to a directory person. Please contact a church administrator.' }
       };
     }
-    if (matchingProfile.status === 'suspended' || matchingProfile.status === 'archived') {
+    if (matchingProfile.portal_access_status === 'suspended' || matchingProfile.status === 'suspended' || matchingProfile.status === 'archived') {
       return {
         data: { user: null, session: null },
         error: { message: 'Your portal access is currently suspended or archived. Please contact a church administrator.' }
