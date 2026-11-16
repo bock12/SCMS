@@ -27,7 +27,7 @@ The generator validates the 001–022 sequence and each source file's recorded t
 
 ## Supabase platform requirements
 
-The output expects a fresh Supabase database. It requires the Supabase-managed `auth` schema, `auth.uid()`, and `anon`, `authenticated`, and `service_role` database roles. It does not create or copy Supabase event triggers, Auth internals, extension internals, API roles, Vault, or other platform plumbing.
+The output expects a fresh Supabase database. It requires the Supabase-managed `auth` schema and `auth.users` table, `auth.uid()`, and `anon`, `authenticated`, and `service_role` database roles. It does not create or copy Supabase event triggers, Auth internals, extension internals, API roles, Vault, or other platform plumbing.
 
 The script includes a preflight guard against running over existing SCMS core tables. It is not a database reset tool.
 
