@@ -230,3 +230,84 @@ jobs:
           fi
 
           echo "Role assignment RPC correctly rejected a caller without manage_roles."
+
+      - name: Verify scoped, inactive, and expired permission assignments
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '20000000-0000-4000-8000-000000000001',
+                 r.id, 'branch',
+                 '10000000-0000-4000-8000-000000000001',
+                 NULL, now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'district_admin';
+
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '20000000-0000-4000-8000-000000000001',
+                 r.id, 'branch',
+                 '10000000-0000-4000-8000-000000000002',
+                 NULL, now() - interval '1 day', NULL, false
+          FROM public.roles r WHERE r.name = 'district_admin';
+
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '20000000-0000-4000-8000-000000000001',
+                 r.id, 'branch',
+                 '10000000-0000-4000-8000-000000000002',
+                 NULL, now() - interval '2 days', now() - interval '1 minute', true
+          FROM public.roles r WHERE r.name = 'district_admin';
+          SQL
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub',
+            '30000000-0000-4000-8000-000000000001', true);
+          DO $$
+          BEGIN
+            IF NOT private.has_permission('manage_members',
+              '10000000-0000-4000-8000-000000000001') THEN
+              RAISE EXCEPTION 'Active branch assignment did not grant its permission.';
+            END IF;
+            IF private.has_permission('manage_members',
+              '10000000-0000-4000-8000-000000000002') THEN
+              RAISE EXCEPTION 'Branch assignment leaked permission to another branch.';
+            END IF;
+          END
+          $$;
+          ROLLBACK;
+          SQL
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE public.profile_role_assignments
+          SET is_active = false
+          WHERE profile_id = '20000000-0000-4000-8000-000000000001'
+            AND branch_id = '10000000-0000-4000-8000-000000000001';
+
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub',
+            '30000000-0000-4000-8000-000000000001', true);
+          DO $$
+          BEGIN
+            IF private.has_permission('manage_members',
+              '10000000-0000-4000-8000-000000000001') THEN
+              RAISE EXCEPTION 'Inactive assignment unexpectedly granted a permission.';
+            END IF;
+            IF private.has_permission('manage_members',
+              '10000000-0000-4000-8000-000000000002') THEN
+              RAISE EXCEPTION 'Expired or inactive assignment unexpectedly granted a permission.';
+            END IF;
+          END
+          $$;
+          ROLLBACK;
+          SQL
+
+          echo "Branch scope, inactive assignments, and expired assignments were enforced."
