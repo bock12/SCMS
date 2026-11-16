@@ -3,27 +3,35 @@ export type AppRole = 'super_admin' | 'admin' | 'district_admin' | 'pastor' | 'f
 
 export type MembershipStatus = 'active' | 'inactive' | 'suspended' | 'transferred' | 'archived';
 export type PortalAccountStatus = 'active' | 'suspended' | 'archived';
+export type PortalAccessLifecycle = 'not_invited' | 'invited' | 'active' | 'suspended';
 
 export interface Profile {
+  /** Stable church-person ID. Never use auth_user_id as the directory key. */
   id: string;
   auth_user_id?: string | null;
-  branch_id: string;
+  branch_id: string | null;
   first_name: string;
   last_name: string;
   email: string;
   phone: string;
   gender?: 'male' | 'female' | 'other';
   avatar_url?: string;
+  /** Display compatibility only; authoritative roles live in profile_role_assignments. */
   primary_role: AppRole;
+  /** Legacy display compatibility only; canonical state is portal_access_status. */
   status?: PortalAccountStatus;
+  portal_access_status?: PortalAccessLifecycle;
   membership_status?: MembershipStatus;
   membership_date?: string;
+  /** @deprecated Ministry/department membership belongs in ministry_members. */
   department_name?: string;
+  /** @deprecated Ministry/department membership belongs in ministry_members. */
   assigned_department?: string;
   created_at: string;
   is_baptized?: boolean;
   baptism_date?: string;
   baptized_by?: string;
+  baptized_by_profile_id?: string | null;
   date_of_birth?: string;
   marital_status?: 'Single' | 'Married' | 'Widowed' | 'Divorced';
   marriage_date?: string;
