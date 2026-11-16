@@ -1,5 +1,6 @@
 import type { Profile } from './types';
 import { supabase } from './supabaseClient';
+import { mapCanonicalProfileToProfile } from './memberProfileMapper';
 
 export interface DirectoryMember extends Profile {
   has_login_credentials: boolean;
@@ -17,8 +18,10 @@ export async function getDirectoryMembers(): Promise<DirectoryMember[]> {
 
   if (error) throw error;
 
-  return ((data || []) as Profile[]).map(profile => ({
-    ...profile,
-    has_login_credentials: Boolean(profile.auth_user_id)
-  }));
+  return ((data || []) as any[]).map(row => {
+    const profile = 'portal_access_status' in row && 'record_status' in row
+      ? mapCanonicalProfileToProfile(row)
+      : row as Profile;
+    return { ...profile, has_login_credentials: Boolean(profile.auth_user_id) };
+  });
 }
