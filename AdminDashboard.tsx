@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
-import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus, AppRole } from './types';
+import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
@@ -13,6 +13,7 @@ import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNext
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
+import { getProfileRoleData, assignProfileRole, deactivateProfileRoleAssignment, type SystemRole, type ProfileRoleAssignment } from './profileRoleAssignmentService';
 import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember } from './ministryMemberService';
 import {
   getAllJoinRequests,
@@ -543,6 +544,9 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
 const UsersTab = () => {
   const [users, setUsers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<ChurchBranch[]>([]);
+  const [systemRoles, setSystemRoles] = useState<SystemRole[]>([]);
+  const [roleAssignments, setRoleAssignments] = useState<ProfileRoleAssignment[]>([]);
+  const [roleSelections, setRoleSelections] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
@@ -569,7 +573,6 @@ const UsersTab = () => {
   const [formBranchId, setFormBranchId] = useState('branch-1');
   const [formMembershipDate, setFormMembershipDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [formMembershipStatus, setFormMembershipStatus] = useState<MembershipStatus>('active');
-  const [formRole, setFormRole] = useState<string>('member');
   const [formStatus, setFormStatus] = useState<PortalAccountStatus>('active');
   const [formAvatar, setFormAvatar] = useState('');
   const [formIsBaptized, setFormIsBaptized] = useState(false);
@@ -602,12 +605,32 @@ const UsersTab = () => {
     if (branchesRes.data) {
       setBranches(branchesRes.data as ChurchBranch[]);
     }
+    try {
+      const roleData = await getProfileRoleData();
+      setSystemRoles(roleData.roles);
+      setRoleAssignments(roleData.assignments);
+    } catch (error) {
+      console.error('Unable to load system role assignments:', error);
+      setSystemRoles([]);
+      setRoleAssignments([]);
+    }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  const getActiveRoleAssignments = (profileId: string) => roleAssignments.filter(item => item.profile_id === profileId && item.is_active);
+  const getAssignedRoleNames = (profileId: string) => getActiveRoleAssignments(profileId).map(item => systemRoles.find(role => role.id === item.role_id)?.name || 'Unknown role');
+  const renderAssignedRoleBadges = (profileId: string) => {
+    const assignments = getActiveRoleAssignments(profileId);
+    if (!assignments.length) return <span className="text-[10px] text-slate-400 italic">No system role assigned</span>;
+    return <div className="flex flex-wrap items-center gap-1.5">{assignments.map(item => {
+      const role = systemRoles.find(candidate => candidate.id === item.role_id);
+      return <span key={item.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-extrabold uppercase">{role?.name.replace(/_/g, ' ') || 'Unknown role'}<button type="button" title="Remove role assignment" onClick={() => handleRemoveRoleAssignment(item)} className="text-indigo-400 hover:text-rose-600"><X size={11} /></button></span>;
+    })}</div>;
+  };
 
   const resetForm = () => {
     setFormFirstName('');
@@ -618,7 +641,6 @@ const UsersTab = () => {
     setFormBranchId(branches[0]?.id || 'branch-1');
     setFormMembershipDate(new Date().toISOString().slice(0, 10));
     setFormMembershipStatus('active');
-    setFormRole('member');
     setFormStatus('active');
     setFormAvatar('');
     setFormIsBaptized(false);
@@ -666,7 +688,6 @@ const UsersTab = () => {
     setFormBranchId(user.branch_id || branches[0]?.id || 'branch-1');
     setFormMembershipDate(user.membership_date || (user.created_at ? user.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)));
     setFormMembershipStatus(user.membership_status || 'active');
-    setFormRole(user.primary_role || 'member');
     setFormStatus(user.status || 'active');
     setFormAvatar(user.avatar_url || '');
     setFormIsBaptized(Boolean(user.is_baptized));
@@ -700,7 +721,6 @@ const UsersTab = () => {
         marital_status: formMaritalStatus,
         marriage_date: formMaritalStatus === 'Married' ? (formMarriageDate || undefined) : undefined,
         enable_portal_access: formCreateCredentials,
-        primary_role: formRole as AppRole,
         portal_status: formStatus
       });
 
@@ -736,7 +756,6 @@ const UsersTab = () => {
         avatar_url: formAvatar || editingUser.avatar_url,
         membership_status: formMembershipStatus,
         membership_date: formMembershipDate,
-        primary_role: formRole as AppRole,
         portal_status: formStatus,
         is_baptized: formIsBaptized,
         baptism_date: formBaptismDate || undefined,
@@ -778,12 +797,26 @@ const UsersTab = () => {
     setUsers(prev => prev.map(p => p.id === user.id ? updated : p));
   };
 
-  const handleRoleChange = async (userId: string, newRole: string, userName?: string) => {
-    await supabase.from('profiles').update({ primary_role: newRole }).eq('id', userId);
-    setUsers(prev => prev.map(p => p.id === userId ? { ...p, primary_role: newRole as any } : p));
-    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: userId, primary_role: newRole } }));
-    const targetName = userName || users.find(u => u.id === userId)?.first_name || 'Member';
-    setRoleSuccessToast(`Successfully updated ${targetName}'s primary role in Supabase to "${newRole.replace('_', ' ').toUpperCase()}"`);
+  const handleRoleChange = async (userId: string, roleId: string) => {
+    if (!roleId) return;
+    const selectedSystemRole = systemRoles.find(role => role.id === roleId);
+    if (!selectedSystemRole) return;
+    try {
+      const assignment = await assignProfileRole({ profile_id: userId, role_id: roleId, assigned_by_profile_id: profile.id, scope_type: 'church' });
+      setRoleAssignments(prev => [assignment, ...prev.filter(item => item.id !== assignment.id)]);
+      setRoleSelections(prev => ({ ...prev, [userId]: '' }));
+      const target = users.find(user => user.id === userId);
+      setRoleSuccessToast(`Assigned ${selectedSystemRole.name.replace(/_/g, ' ')} to ${target ? `${target.first_name} ${target.last_name}` : 'Member'}.`);
+    } catch (error: any) { setRoleSuccessToast(error?.message || 'Unable to assign this role. Please try again.'); }
+    setTimeout(() => setRoleSuccessToast(null), 4000);
+  };
+
+  const handleRemoveRoleAssignment = async (assignment: ProfileRoleAssignment) => {
+    try {
+      await deactivateProfileRoleAssignment(assignment.id);
+      setRoleAssignments(prev => prev.filter(item => item.id !== assignment.id));
+      setRoleSuccessToast('Role assignment removed.');
+    } catch (error: any) { setRoleSuccessToast(error?.message || 'Unable to remove this role assignment.'); }
     setTimeout(() => setRoleSuccessToast(null), 4000);
   };
 
@@ -843,7 +876,7 @@ const UsersTab = () => {
                     </h4>
                     <div className="flex flex-wrap items-center gap-1 mt-1">
                       <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {user.primary_role?.replace('_', ' ')}
+                        {getAssignedRoleNames(user.id).join(', ') || 'No system role assigned'}
                       </span>
                       {isSuspended && (
                         <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-rose-100 text-rose-700">
@@ -908,18 +941,7 @@ const UsersTab = () => {
 
             {/* Card Action Controls */}
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              <select
-                className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-indigo-700 outline-none"
-                value={user.primary_role}
-                onChange={(e) => handleRoleChange(user.id, e.target.value)}
-              >
-                <option value="member">Member</option>
-                <option value="worker">Worker</option>
-                <option value="leader">Leader</option>
-                <option value="finance_officer">Finance Officer / Treasurer</option>
-                <option value="pastor">Pastor</option>
-                <option value="admin">Admin</option>
-              </select>
+              <div className="min-w-0 flex-1">{renderAssignedRoleBadges(user.id)}</div>
 
               <div className="flex items-center gap-1">
                 <button
@@ -954,7 +976,7 @@ const UsersTab = () => {
     if (baptismFilter === 'baptized' && !(u as any).is_baptized) return false;
     if (baptismFilter === 'unbaptized' && (u as any).is_baptized) return false;
 
-    if (selectedRole !== 'all' && u.primary_role !== selectedRole) return false;
+    if (selectedRole !== 'all' && !getActiveRoleAssignments(u.id).some(item => item.role_id === selectedRole)) return false;
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -969,7 +991,8 @@ const UsersTab = () => {
   // Calculate Metrics
   const totalCount = users.length;
   const baptizedCount = users.filter(u => u.is_baptized).length;
-  const leadershipCount = users.filter(u => ['pastor', 'leader', 'worker', 'admin', 'super_admin'].includes(u.primary_role)).length;
+  const leadershipRoleIds = new Set(systemRoles.filter(role => ['pastor', 'leader', 'worker', 'admin', 'super_admin', 'district_admin', 'finance_officer'].includes(role.name)).map(role => role.id));
+  const leadershipCount = users.filter(user => getActiveRoleAssignments(user.id).some(item => leadershipRoleIds.has(item.role_id))).length;
   const credentialUsersCount = users.filter(u => hasPortalAccess(u)).length;
 
   return (
@@ -1073,7 +1096,7 @@ const UsersTab = () => {
                 </span>
                 <h3 className="text-2xl font-black text-slate-900 tracking-tight">Assign Member Roles</h3>
                 <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-                  Update any member's <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">primary_role</code> in the Supabase <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">profiles</code> table. Select a role from the dropdown to grant or modify permissions immediately across the portal.
+                  Assign one or more system roles through <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">profile_role_assignments</code>. Role definitions are maintained separately from member profile data.
                 </p>
               </div>
 
@@ -1129,7 +1152,7 @@ const UsersTab = () => {
                   {filteredUsers.length} Congregants
                 </span>
               </h4>
-              <span className="text-xs text-slate-500 font-medium">Select new role from dropdown to save in Supabase</span>
+              <span className="text-xs text-slate-500 font-medium">Assignments are saved separately from member profile data</span>
             </div>
 
             <div className="overflow-x-auto">
@@ -1138,8 +1161,8 @@ const UsersTab = () => {
                   <tr>
                     <th className="px-5 py-3">Member Name & Details</th>
                     <th className="px-5 py-3">Email Address</th>
-                    <th className="px-5 py-3">Current Active Role</th>
-                    <th className="px-5 py-3">Assign Primary Role (Supabase Dropdown)</th>
+                    <th className="px-5 py-3">Assigned System Roles</th>
+                    <th className="px-5 py-3">Assign Additional Role</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1161,37 +1184,12 @@ const UsersTab = () => {
                       <td className="px-5 py-3.5 font-mono text-slate-700">
                         {user.email}
                       </td>
+                      <td className="px-5 py-3.5">{renderAssignedRoleBadges(user.id)}</td>
                       <td className="px-5 py-3.5">
-                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                          user.primary_role === 'finance_officer' ? 'bg-amber-100 text-amber-900 border border-amber-300' :
-                          user.primary_role === 'pastor' || user.primary_role === 'admin' || user.primary_role === 'super_admin' ? 'bg-indigo-100 text-indigo-900 border border-indigo-200' :
-                          user.primary_role === 'leader' ? 'bg-purple-100 text-purple-900 border border-purple-200' :
-                          user.primary_role === 'worker' ? 'bg-emerald-100 text-emerald-900 border border-emerald-200' :
-                          'bg-slate-100 text-slate-700 border border-slate-200'
-                        }`}>
-                          {user.primary_role?.replace('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={user.primary_role}
-                            onChange={(e) => handleRoleChange(user.id, e.target.value, `${user.first_name} ${user.last_name}`)}
-                            className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-indigo-200 rounded-xl font-extrabold text-xs text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
-                          >
-                            <option value="member">Member (General Congregant)</option>
-                            <option value="worker">Worker (Ministry Volunteer)</option>
-                            <option value="leader">Leader (Department / Ministry Head)</option>
-                            <option value="finance_officer">Finance Officer (Treasury & Ledger Manager)</option>
-                            <option value="pastor">Pastor (Spiritual Leader)</option>
-                            <option value="admin">Admin (Church Administrator)</option>
-                            <option value="district_admin">District Admin</option>
-                            <option value="super_admin">Super Admin / Senior Pastor</option>
-                          </select>
-                          <span className="text-[10px] text-emerald-600 font-extrabold flex items-center gap-1">
-                            <Check size={12} /> Auto-saves
-                          </span>
-                        </div>
+                        <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="max-w-full px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-indigo-200 rounded-xl font-extrabold text-xs text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs">
+                          <option value="">Assign a system role...</option>
+                          {systemRoles.map(role => <option key={role.id} value={role.id}>{role.name.replace(/_/g, ' ')}</option>)}
+                        </select>
                       </td>
                     </tr>
                   ))}
@@ -1300,18 +1298,9 @@ const UsersTab = () => {
 
           {/* Role Filter Dropdown */}
           <div className="w-full md:w-52 shrink-0">
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-            >
-              <option value="all">All Roles & Positions</option>
-              <option value="super_admin">Senior Pastors / Super Admins</option>
-              <option value="admin">Church Admins</option>
-              <option value="pastor">Pastors</option>
-              <option value="leader">Ministry Leaders</option>
-              <option value="worker">Volunteers & Workers</option>
-              <option value="member">General Members</option>
+            <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
+              <option value="all">All Assigned Roles</option>
+              {systemRoles.map(role => <option key={role.id} value={role.id}>{role.name.replace(/_/g, ' ')}</option>)}
             </select>
           </div>
         </div>
@@ -1423,18 +1412,10 @@ const UsersTab = () => {
 
                         {/* Role & Credential Status */}
                         <td className="px-5 py-3.5 space-y-1">
-                          <select
-                            className="px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-bold text-indigo-700 bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                            value={user.primary_role}
-                            onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                          >
-                            <option value="member">Member</option>
-                            <option value="worker">Worker</option>
-                            <option value="leader">Leader</option>
-                            <option value="finance_officer">Finance Officer</option>
-                            <option value="pastor">Pastor</option>
-                            <option value="admin">Admin</option>
-                            <option value="super_admin">Super Admin</option>
+                          {renderAssignedRoleBadges(user.id)}
+                          <select value={roleSelections[user.id] || ''} onChange={(e) => { const roleId = e.target.value; setRoleSelections(prev => ({ ...prev, [user.id]: roleId })); if (roleId) handleRoleChange(user.id, roleId); }} className="mt-1 max-w-full px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-bold text-indigo-700 bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
+                            <option value="">Assign role...</option>
+                            {systemRoles.map(role => <option key={role.id} value={role.id}>{role.name.replace(/_/g, ' ')}</option>)}
                           </select>
 
                           <div className="mt-1">
@@ -1852,25 +1833,7 @@ const UsersTab = () => {
 
                 {formCreateCredentials && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="text-[10px] font-extrabold uppercase text-indigo-800 tracking-wider block mb-1">
-                        Portal Role
-                      </label>
-                      <select
-                        value={formRole}
-                        onChange={(e) => setFormRole(e.target.value)}
-                        className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                      >
-                        <option value="member">General Member</option>
-                        <option value="worker">Volunteer / Worker</option>
-                        <option value="leader">Ministry Leader</option>
-                        <option value="finance_officer">Finance Officer</option>
-                        <option value="pastor">Pastor</option>
-                        <option value="admin">Church Admin</option>
-                        <option value="district_admin">District Admin</option>
-                        <option value="super_admin">Senior Pastor / Super Admin</option>
-                      </select>
-                    </div>
+                    
                     <div>
                       <label className="text-[10px] font-extrabold uppercase text-indigo-800 tracking-wider block mb-1">
                         Portal Account Status
@@ -1924,7 +1887,7 @@ const UsersTab = () => {
                     {viewingUser.first_name} {viewingUser.last_name}
                   </h3>
                   <span className="inline-block px-2 py-0.5 mt-1 bg-indigo-50 text-indigo-700 font-extrabold text-[10px] rounded uppercase">
-                    {viewingUser.primary_role?.replace('_', ' ')}
+                    {getAssignedRoleNames(viewingUser.id).join(', ') || 'No system role assigned'}
                   </span>
                 </div>
               </div>
