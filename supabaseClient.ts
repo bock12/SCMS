@@ -1746,6 +1746,77 @@ export const supabase = {
     return new LocalQueryBuilder(table);
   },
 
+  async rpc(functionName: string, args: Record<string, any> = {}) {
+    localDb = loadLocalDatabase();
+    const session = getCurrentSession();
+    const actor = (localDb.profiles || []).find((item: any) => item.auth_user_id === session?.user?.id);
+    if (!actor) {
+      return { data: null, error: { code: '42501', message: 'An authenticated church profile is required.' } };
+    }
+
+    const actorAssignments = (localDb.profile_role_assignments || []).filter((item: any) =>
+      item.profile_id === actor.id && item.is_active
+    );
+    const actorRoleNames = actorAssignments
+      .map((assignment: any) => (localDb.roles || []).find((role: any) => role.id === assignment.role_id)?.name)
+      .filter(Boolean);
+    if (!actorRoleNames.some((name: string) => ['super_admin', 'admin'].includes(name))) {
+      return { data: null, error: { code: '42501', message: 'You do not have permission to manage system roles.' } };
+    }
+
+    if (functionName === 'assign_profile_role') {
+      const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
+      const targetExists = (localDb.profiles || []).some((item: any) => item.id === p_profile_id);
+      const role = (localDb.roles || []).find((item: any) => item.id === p_role_id && item.is_active);
+      const validScope =
+        (p_scope_type === 'church' && p_branch_id === null && p_district_id === null) ||
+        (p_scope_type === 'branch' && Boolean(p_branch_id) && p_district_id === null) ||
+        (p_scope_type === 'district' && Boolean(p_district_id) && p_branch_id === null);
+      if (!targetExists || !role || !validScope) {
+        return { data: null, error: { code: '22023', message: 'The selected member, role, or assignment scope is invalid.' } };
+      }
+      const existing = (localDb.profile_role_assignments || []).find((item: any) =>
+        item.profile_id === p_profile_id &&
+        item.role_id === p_role_id &&
+        item.scope_type === p_scope_type &&
+        item.branch_id === p_branch_id &&
+        item.district_id === p_district_id &&
+        item.is_active
+      );
+      if (existing) return { data: existing, error: null };
+
+      const assignment = {
+        id: createMockUuid(),
+        profile_id: p_profile_id,
+        role_id: p_role_id,
+        scope_type: p_scope_type,
+        branch_id: p_branch_id,
+        district_id: p_district_id,
+        assigned_by_profile_id: actor.id,
+        assigned_at: new Date().toISOString(),
+        expires_at: null,
+        is_active: true
+      };
+      localDb.profile_role_assignments = [...(localDb.profile_role_assignments || []), assignment];
+      saveLocalDatabase(localDb);
+      return { data: assignment, error: null };
+    }
+
+    if (functionName === 'deactivate_profile_role_assignment') {
+      const assignment = (localDb.profile_role_assignments || []).find((item: any) =>
+        item.id === args.p_assignment_id && item.is_active
+      );
+      if (!assignment) return { data: false, error: null };
+      localDb.profile_role_assignments = localDb.profile_role_assignments.map((item: any) =>
+        item.id === assignment.id ? { ...item, is_active: false } : item
+      );
+      saveLocalDatabase(localDb);
+      return { data: true, error: null };
+    }
+
+    return { data: null, error: { message: `Mock RPC function not implemented: ${functionName}` } };
+  },
+
   channel(channelName: string) {
     const currentListeners: ChannelListener[] = [];
     channelMap.set(channelName, currentListeners);
