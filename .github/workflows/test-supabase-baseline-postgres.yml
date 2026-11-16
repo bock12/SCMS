@@ -7,6 +7,7 @@ on:
       - "supabase/baseline/fresh_install.sql"
       - "supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql"
       - "supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql"
+      - "supabase/migrations/20261116000300_require_active_role_for_branch_access.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -77,6 +78,9 @@ jobs:
 
       - name: Apply complete authorization permission catalog
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql
+
+      - name: Apply active-role branch access hardening
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000300_require_active_role_for_branch_access.sql
 
       - name: Assert schema, RLS, policies and routines
         run: |
@@ -284,9 +288,29 @@ jobs:
               '10000000-0000-4000-8000-000000000002') THEN
               RAISE EXCEPTION 'Branch assignment leaked permission to another branch.';
             END IF;
+            IF NOT private.can_access_branch('10000000-0000-4000-8000-000000000001') THEN
+              RAISE EXCEPTION 'Active scoped role did not grant access to its branch.';
+            END IF;
           END
-          $$;
+          $;
           ROLLBACK;
+          SQL
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE public.roles SET is_active = false WHERE name = 'district_admin';
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub',
+            '30000000-0000-4000-8000-000000000001', true);
+          DO $
+          BEGIN
+            IF private.can_access_branch('10000000-0000-4000-8000-000000000001') THEN
+              RAISE EXCEPTION 'Inactive system role unexpectedly retained branch access.';
+            END IF;
+          END
+          $;
+          ROLLBACK;
+          UPDATE public.roles SET is_active = true WHERE name = 'district_admin';
           SQL
 
           psql -v ON_ERROR_STOP=1 <<'SQL'
