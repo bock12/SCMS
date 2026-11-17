@@ -7,6 +7,15 @@ import {
 import { getMemberAvailableEventSurveys } from './memberEventSurveyService';
 import { getRequisitions } from './requisitionService';
 import { getChurchResources } from './churchResourceService';
+import {
+  loadPermissionResolution,
+  hasEffectivePermission,
+  hasAnyEffectivePermission,
+  DEPARTMENT_OVERSIGHT_PERMISSION_KEYS,
+  LEADER_CONSOLE_PERMISSION_KEYS,
+  FINANCE_APPROVAL_PERMISSION_KEYS,
+  FINANCE_ACTION_PERMISSION_KEYS
+} from './permissionResolutionService';
 import type {
   ChurchEvent,
   EventRegistration,
@@ -162,7 +171,7 @@ function isInAppNotificationForUser(
   notif: InAppNotification,
   profile: Profile,
   userDeptNames: Set<string>,
-  isExecutiveAdmin: boolean,
+  canOverseeDepartments: boolean,
   isDeptLeader: boolean
 ): boolean {
   const fullName = normalizeText(`${profile.first_name} ${profile.last_name}`);
@@ -182,12 +191,12 @@ function isInAppNotificationForUser(
     !recipientId &&
     (!recipientName || recipientName === 'all members' || recipientName === 'all department members');
 
-  if (isBroadcastToDept && (userDeptNames.has(deptName) || isExecutiveAdmin)) {
+  if (isBroadcastToDept && (userDeptNames.has(deptName) || canOverseeDepartments)) {
     return true;
   }
 
   // Department leaders / admins overseeing that department also see dispatches for their department
-  if (isExecutiveAdmin) {
+  if (canOverseeDepartments) {
     return true;
   }
 
@@ -201,11 +210,34 @@ function isInAppNotificationForUser(
 export async function getUserSystemNotifications(profile: Profile | null): Promise<SystemNotificationItem[]> {
   if (!profile) return [];
 
-  const role = profile.primary_role || 'member';
   const fullName = normalizeText(`${profile.first_name} ${profile.last_name}`);
-  const isExecutiveAdmin = ['super_admin', 'admin', 'pastor', 'district_admin'].includes(role);
-  const isFinanceRole = ['finance_officer', 'admin', 'super_admin', 'pastor'].includes(role);
-  const isLeaderRole = isExecutiveAdmin || role === 'leader' || role === 'worker';
+
+  // Role-derived notifications follow scoped, active, expiring database assignments.
+  // A permission-load failure hides privileged notifications but preserves personal notices.
+  let permissionResolution = null;
+  try {
+    permissionResolution = await loadPermissionResolution(profile.id, profile.branch_id);
+  } catch {
+    permissionResolution = null;
+  }
+
+  const canOverseeDepartments = hasAnyEffectivePermission(
+    permissionResolution,
+    DEPARTMENT_OVERSIGHT_PERMISSION_KEYS
+  );
+  const canManageDepartmentNotifications = hasAnyEffectivePermission(
+    permissionResolution,
+    LEADER_CONSOLE_PERMISSION_KEYS
+  );
+  const canApproveFinance = hasAnyEffectivePermission(
+    permissionResolution,
+    FINANCE_APPROVAL_PERMISSION_KEYS
+  );
+  const canManageFinance = hasAnyEffectivePermission(
+    permissionResolution,
+    FINANCE_ACTION_PERMISSION_KEYS
+  );
+  const canManageTransfers = hasEffectivePermission(permissionResolution, 'manage_member_transfers');
 
   const state = getUserNotificationState(profile.id);
   const readSet = new Set(state.readIds);
@@ -279,7 +311,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
   try {
     const inAppList = getAllNotifications();
     inAppList.forEach(notif => {
-      if (!isInAppNotificationForUser(notif, profile, userDeptNames, isExecutiveAdmin, isLeaderRole)) {
+      if (!isInAppNotificationForUser(notif, profile, userDeptNames, canOverseeDepartments, canManageDepartmentNotifications)) {
         return;
       }
       const sysId = `inapp:${notif.id}`;
@@ -296,12 +328,12 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
         priority: notif.type === 'welfare_reminder' || isJoinRequest || isJoinUpdate ? 'high' : 'normal',
         is_read: notif.is_read || readSet.has(sysId),
         action_url: isJoinRequest
-          ? isLeaderRole
+          ? canManageDepartmentNotifications
             ? '/portal/leader?tab=roster'
             : '/portal/admin?tab=ministries'
           : isJoinUpdate
           ? '/portal/ministries'
-          : isLeaderRole
+          : canManageDepartmentNotifications
           ? '/portal/leader'
           : '/portal/ministries',
         action_label: isJoinRequest ? 'Review Request' : isJoinUpdate ? 'View Ministry' : 'Open Ministry',
@@ -344,7 +376,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
         userDeptNames.has(normalizeText(req.department_name));
 
       // Pastoral / Board review needed
-      if (isExecutiveAdmin && (req.status === 'pending_pastor_approval' || req.status === 'submitted_to_board')) {
+      if (canApproveFinance && (req.status === 'pending_pastor_approval' || req.status === 'submitted_to_board')) {
         const sysId = `req:review:${req.id}:${req.status}`;
         items.push({
           id: sysId,
@@ -367,7 +399,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
 
       // Finance Officer treasury disbursement / audit actions
       if (
-        isFinanceRole &&
+        canManageFinance &&
         (req.status === 'pastor_approved' ||
           req.status === 'pending_approval' ||
           req.status === 'approved' ||
@@ -431,7 +463,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
   if (transfersRes.status === 'fulfilled' && Array.isArray(transfersRes.value.data)) {
     const transfers = transfersRes.value.data as MemberTransfer[];
     transfers.forEach(tr => {
-      if (isExecutiveAdmin && tr.status === 'pending') {
+      if (canManageTransfers && tr.status === 'pending') {
         const sysId = `transfer:admin:${tr.id}`;
         items.push({
           id: sysId,
@@ -469,7 +501,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
   if (financialsRes.status === 'fulfilled' && Array.isArray(financialsRes.value.data)) {
     const records = financialsRes.value.data as FinancialRecord[];
     records.forEach(rec => {
-      if (isFinanceRole && rec.status === 'pending_verification') {
+      if (canManageFinance && rec.status === 'pending_verification') {
         const sysId = `fin:verify:${rec.id}`;
         items.push({
           id: sysId,
