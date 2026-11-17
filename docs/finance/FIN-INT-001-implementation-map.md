@@ -79,3 +79,14 @@ This is a read-only vertical slice. It intentionally does not invent a transacti
 - Add regression tests proving authenticated users cannot directly mutate finance tables and that unauthorized/out-of-scope finance RPC operations fail.
 - Build success is not browser/runtime verification.
 - No live Supabase access, migration, deployment, authentication change or production data operation is part of FIN-INT-001.
+
+
+## Canonical configuration integration — 2026-11-17
+
+The isolated mock finance state now supports canonical setup through explicit RPC boundaries. The Accounting Setup tab configures currencies/base currency, chart of accounts, financial accounts, funds, financial years/periods and approval policies with amount bands and approver steps. Configuration is stored separately from legacy giving and financial-record state.
+
+The mock validates configuration before persistence and applies the selected amount band when creating a receipt/payment approval workflow. Service, adapter and lifecycle tests cover configuration retrieval/persistence, invalid configuration rollback and uncovered amount bands.
+
+Validation on commit `4268ffcffee0f5f93d3e4ff6dbf2a593a0690b7c`: Bun tests and Vite build passed in SCMS Build Validation run [44187912207](https://github.com/bock12/SCMS/actions/runs/44187912207).
+
+**Remaining:** connect the receipt/payment forms to the canonical account, category, currency and fund selectors; submit through `financeTransactionService.ts`; display approval status and refresh the canonical ledger. Do not enable the existing legacy save handlers or disbursement flows. No live Supabase write, migration replay or deployment was performed.
