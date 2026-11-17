@@ -26,15 +26,26 @@ Therefore:
 - Migration 018 creates an index on `financial_documents.base_currency_code`, but does not add the missing column. This makes the omission a concrete replay blocker, not merely a difference between two documentation snapshots.
 - This is a migration-history/fresh-replay defect, not a reason to add duplicate fields or change the accounting design.
 
-## Safe next action
+## Reconciliation implemented in the inactive baseline generator
 
-Before adding a transaction-creation RPC, reconcile the migration chain with the consolidated schema:
+The recovered archive is explicitly an immutable record of the 22 statements recovered from the live migration ledger. It must not be rewritten to make the fresh-install replay pass. Instead, `scripts/build-supabase-baseline.mjs` now inserts a clearly labelled baseline-only reconciliation immediately after recovered migration 014, before migrations 016 and 018 reference the fields.
 
-1. Identify the canonical source/order used by the PostgreSQL 17 fresh-install workflow.
-2. Confirm whether the currency fields were introduced by an omitted migration or were added only to the consolidated snapshot.
-3. If no migration exists, add a forward-only migration that adds both fields with the intended defaults, NOT NULL and constraints, and make sure it runs before workflow routines and indexes reference them. If migration ordering makes that impossible without changing historical files, add the corrective migration at the end and ensure no earlier migration references the absent columns.
-4. Run the exact fresh-install migration replay and finance SQL tests on disposable PostgreSQL 17.
-5. Only after replay is clean, implement the atomic financial-document + balanced draft-journal creation operation.
+The generated baseline adds:
+
+- `exchange_rate_to_base numeric(20,8) NOT NULL DEFAULT 1` with a positive-rate check.
+- `base_currency_code char(3) NOT NULL DEFAULT 'SLE'` with a foreign key to `public.currencies(code)`.
+- The invariant that the rate must equal 1 when transaction currency equals base currency.
+
+The archive remains unchanged. This repair applies only to the inactive fresh-install baseline; it is not a live migration and is not approved for deployment. A separate reviewed upgrade path would be required for any existing database.
+
+The generator test suite now asserts that the reconciliation is placed after migration 014 and before migration 015.
+
+## Validation still required
+
+1. Run the baseline generator unit tests.
+2. Regenerate and verify `supabase/baseline/fresh_install.sql` is reproducible.
+3. Run the PostgreSQL 17 fresh-install replay and security tests on disposable infrastructure.
+4. Only after replay is clean, implement the atomic financial-document + balanced draft-journal creation operation.
 
 Do not alter live Supabase. Do not grant direct table INSERT/UPDATE/DELETE to authenticated users. Do not relax the currency validation.
 
