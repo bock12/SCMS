@@ -119,3 +119,15 @@ Remaining before enabling transaction entry:
 2. Add behavior-level PostgreSQL fixtures and regression tests for the same lifecycle, including missing policy/band rollback and out-of-scope access.
 3. Add a typed finance transaction service and connect the existing receipt/payment forms only after both test layers pass.
 4. Keep all transaction-entry buttons disabled until those steps are complete.
+
+## Client service checkpoint — 2026-11-17
+
+Added `financeTransactionService.ts` as a typed boundary for the two public finance RPCs. It normalizes optional values and text fields, maps the UI-facing input to the exact SQL parameter names, and returns database errors without fabricating success. The service does not write finance data to localStorage or attempt to emulate accounting logic.
+
+Added `financeTransactionService.test.ts` covering receipt payload mapping, payment payload mapping with optional member/fund and exchange rate, propagation of permission errors, and approval-decision payload mapping.
+
+Validation on commit `36fa89abd9aca4fbd53d0d499fe73e022d081349`:
+- Bun automated tests: passed.
+- SCMS Build Validation: passed.
+
+The mock `supabaseClient.rpc` intentionally still returns a not-implemented error for these two finance RPCs. This is fail-closed: no simulated receipt/payment is persisted and the UI remains disabled. The next safe slice is to implement and test a deterministic mock finance adapter against explicit fixture data, then add PostgreSQL lifecycle fixtures before wiring forms.
