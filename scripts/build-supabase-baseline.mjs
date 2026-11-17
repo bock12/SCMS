@@ -126,8 +126,7 @@ create or replace function private.prevent_pending_financial_document_journal_po
 returns trigger
 language plpgsql
 set search_path = ''
-as $
-
+as $$
 begin
   if new.status = 'posted'
      and new.source_type = 'financial_document_pending' then
@@ -135,7 +134,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 create trigger trg_prevent_pending_financial_document_journal_posting
 before update of status on public.journal_entries
