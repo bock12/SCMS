@@ -9,6 +9,7 @@ on:
       - "supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql"
       - "supabase/migrations/20261116000300_require_active_role_for_branch_access.sql"
       - "supabase/migrations/20261116000400_align_administrative_finance_permissions.sql"
+      - "supabase/migrations/20261117000100_add_leader_console_permission.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -85,6 +86,45 @@ jobs:
 
       - name: Apply administrative finance permission alignment
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000400_align_administrative_finance_permissions.sql
+
+      - name: Apply explicit leader-console permission
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000100_add_leader_console_permission.sql
+
+      - name: Verify leader-console permission is limited to leader and worker roles
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+              FROM public.roles r
+              JOIN public.role_permissions rp ON rp.role_id = r.id
+              JOIN public.permissions p ON p.id = rp.permission_id
+              WHERE r.name = 'leader' AND p.key = 'view_leader_console'
+            ) THEN
+              RAISE EXCEPTION 'Leader role is missing view_leader_console.';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1
+              FROM public.roles r
+              JOIN public.role_permissions rp ON rp.role_id = r.id
+              JOIN public.permissions p ON p.id = rp.permission_id
+              WHERE r.name = 'worker' AND p.key = 'view_leader_console'
+            ) THEN
+              RAISE EXCEPTION 'Worker role is missing view_leader_console.';
+            END IF;
+            IF EXISTS (
+              SELECT 1
+              FROM public.roles r
+              JOIN public.role_permissions rp ON rp.role_id = r.id
+              JOIN public.permissions p ON p.id = rp.permission_id
+              WHERE r.name = 'member' AND p.key = 'view_leader_console'
+            ) THEN
+              RAISE EXCEPTION 'Member role must not receive view_leader_console by default.';
+            END IF;
+          END
+          $;
+          SQL
 
       - name: Assert schema, RLS, policies and routines
         run: |
