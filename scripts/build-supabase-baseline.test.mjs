@@ -36,22 +36,20 @@ describe("composeBaseline", () => {
     expect(output).not.toMatch(/create\s+extension\s+if\s+not\s+exists\s+pgcrypto\s*;/i);
   });
 
-  test("adds the missing financial-document currency fields only to the generated baseline after migration 014", () => {
-    const output = composeBaseline(fixtures());
-    const migration014 = output.indexOf("-- 20261114140013_scms_014_fixture.sql");
-    const reconciliation = output.indexOf("Baseline-only reconciliation: complete financial-document currency fields");
-    const migration015 = output.indexOf("-- 20261114140014_scms_015_fixture.sql");
-    expect(migration014).toBeGreaterThan(-1);
-    expect(reconciliation).toBeGreaterThan(migration014);
-    expect(migration015).toBeGreaterThan(reconciliation);
-    expect(output).toContain("exchange_rate_to_base numeric(20,8) not null default 1");
-    expect(output).toContain("base_currency_code char(3) not null default 'SLE' references public.currencies(code)");
-    expect(output).toContain("check (currency_code <> base_currency_code or exchange_rate_to_base = 1)");
+  test("does not duplicate currency columns already added by the recovered workflow migration", () => {
+    const input = fixtures();
+    input[14].content = "begin; alter table public.financial_documents add column exchange_rate_to_base numeric(20,8) not null default 1, add column base_currency_code char(3) not null default 'SLE'; commit;";
+    const output = composeBaseline(input);
+    expect(output.match(/add column exchange_rate_to_base/g)).toHaveLength(1);
+    expect(output.match(/add column base_currency_code/g)).toHaveLength(1);
+    expect(output).not.toContain("Baseline-only reconciliation: complete financial-document currency fields");
   });
 
   test("adds a baseline-only guard preventing pending financial-document journals from posting", () => {
     const output = composeBaseline(fixtures());
     expect(output).toContain("prevent_pending_financial_document_journal_posting");
+    expect(output).toContain("as $\\nbegin");
+    expect(output).toContain("end;\\n$;");
     expect(output).toContain("new.source_type = 'financial_document_pending'");
     expect(output).toContain("A financial-document journal cannot be posted before approval and linkage");
     expect(output).toContain("before update of status on public.journal_entries");
