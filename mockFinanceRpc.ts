@@ -165,6 +165,9 @@ export function createMockFinanceRpc(
       return fail('You are not authorized to decide this approval step', '42501');
     }
     if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
+    const earlierPendingStep = state.approvalSteps.some(s => s.approval_request_id === request.id &&
+      s.step_order < step.step_order && s.status === 'pending');
+    if (earlierPendingStep) return fail('Earlier approval steps must be completed first');
     step.decision = args.p_decision; step.comments = String(args.p_comments || '').trim() || null;
     step.status = args.p_decision;
     if (args.p_decision === 'rejected') {
@@ -190,6 +193,13 @@ export function createMockFinanceRpc(
       try {
         if (name === 'create_financial_document_transaction') return createTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
+        if (name === 'post_journal_entry') {
+          const state = storage.load();
+          const journal = state.journals.find(j => j.id === args.p_journal_entry_id);
+          if (journal?.source_type === 'financial_document_pending') {
+            return fail('A financial-document journal cannot be posted before approval and linkage');
+          }
+        }
         return fail(`Mock RPC function not implemented: ${name}`);
       } catch (error) {
         return fail(error instanceof Error ? error.message : 'Mock finance operation failed');
