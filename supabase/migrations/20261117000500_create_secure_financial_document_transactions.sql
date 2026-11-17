@@ -116,7 +116,7 @@ begin
     raise exception 'Insufficient permission to create financial transactions in this branch';
   end if;
 
-  if p_document_type not in ('receipt', 'payment') then
+  if p_document_type is null or p_document_type not in ('receipt', 'payment') then
     raise exception 'Only receipt and payment transactions can be created here';
   end if;
   if p_transaction_date is null
@@ -132,7 +132,7 @@ begin
      or p_description is null or length(trim(p_description)) = 0 then
     raise exception 'Counterparty name and description are required';
   end if;
-  if p_payment_method not in ('cash','bank_transfer','mobile_money','card','cheque','other') then
+  if p_payment_method is null or p_payment_method not in ('cash','bank_transfer','mobile_money','card','cheque','other') then
     raise exception 'Unsupported payment method';
   end if;
 
@@ -186,7 +186,7 @@ begin
     raise exception 'Selected fund is inactive or does not exist';
   end if;
 
-  select * into v_period
+  select fp.* into v_period
   from public.financial_periods fp
   join public.financial_years fy on fy.id = fp.financial_year_id
   where fp.status = 'open'
