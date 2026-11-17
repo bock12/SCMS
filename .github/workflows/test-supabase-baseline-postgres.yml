@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "supabase/baseline/fresh_install.sql"
+      - "supabase/tests/**"
       - "supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql"
       - "supabase/migrations/20261116000200_complete_authorization_permission_catalog.sql"
       - "supabase/migrations/20261116000300_require_active_role_for_branch_access.sql"
