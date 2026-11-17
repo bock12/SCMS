@@ -93,7 +93,7 @@ jobs:
       - name: Verify leader-console permission is limited to leader and worker roles
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
-          DO $
+          DO $leader_console$
           BEGIN
             IF NOT EXISTS (
               SELECT 1
@@ -123,7 +123,7 @@ jobs:
               RAISE EXCEPTION 'Member role must not receive view_leader_console by default.';
             END IF;
           END
-          $;
+          $leader_console$;
           SQL
 
       - name: Assert schema, RLS, policies and routines
