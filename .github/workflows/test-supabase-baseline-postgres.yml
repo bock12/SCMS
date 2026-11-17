@@ -126,6 +126,12 @@ jobs:
               RAISE EXCEPTION 'Untrusted client roles can execute the auth-linking trigger function directly.';
             END IF;
 
+            IF has_function_privilege('anon', 'private.prevent_pending_financial_document_journal_posting()', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'private.prevent_pending_financial_document_journal_posting()', 'EXECUTE')
+              OR has_function_privilege('service_role', 'private.prevent_pending_financial_document_journal_posting()', 'EXECUTE') THEN
+              RAISE EXCEPTION 'Client and service roles must not execute the pending-journal trigger function directly.';
+            END IF;
+
             IF NOT EXISTS (
               SELECT 1
               FROM pg_trigger t
@@ -581,8 +587,8 @@ jobs:
             IF v_private_policies <> 2 THEN
               RAISE EXCEPTION 'Expected 2 private policies, found %', v_private_policies;
             END IF;
-            IF v_private_routines <> 19 THEN
-              RAISE EXCEPTION 'Expected 19 private routines, found %', v_private_routines;
+            IF v_private_routines <> 20 THEN
+              RAISE EXCEPTION 'Expected 20 private routines, found %', v_private_routines;
             END IF;
             IF to_regclass('public.members') IS NOT NULL THEN
               RAISE EXCEPTION 'Legacy public.members table must not exist';
