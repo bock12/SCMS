@@ -113,12 +113,10 @@ $scms_rls_function_hardening$;`);
 
     bodies.push(`-- -----------------------------------------------------------------------------\n-- ${migration.name}\n-- -----------------------------------------------------------------------------\n${sql}`);
 
-    // The recovered archive is immutable evidence of the live migration ledger.
-    // Reconcile the known omission only in the inactive fresh-install baseline,
-    // immediately after financial_documents is created and before workflows/indexes.
-    if (match[1] === "014") {
-      bodies.push(`-- -----------------------------------------------------------------------------\n-- Baseline-only reconciliation: complete financial-document currency fields\n-- -----------------------------------------------------------------------------\nalter table public.financial_documents\n  add column exchange_rate_to_base numeric(20,8) not null default 1,\n  add column base_currency_code char(3) not null default 'SLE' references public.currencies(code);\n\nalter table public.financial_documents\n  add constraint financial_documents_exchange_rate_to_base_check\n    check (exchange_rate_to_base > 0),\n  add constraint financial_document_base_rate\n    check (currency_code <> base_currency_code or exchange_rate_to_base = 1);`);
-    }
+    // Keep the recovered migration sequence authoritative. The approval-workflow
+    // schema migration adds the financial-document currency fields and approval
+    // foreign key; inserting a baseline patch here would duplicate those columns.
+
   }
 
   bodies.push(`-- -----------------------------------------------------------------------------
