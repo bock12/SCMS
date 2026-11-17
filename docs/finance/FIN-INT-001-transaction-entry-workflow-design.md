@@ -1,6 +1,6 @@
 # FIN-INT-001 — Secure transaction-entry workflow design
 
-**Status:** Database RPC first slice implemented on `main`; mock adapter, behavior-level PostgreSQL tests and UI integration remain pending. Not deployed to live Supabase.
+**Status:** Secure database RPCs and behavior-level PostgreSQL lifecycle tests are implemented and passing on `main`; deterministic mock adapter and UI integration remain pending. Not deployed to live Supabase.
 
 ## Scope
 
@@ -26,7 +26,7 @@ The application uses the Supabase client RPC surface. The `private` schema is an
 
 - `public.create_financial_document_transaction(...)` — authenticated, SECURITY DEFINER, empty search path, explicit `auth.uid()` / linked-profile / `manage_finances` branch-scope checks; creates document and journal atomically, then submits through the private approval routine.
 - `public.decide_financial_document_approval(...)` — authenticated, SECURITY DEFINER, empty search path; delegates the decision to `private.record_approval_decision`. When the decision completes approval, it verifies the pending journal marker and attaches that exact journal to the approved document before returning.
-- The approval-completion wrapper must not require the approver to have `manage_finances` merely to perform the mechanical journal attachment. The attachment authorization boundary needs a deliberate, narrow rule for an actor who has `approve_finances` at the document scope, while preserving the existing requirement for the source document to be approved and the journal to be a matching draft. Do not weaken this by granting table writes.
+- The approval-completion wrapper does not require the approver to have `manage_finances` merely to perform the mechanical journal attachment. It delegates authorization to the approval workflow, then attaches only the matching pending draft journal after the document is approved. The helper is private and is not executable by client roles. Do not weaken this by granting table writes.
 
 Both wrappers must revoke EXECUTE from PUBLIC and anon and grant only authenticated. Private helper routines remain non-exposed and retain their own explicit grants/revokes. The mock client must implement these public RPC names explicitly and mirror their authorization and lifecycle behavior. No UI transaction action is enabled until database tests and mock adapter tests cover both immediate and multi-step approval paths.
 
@@ -90,7 +90,7 @@ The mock client needs an explicit finance-RPC adapter and deterministic test fix
 
 ## Pending-journal posting guard
 
-The generated inactive fresh-install baseline now includes a defensive trigger on `journal_entries`: a draft whose `source_type` is `financial_document_pending` cannot transition to `posted`. The trigger function is not executable by application roles. This is a baseline-only safety patch; it does not alter the immutable recovered migration archive and is not a live Supabase migration.
+The generated inactive fresh-install baseline now includes a defensive trigger on `journal_entries`: a draft whose `source_type` is `financial_document_pending` cannot transition to `posted`. The trigger function is not executable by application roles. The forward migration `20261117000500_create_secure_financial_document_transactions.sql` also installs this guard for migration-based deployments. Neither the baseline nor the forward migration has been deployed to live Supabase.
 
 Before any production deployment, the same guard must be represented as a reviewed forward migration and tested against the target schema. The eventual transaction-creation RPC will set the pending marker only after creating the draft journal. A separate approval-completion operation must verify the marker and source document before calling the existing attachment routine.
 
@@ -112,7 +112,7 @@ Validation on commit `75b0c1e1a888ba2955177841e54f2550d819eb62`:
 - PostgreSQL 17 fresh-install replay and finance RPC grant/direct-DML security smoke checks: passed.
 - SCMS Build Validation: passed.
 
-Important limitation: the current PostgreSQL workflow verifies migration replay, function grants, private-helper isolation and absence of direct finance-table DML grants. It does not yet exercise receipt/payment creation, branch-denial, approval/rejection, balanced journal contents or rollback behavior with fixtures. Those behavior-level tests are required before the UI can be enabled.
+The PostgreSQL workflow now applies the canonical fresh-install baseline and finance migration, verifies RPC grants and direct-table security boundaries, and executes behavior-level lifecycle fixtures. The fixtures cover missing-policy and missing-band rollback, branch-scope denial, receipt/payment journal orientation and balance, multi-step approval, final journal attachment, rejection, and prevention of posting an unapproved pending journal.
 
 Remaining before enabling transaction entry:
 1. Add a deterministic mock-client adapter for both public RPC names and tests for authorization, balances, approval/rejection and immediate/multi-step paths.
@@ -131,3 +131,25 @@ Validation on commit `36fa89abd9aca4fbd53d0d499fe73e022d081349`:
 - SCMS Build Validation: passed.
 
 The mock `supabaseClient.rpc` intentionally still returns a not-implemented error for these two finance RPCs. This is fail-closed: no simulated receipt/payment is persisted and the UI remains disabled. The next safe slice is to implement and test a deterministic mock finance adapter against explicit fixture data, then add PostgreSQL lifecycle fixtures before wiring forms.
+
+
+## PostgreSQL lifecycle test checkpoint — 2026-11-17
+
+Added `supabase/tests/finance_transaction_lifecycle.sql` and wired the PostgreSQL 17 workflow to run it whenever SQL test fixtures change.
+
+The fixture verifies:
+- Missing approval policy and missing amount-band failures leave no partial financial document.
+- A branch-scoped finance actor cannot create a transaction in another branch.
+- Receipt and payment journal lines have the correct debit/credit account orientation and balance in transaction and base currency.
+- A first approval in a two-step policy leaves the document pending and journal unlinked.
+- Final approval changes the document to approved and links the exact pending journal.
+- Rejection changes the document to rejected and leaves the journal unlinked with its pending marker.
+- An unapproved pending journal cannot be posted.
+
+The first fixture run found that it attempted to create a second active main branch. The fixture was corrected to reuse the existing CI main branch; the database's one-main-branch constraint was preserved.
+
+Validation on commit `fc8fff29287791e1477f0340a155a37dd7af35b8`:
+- PostgreSQL 17 fresh-install, security and transaction lifecycle workflow: passed.
+- SCMS Build Validation: passed.
+
+The CI workflow path filter now includes `supabase/tests/**`, so future fixture-only changes trigger the PostgreSQL job.
