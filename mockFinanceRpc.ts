@@ -40,7 +40,7 @@ export interface MockFinanceKeyValueStorage {
   setItem(key: string, value: string): void;
 }
 
-const MOCK_FINANCE_STORAGE_KEY = 'scms_mock_finance_v1';
+const MOCK_FINANCE_STORAGE_KEY = 'scms_mock_finance_v2';
 
 /** Browser persistence is namespaced and versioned; corrupt data fails closed. */
 export function createBrowserMockFinanceStorage(
@@ -134,16 +134,30 @@ export function createMockFinanceRpc(
     const period = state.periods.find(p => p.status === 'open' && p.year_status === 'open' && date >= p.start_date && date <= p.end_date);
     if (!period) return fail('No open financial period and year exist for the transaction date');
 
-    const policy = state.approvalPolicies.find(p => p.is_active && p.transaction_type === 'financial_document' &&
-      (p.branch_id === null || p.branch_id === branchId) && amount >= p.min_amount &&
-      (p.max_amount === null || amount <= p.max_amount));
+    const baseAmount = round4(amount * rate);
+    const policy = state.approvalPolicies.find(p => {
+      if (!p.is_active || p.transaction_type !== 'financial_document' ||
+          (p.branch_id !== null && p.branch_id !== branchId)) return false;
+      const bands = state.approvalPolicyBands.filter(b => b.policy_id === p.id);
+      return bands.length
+        ? bands.some(b => baseAmount >= Number(b.min_amount_base) &&
+            (b.max_amount_base == null || baseAmount < Number(b.max_amount_base)))
+        : baseAmount >= p.min_amount && (p.max_amount === null || baseAmount <= p.max_amount);
+    });
     if (!policy) return fail('No active approval policy covers this financial document amount');
-    if (!policy.approver_profile_ids.length) return fail('Approval policy has no configured approvers');
+    const selectedBand = state.approvalPolicyBands.find(b => b.policy_id === policy.id &&
+      baseAmount >= Number(b.min_amount_base) &&
+      (b.max_amount_base == null || baseAmount < Number(b.max_amount_base)));
+    const configuredApprovers = selectedBand
+      ? state.approvalPolicySteps.filter(s => s.band_id === selectedBand.id)
+          .sort((a, b) => Number(a.step_number) - Number(b.step_number))
+          .flatMap(s => s.approver_profile_ids || [])
+      : policy.approver_profile_ids;
+    if (!configuredApprovers.length) return fail('Approval policy has no configured approvers');
 
     const documentId = id(state, 'doc');
     const journalId = id(state, 'journal');
     const requestId = id(state, 'approval');
-    const baseAmount = round4(amount * rate);
     const docStatus = 'pending_approval';
     const document = {
       id: documentId, document_type: type, transaction_date: date, branch_id: branchId,
@@ -172,7 +186,7 @@ export function createMockFinanceRpc(
         base_debit_amount: 0, base_credit_amount: baseAmount }
     ];
     const request = { id: requestId, transaction_type: 'financial_document', target_id: documentId, status: 'pending', policy_id: policy.id };
-    const steps = policy.approver_profile_ids.map((profileId, index) => ({
+    const steps = configuredApprovers.map((profileId, index) => ({
       id: id(state, 'step'), approval_request_id: requestId, step_order: index + 1,
       approver_profile_id: profileId, status: 'pending', decision: null, comments: null
     }));
