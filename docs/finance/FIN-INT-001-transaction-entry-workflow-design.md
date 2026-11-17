@@ -1,6 +1,6 @@
 # FIN-INT-001 — Secure transaction-entry workflow design
 
-**Status:** Design checkpoint; not a deployable migration.
+**Status:** Database RPC first slice implemented on `main`; mock adapter, behavior-level PostgreSQL tests and UI integration remain pending. Not deployed to live Supabase.
 
 ## Scope
 
@@ -93,3 +93,29 @@ The mock client needs an explicit finance-RPC adapter and deterministic test fix
 The generated inactive fresh-install baseline now includes a defensive trigger on `journal_entries`: a draft whose `source_type` is `financial_document_pending` cannot transition to `posted`. The trigger function is not executable by application roles. This is a baseline-only safety patch; it does not alter the immutable recovered migration archive and is not a live Supabase migration.
 
 Before any production deployment, the same guard must be represented as a reviewed forward migration and tested against the target schema. The eventual transaction-creation RPC will set the pending marker only after creating the draft journal. A separate approval-completion operation must verify the marker and source document before calling the existing attachment routine.
+
+
+## Implementation checkpoint — 2026-11-17
+
+The first database implementation is committed in
+`supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql`.
+
+Implemented:
+- `public.create_financial_document_transaction(...)` creates a receipt/payment document and its two-line balanced draft journal in one transaction.
+- It validates the authenticated linked profile, `manage_finances` branch permission, account/category types and active state, optional fund, currency/rate and open financial period/year.
+- It submits through `private.submit_financial_document_for_approval`; missing policy/band errors roll back the document and journal.
+- Immediate approval attaches the exact pending journal. Multi-step approval uses `public.decide_financial_document_approval(...)` and attaches only after the existing approval routine returns approved.
+- A private attachment helper permits the approval orchestration to link the journal without requiring the approver to also hold `manage_finances`; it is not executable by client roles.
+- The pending-journal posting guard is now represented in the forward migration as well as the generated fresh-install baseline.
+
+Validation on commit `75b0c1e1a888ba2955177841e54f2550d819eb62`:
+- PostgreSQL 17 fresh-install replay and finance RPC grant/direct-DML security smoke checks: passed.
+- SCMS Build Validation: passed.
+
+Important limitation: the current PostgreSQL workflow verifies migration replay, function grants, private-helper isolation and absence of direct finance-table DML grants. It does not yet exercise receipt/payment creation, branch-denial, approval/rejection, balanced journal contents or rollback behavior with fixtures. Those behavior-level tests are required before the UI can be enabled.
+
+Remaining before enabling transaction entry:
+1. Add a deterministic mock-client adapter for both public RPC names and tests for authorization, balances, approval/rejection and immediate/multi-step paths.
+2. Add behavior-level PostgreSQL fixtures and regression tests for the same lifecycle, including missing policy/band rollback and out-of-scope access.
+3. Add a typed finance transaction service and connect the existing receipt/payment forms only after both test layers pass.
+4. Keep all transaction-entry buttons disabled until those steps are complete.
