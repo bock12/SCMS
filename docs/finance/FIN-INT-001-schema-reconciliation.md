@@ -21,8 +21,9 @@ However, the recovered migration that creates `financial_documents` — `2026111
 Therefore:
 
 - The consolidated schema snapshot contains the fields needed by the finance routines.
-- The recovered migration sequence, as currently represented, does not establish those fields before routines/indexes reference them.
-- A fresh database reconstructed from the recovered migration sequence may fail even though the consolidated schema snapshot looks correct.
+- The generated `supabase/baseline/fresh_install.sql` explicitly says it is built from the 22 recovered SCMS-Development migrations. Its generated financial-document table follows migration 014 and does not contain either conversion column.
+- The PostgreSQL 17 CI workflow applies `supabase/baseline/fresh_install.sql`, not the standalone consolidated `supabase/schema.sql` snapshot. Therefore the fresh-install test path is exposed to this migration-history defect.
+- Migration 018 creates an index on `financial_documents.base_currency_code`, but does not add the missing column. This makes the omission a concrete replay blocker, not merely a difference between two documentation snapshots.
 - This is a migration-history/fresh-replay defect, not a reason to add duplicate fields or change the accounting design.
 
 ## Safe next action
