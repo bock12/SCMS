@@ -9,6 +9,7 @@ import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { getEventBudgetApprovals, approveEventBudget, rejectEventBudget, disburseEventBudget as executeDisburseEventBudget } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
+import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -21,9 +22,9 @@ interface FinanceOfficerWorkspaceProps {
   profile: Profile | null;
 }
 
-type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways';
+type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
 
-const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways'];
+const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
 export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
@@ -1177,6 +1178,29 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
           </button>
 
           <button
+            onClick={() => setWorkspaceTab('setup')}
+            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+              workspaceTab === 'setup'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Landmark size={15} />
+            <span>Accounting Setup</span>
+          </button>
+          <button
+            onClick={() => setWorkspaceTab('setup')}
+            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+              workspaceTab === 'setup'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Landmark size={18} />
+            <span className="mt-0.5 truncate w-full text-center">Setup</span>
+          </button>
+
+          <button
             onClick={() => setWorkspaceTab('gateways')}
             className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
               workspaceTab === 'gateways'
@@ -1654,6 +1678,10 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       )}
 
       {/* --- WORKSPACE TAB 2: MINISTRY PROPOSALS & EXPENSE INVOICES --- */}
+      {workspaceTab === 'setup' && (
+        <FinanceConfigurationWorkspace branchId={profile?.branch_id || null} />
+      )}
+
       {workspaceTab === 'requisitions' && (
         <div className="space-y-6">
           {/* Requisitions Overview Cards */}
@@ -2746,7 +2774,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* MOBILE & TABLET BOTTOM NAV BAR (Fixed at bottom on < lg screens) */}
       <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
-        <div className="grid grid-cols-4 gap-1 max-w-lg mx-auto">
+        <div className="grid grid-cols-5 gap-1 max-w-2xl mx-auto">
           <button
             onClick={() => setWorkspaceTab('ledger')}
             className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
