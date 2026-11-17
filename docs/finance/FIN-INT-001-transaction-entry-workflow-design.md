@@ -20,9 +20,21 @@ The existing sequence is:
 3. `attach_journal_to_financial_document(document_id, journal_id)` accepts only an approved document and a draft journal with matching branch/currency/rate.
 4. `post_journal_entry(journal_id)` enforces open periods, active accounts, branch consistency, balanced transaction/base amounts and approved document linkage.
 
+## RPC exposure and approval-completion boundary
+
+The application uses the Supabase client RPC surface. The `private` schema is an internal implementation boundary and must not be made publicly exposed merely to let the browser call its functions. The browser should call only narrow `public` API wrappers:
+
+- `public.create_financial_document_transaction(...)` — authenticated, SECURITY DEFINER, empty search path, explicit `auth.uid()` / linked-profile / `manage_finances` branch-scope checks; creates document and journal atomically, then submits through the private approval routine.
+- `public.decide_financial_document_approval(...)` — authenticated, SECURITY DEFINER, empty search path; delegates the decision to `private.record_approval_decision`. When the decision completes approval, it verifies the pending journal marker and attaches that exact journal to the approved document before returning.
+- The approval-completion wrapper must not require the approver to have `manage_finances` merely to perform the mechanical journal attachment. The attachment authorization boundary needs a deliberate, narrow rule for an actor who has `approve_finances` at the document scope, while preserving the existing requirement for the source document to be approved and the journal to be a matching draft. Do not weaken this by granting table writes.
+
+Both wrappers must revoke EXECUTE from PUBLIC and anon and grant only authenticated. Private helper routines remain non-exposed and retain their own explicit grants/revokes. The mock client must implement these public RPC names explicitly and mirror their authorization and lifecycle behavior. No UI transaction action is enabled until database tests and mock adapter tests cover both immediate and multi-step approval paths.
+
 ## Proposed transaction creation boundary
 
-Add one narrowly granted SECURITY DEFINER RPC in the private schema, with an empty search path. It should create the document and its two-line balanced draft journal in one database transaction, then submit the document through the existing approval routine.
+Expose a narrowly granted SECURITY DEFINER API function in the `public` schema, with an empty search path, because ordinary Supabase Data API RPC calls do not expose the `private` schema by default. Keep implementation helpers and existing workflow routines in `private`; the public function is only a narrow authenticated entry point. Revoke EXECUTE from PUBLIC and anon, then grant it only to authenticated. The wrapper must explicitly validate `auth.uid()`, linked profile, permission and branch scope before invoking private routines. Do not expose the private schema or add direct table DML grants.
+
+The public entry point should create the document and its two-line balanced draft journal in one database transaction, then submit the document through the existing private approval routine. A second narrow public approval-decision entry point should call the existing private decision routine and, when the final decision approves the document, attach the exact pending journal in the same transaction.
 
 The RPC must:
 - Require `auth.uid()`, a linked current profile and `manage_finances` at the requested branch scope.
