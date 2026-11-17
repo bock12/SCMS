@@ -148,7 +148,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     update({
       approvalPolicies: [...configuration.approvalPolicies, {
         id: policyId, name: policyName.trim(), transaction_type: 'financial_document',
-        branch_id: branchId, version: 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
+        branch_id: branchId, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === branchId).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
       }],
       approvalPolicyBands: [...configuration.approvalPolicyBands, {
         id: bandId, policy_id: policyId, min_amount_base: min, max_amount_base: max
@@ -264,8 +264,8 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
           <div className="mt-3 space-y-2">
             <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={policyMin} onChange={e => setPolicyMin(e.target.value)} /><input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={policyMax} onChange={e => setPolicyMax(e.target.value)} /></div>
-            <label className={labelClass}>Approvers (one approval step)</label>
-            <select multiple className={fieldClass + ' min-h-24'} value={selectedApprovers} onChange={e => setSelectedApprovers(Array.from(e.target.selectedOptions, option => option.value))}>
+            <label className={labelClass}>Approver for this step</label>
+            <select className={fieldClass} value={selectedApprovers[0] || ''} onChange={e => setSelectedApprovers(e.target.value ? [e.target.value] : [])}>
               {approvers.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}
             </select>
             <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add policy and amount band</button>
