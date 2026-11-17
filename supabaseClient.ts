@@ -60,6 +60,7 @@ const initialPermissions = [
   { id: 'mock-perm-view-attendance', key: 'view_attendance', module: 'attendance', description: 'View attendance records' },
   { id: 'mock-perm-view-resources', key: 'view_resources', module: 'resources', description: 'View published resources' },
   { id: 'mock-perm-view-streams', key: 'view_streams', module: 'streaming', description: 'View live streams' },
+  { id: 'mock-perm-view-leader-console', key: 'view_leader_console', module: 'ministries', description: 'Access the assigned ministry leader workspace' },
   { id: 'mock-perm-register-events', key: 'register_for_events', module: 'events', description: 'Register for events' },
   { id: 'mock-perm-stream-chat', key: 'send_stream_chat', module: 'streaming', description: 'Send stream chat messages' }
 ];
@@ -84,6 +85,8 @@ const initialRolePermissions = [
   ['finance_officer', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
   ['leader', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
   ['worker', ['view_events','view_attendance','view_resources','view_streams','register_for_events','send_stream_chat']],
+  ['leader', ['view_leader_console']],
+  ['worker', ['view_leader_console']],
   ['member', ['view_events','view_resources','view_streams','register_for_events','send_stream_chat']]
 ].flatMap(([roleName, permissionKeys]: any) => {
   const role = initialSystemRoles.find(item => item.name === roleName);
