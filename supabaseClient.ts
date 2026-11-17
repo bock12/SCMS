@@ -1858,11 +1858,8 @@ export const supabase = {
             (assignment.scope_type === 'district' && Boolean(branch?.district_id) && assignment.district_id === branch.district_id);
         }
         if (scopeType === 'district') {
-          if (assignment.scope_type === 'district') return assignment.district_id === districtId;
-          if (assignment.scope_type === 'branch') {
-            const assignedBranch = (localDb.church_branches || []).find((item: any) => item.id === assignment.branch_id);
-            return Boolean(assignedBranch?.district_id) && assignedBranch.district_id === districtId;
-          }
+          // A branch-scoped manager may manage that branch, not the whole district.
+          return assignment.scope_type === 'district' && assignment.district_id === districtId;
         }
         return false;
       });

@@ -10,6 +10,8 @@ on:
       - "supabase/migrations/20261116000300_require_active_role_for_branch_access.sql"
       - "supabase/migrations/20261116000400_align_administrative_finance_permissions.sql"
       - "supabase/migrations/20261117000100_add_leader_console_permission.sql"
+      - "supabase/migrations/20261117000200_enforce_exact_district_role_management_scope.sql"
+      - "supabase/migrations/20261117000300_remove_legacy_unscoped_resource_survey_policies.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -75,6 +77,41 @@ jobs:
       - name: Apply fresh-install baseline
         run: psql -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
 
+      - name: Simulate historical unscoped policies for cleanup regression coverage
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE POLICY "Users can update own profile"
+            ON public.profiles FOR UPDATE TO authenticated
+            USING (true) WITH CHECK (true);
+          CREATE POLICY "Read published public resources"
+            ON public.church_resources FOR SELECT USING (true);
+          CREATE POLICY "Read published member resources"
+            ON public.church_resources FOR SELECT TO authenticated USING (true);
+          CREATE POLICY "Resource managers manage resources"
+            ON public.church_resources FOR ALL TO authenticated
+            USING (true) WITH CHECK (true);
+          CREATE POLICY "Read published event surveys"
+            ON public.event_surveys FOR SELECT TO authenticated USING (true);
+          CREATE POLICY "Survey managers manage surveys"
+            ON public.event_surveys FOR ALL TO authenticated
+            USING (true) WITH CHECK (true);
+          CREATE POLICY "Read questions for published surveys"
+            ON public.event_survey_questions FOR SELECT TO authenticated USING (true);
+          CREATE POLICY "Survey managers manage questions"
+            ON public.event_survey_questions FOR ALL TO authenticated
+            USING (true) WITH CHECK (true);
+          CREATE POLICY "Members submit own survey responses"
+            ON public.event_survey_responses FOR INSERT TO authenticated
+            WITH CHECK (true);
+          CREATE POLICY "Survey managers read all responses"
+            ON public.event_survey_responses FOR SELECT TO authenticated USING (true);
+          CREATE POLICY "Members submit answers to own responses"
+            ON public.event_survey_answers FOR INSERT TO authenticated
+            WITH CHECK (true);
+          CREATE POLICY "Survey managers read all answers"
+            ON public.event_survey_answers FOR SELECT TO authenticated USING (true);
+          SQL
+
       - name: Apply forward role-assignment operations
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000100_secure_profile_role_assignment_operations.sql
 
@@ -86,6 +123,285 @@ jobs:
 
       - name: Apply administrative finance permission alignment
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261116000400_align_administrative_finance_permissions.sql
+
+      - name: Apply exact district role-management scope and future assignment checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000200_enforce_exact_district_role_management_scope.sql
+
+      - name: Apply legacy resource and survey policy cleanup
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000300_remove_legacy_unscoped_resource_survey_policies.sql
+
+      - name: Verify legacy unscoped policies were removed
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $scms_policy_cleanup$
+          BEGIN
+            IF EXISTS (
+              SELECT 1
+              FROM pg_policies
+              WHERE schemaname = 'public'
+                AND policyname = ANY (ARRAY[
+                  'Users can update own profile',
+                  'Read published public resources',
+                  'Read published member resources',
+                  'Resource managers manage resources',
+                  'Read published event surveys',
+                  'Survey managers manage surveys',
+                  'Read questions for published surveys',
+                  'Survey managers manage questions',
+                  'Members submit own survey responses',
+                  'Survey managers read all responses',
+                  'Members submit answers to own responses',
+                  'Survey managers read all answers'
+                ])
+            ) THEN
+              RAISE EXCEPTION 'Legacy unscoped resource/survey/profile policies remain enabled.';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'profiles'
+                AND policyname = 'profiles_self_update'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'church_resources'
+                AND policyname = 'resources_authenticated_read'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_policies
+              WHERE schemaname = 'public' AND tablename = 'event_surveys'
+                AND policyname = 'event_surveys_eligible_read'
+            ) THEN
+              RAISE EXCEPTION 'The hardened baseline read/self-update policies were not preserved.';
+            END IF;
+          END
+          $scms_policy_cleanup$;
+          SQL
+
+      - name: Verify exact church, district and branch role-management scope
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.districts (id, name, country) VALUES
+            ('90000000-0000-4000-8000-000000000001', 'Scope District A', 'Sierra Leone'),
+            ('90000000-0000-4000-8000-000000000002', 'Scope District B', 'Sierra Leone');
+
+          INSERT INTO public.church_branches (id, district_id, name, code, country) VALUES
+            ('91000000-0000-4000-8000-000000000001', '90000000-0000-4000-8000-000000000001', 'Scope Branch A1', 'SCOPE-A1', 'Sierra Leone'),
+            ('91000000-0000-4000-8000-000000000002', '90000000-0000-4000-8000-000000000001', 'Scope Branch A2', 'SCOPE-A2', 'Sierra Leone'),
+            ('91000000-0000-4000-8000-000000000003', '90000000-0000-4000-8000-000000000002', 'Scope Branch B1', 'SCOPE-B1', 'Sierra Leone');
+
+          INSERT INTO auth.users (id) VALUES
+            ('92000000-0000-4000-8000-000000000001'),
+            ('92000000-0000-4000-8000-000000000002'),
+            ('92000000-0000-4000-8000-000000000003');
+
+          INSERT INTO public.profiles (id, auth_user_id, branch_id, first_name, last_name) VALUES
+            ('93000000-0000-4000-8000-000000000001', '92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000001', 'Scope', 'Actor'),
+            ('93000000-0000-4000-8000-000000000002', '92000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000002', 'Scope', 'Target A'),
+            ('93000000-0000-4000-8000-000000000003', '92000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000003', 'Scope', 'Target B');
+
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '93000000-0000-4000-8000-000000000001', r.id, 'branch',
+            '91000000-0000-4000-8000-000000000001', NULL, now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'admin';
+          SQL
+
+          if psql -v ON_ERROR_STOP=1 <<'SQL' >/tmp/branch-cannot-create-district-assignment.log 2>&1
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'district', NULL, '90000000-0000-4000-8000-000000000001'
+          );
+          COMMIT;
+          SQL
+          then
+            echo "Branch-scoped manager unexpectedly created a district-scoped assignment."
+            exit 1
+          fi
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '93000000-0000-4000-8000-000000000002', r.id, 'district',
+            NULL, '90000000-0000-4000-8000-000000000001', now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'pastor';
+          SQL
+
+          if psql -v ON_ERROR_STOP=1 <<'SQL' >/tmp/branch-cannot-deactivate-district-assignment.log 2>&1
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.deactivate_profile_role_assignment((
+            SELECT id FROM public.profile_role_assignments
+            WHERE profile_id = '93000000-0000-4000-8000-000000000002'
+              AND scope_type = 'district'
+              AND district_id = '90000000-0000-4000-8000-000000000001'
+              AND is_active
+            LIMIT 1
+          ));
+          COMMIT;
+          SQL
+          then
+            echo "Branch-scoped manager unexpectedly deactivated a district assignment."
+            exit 1
+          fi
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $scms_branch_denial$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM public.profile_role_assignments
+              WHERE profile_id = '93000000-0000-4000-8000-000000000002'
+                AND scope_type = 'district'
+                AND district_id = '90000000-0000-4000-8000-000000000001'
+                AND is_active
+            ) THEN
+              RAISE EXCEPTION 'Denied branch-level deactivation changed the district assignment.';
+            END IF;
+          END
+          $scms_branch_denial$;
+
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '93000000-0000-4000-8000-000000000001', r.id, 'district',
+            NULL, '90000000-0000-4000-8000-000000000001', now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'admin';
+          SQL
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'district', NULL, '90000000-0000-4000-8000-000000000001'
+          );
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'leader'),
+            'branch', '91000000-0000-4000-8000-000000000002', NULL
+          );
+          DO $scms_district_scope$
+          BEGIN
+            IF NOT private.has_permission('manage_roles', '91000000-0000-4000-8000-000000000002') THEN
+              RAISE EXCEPTION 'District manager could not manage a branch in their district.';
+            END IF;
+            IF private.has_permission('manage_roles', '91000000-0000-4000-8000-000000000003') THEN
+              RAISE EXCEPTION 'District manager received permission in another district.';
+            END IF;
+            IF NOT private.can_access_branch('91000000-0000-4000-8000-000000000002') THEN
+              RAISE EXCEPTION 'District assignment did not grant access to its other branch.';
+            END IF;
+            IF private.can_access_branch('91000000-0000-4000-8000-000000000003') THEN
+              RAISE EXCEPTION 'District assignment leaked branch access to another district.';
+            END IF;
+          END
+          $scms_district_scope$;
+          SELECT public.deactivate_profile_role_assignment((
+            SELECT id FROM public.profile_role_assignments
+            WHERE profile_id = '93000000-0000-4000-8000-000000000002'
+              AND scope_type = 'district'
+              AND district_id = '90000000-0000-4000-8000-000000000001'
+              AND is_active
+            LIMIT 1
+          ));
+          COMMIT;
+          SQL
+
+          if psql -v ON_ERROR_STOP=1 <<'SQL' >/tmp/district-cannot-manage-other-district.log 2>&1
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000003',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'district', NULL, '90000000-0000-4000-8000-000000000002'
+          );
+          COMMIT;
+          SQL
+          then
+            echo "District-scoped manager unexpectedly assigned a role outside their district."
+            exit 1
+          fi
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '93000000-0000-4000-8000-000000000001', r.id, 'church',
+            NULL, NULL, now() - interval '1 day', NULL, true
+          FROM public.roles r WHERE r.name = 'admin';
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000003',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'district', NULL, '90000000-0000-4000-8000-000000000002'
+          );
+          COMMIT;
+          UPDATE public.profile_role_assignments SET is_active = false
+          WHERE profile_id = '93000000-0000-4000-8000-000000000001';
+          SQL
+
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id,
+            assigned_at, expires_at, is_active
+          )
+          SELECT '93000000-0000-4000-8000-000000000001', r.id, 'district',
+            NULL, '90000000-0000-4000-8000-000000000001', now() - interval '1 day', NULL, false
+          FROM public.roles r WHERE r.name = 'admin';
+          SQL
+
+          for test_case in inactive expired future inactive_role; do
+            if psql -v ON_ERROR_STOP=1 <<SQL >/tmp/${test_case}-district-assignment.log 2>&1
+          BEGIN;
+          SET LOCAL ROLE authenticated;
+          SELECT set_config('request.jwt.claim.sub', '92000000-0000-4000-8000-000000000001', true);
+          SELECT public.assign_profile_role(
+            '93000000-0000-4000-8000-000000000002',
+            (SELECT id FROM public.roles WHERE name = 'pastor'),
+            'district', NULL, '90000000-0000-4000-8000-000000000001'
+          );
+          COMMIT;
+          SQL
+            then
+              echo "The ${test_case} role assignment unexpectedly granted district role management."
+              exit 1
+            fi
+
+            case "$test_case" in
+              inactive)
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.profile_role_assignments SET is_active = true WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.profile_role_assignments SET expires_at = now() - interval '1 minute' WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+                ;;
+              expired)
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.profile_role_assignments SET expires_at = NULL, assigned_at = now() + interval '1 day' WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+                ;;
+              future)
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.profile_role_assignments SET assigned_at = now() - interval '1 day' WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.roles SET is_active = false WHERE name = 'admin';"
+                ;;
+              inactive_role)
+                psql -v ON_ERROR_STOP=1 -c "UPDATE public.roles SET is_active = true WHERE name = 'admin'; UPDATE public.profile_role_assignments SET is_active = false WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+                ;;
+            esac
+          done
+
+          psql -v ON_ERROR_STOP=1 -c "UPDATE public.roles SET is_active = true WHERE name = 'admin'; UPDATE public.profile_role_assignments SET is_active = false WHERE profile_id = '93000000-0000-4000-8000-000000000001';"
+
+          echo "Church, district, branch, inactive, expired, future-dated and inactive-role checks passed."
 
       - name: Apply explicit leader-console permission
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000100_add_leader_console_permission.sql
@@ -177,8 +493,8 @@ jobs:
             IF v_private_policies <> 2 THEN
               RAISE EXCEPTION 'Expected 2 private policies, found %', v_private_policies;
             END IF;
-            IF v_private_routines <> 18 THEN
-              RAISE EXCEPTION 'Expected 18 private routines, found %', v_private_routines;
+            IF v_private_routines <> 19 THEN
+              RAISE EXCEPTION 'Expected 19 private routines, found %', v_private_routines;
             END IF;
             IF to_regclass('public.members') IS NOT NULL THEN
               RAISE EXCEPTION 'Legacy public.members table must not exist';
@@ -268,6 +584,10 @@ jobs:
           DECLARE
             v_table text;
             v_tables text[] := ARRAY[
+              'public.currencies',
+              'public.church_settings',
+              'public.districts',
+              'public.church_branches',
               'public.member_transfers',
               'public.roles',
               'public.role_permissions',
@@ -284,8 +604,20 @@ jobs:
               'public.event_survey_questions',
               'public.event_survey_responses',
               'public.event_survey_answers',
+              'public.chart_of_accounts',
+              'public.funds',
+              'public.financial_years',
+              'public.financial_periods',
+              'public.financial_accounts',
               'public.financial_documents',
               'public.giving_records',
+              'public.payment_gateway_transactions',
+              'public.approval_policies',
+              'public.approval_policy_bands',
+              'public.approval_policy_steps',
+              'public.approval_requests',
+              'public.approval_request_steps',
+              'public.approval_decisions',
               'public.budgets',
               'public.budget_lines',
               'public.journal_entries',
@@ -295,7 +627,10 @@ jobs:
               'public.welfare_campaigns',
               'public.welfare_contributions',
               'public.streams',
-              'public.notifications'
+              'public.notifications',
+              'public.audit_logs',
+              'private.stream_credentials',
+              'private.payment_gateway_payloads'
             ];
           BEGIN
             FOREACH v_table IN ARRAY v_tables LOOP
