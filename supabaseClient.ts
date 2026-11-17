@@ -1116,7 +1116,7 @@ const mockFinanceRpc = createMockFinanceRpc({
           : assignment.scope_type === 'district'
             ? branches.filter((branch: any) => branch.district_id === assignment.district_id).map((branch: any) => branch.id)
             : [];
-      permissionKeys.filter((key: string) => key === 'manage_finances' || key === 'approve_finances')
+      permissionKeys.filter((key: string) => ['view_finances', 'manage_finances', 'approve_finances', 'manage_chart_of_accounts', 'manage_financial_periods'].includes(key))
         .forEach((permission: string) => scopedBranches.forEach((branchId: string | null) => {
           resolved.push({ profile_id: assignment.profile_id, permission, branch_id: branchId });
         }));
