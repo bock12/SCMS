@@ -241,10 +241,10 @@ describe('canonical finance configuration RPCs', () => {
     };
     const saved = await ctx.rpc.rpc('save_finance_configuration', { p_branch_id: 'branch-a', p_configuration: configuration });
     expect(saved.error).toBeNull();
-    const uncovered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_amount: 150 });
+    const uncovered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 150 });
     expect(uncovered.error?.message).toContain('No active approval policy');
     expect(ctx.read().documents).toHaveLength(0);
-    const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_amount: 50 });
+    const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 50 });
     expect(covered.error).toBeNull();
     expect(ctx.read().approvalSteps).toHaveLength(1);
   });
