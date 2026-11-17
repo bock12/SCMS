@@ -146,7 +146,7 @@ describe('deterministic mock financial-document RPC', () => {
     expect(journal.source_type).toBe('financial_document_pending');
     // The canonical posting RPC is intentionally not exposed by this adapter.
     const result = await ctx.rpc.rpc('post_journal_entry', { p_journal_entry_id: journal.id });
-    expect(result.error?.message).toContain('not implemented');
+    expect(result.error?.message).toContain('cannot be posted before approval');
     expect(ctx.read().journals[0].status).toBe('draft');
   });
 });
