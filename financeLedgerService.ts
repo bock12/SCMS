@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import type { FinancialRecord } from './types';
 
 export type FinancialDocumentType = 'receipt' | 'payment' | 'transfer' | 'adjustment';
 export type FinancialDocumentStatus =
@@ -67,6 +68,38 @@ export const mapFinanceLedgerEntries = (
       giving_record: givingByDocumentId.get(document.id) ?? null
     }));
 };
+
+
+/** Maps only receipt/payment source documents to the existing ledger presentation model. */
+export const mapFinanceLedgerEntriesToWorkspaceRecords = (
+  entries: FinanceLedgerEntry[]
+): FinancialRecord[] => entries
+  .filter(entry => entry.document_type === 'receipt' || entry.document_type === 'payment')
+  .map(entry => ({
+    id: entry.id,
+    contributor_name: entry.payee_or_payer_name || 'Unspecified',
+    type: entry.document_type === 'receipt' ? 'income' : 'expense',
+    category: entry.giving_record?.giving_type || entry.description || entry.document_type,
+    amount: Number(entry.amount),
+    currency: entry.currency_code,
+    date: entry.transaction_date,
+    payment_method: ['cash', 'mobile_money', 'bank_transfer', 'card', 'check'].includes(entry.payment_method)
+      ? entry.payment_method as FinancialRecord['payment_method']
+      : 'bank_transfer',
+    status: entry.status === 'posted'
+      ? 'completed'
+      : entry.status === 'rejected'
+        ? 'rejected'
+        : entry.status === 'cancelled'
+          ? 'failed'
+          : 'pending_verification',
+    transaction_id: entry.external_reference || undefined,
+    notes: [
+      entry.description,
+      `Accounting workflow status: ${entry.status}`,
+      entry.journal_entry_id ? `Journal: ${entry.journal_entry_id}` : 'Journal not posted'
+    ].filter(Boolean).join(' • ')
+  }));
 
 export const getFinanceLedgerEntries = async (): Promise<{
   data: FinanceLedgerEntry[] | null;
