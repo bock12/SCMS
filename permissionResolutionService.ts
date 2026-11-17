@@ -63,6 +63,11 @@ export const DEPARTMENT_OVERSIGHT_PERMISSION_KEYS = [
   'manage_ministries'
 ] as const;
 
+export const FINANCE_APPROVAL_PERMISSION_KEYS = [
+  'manage_finances',
+  'approve_finances'
+] as const;
+
 export const FINANCE_ACTION_PERMISSION_KEYS = [
   'manage_finances',
   'approve_finances',
