@@ -59,9 +59,18 @@ Approval decisions validate the active step, prior steps, required permission an
 5. **Budget/event integration:** migrate event budgets to `budgets`/`budget_lines` and existing approval routines; design a real requisition domain before removing its local workflow.
 6. **Retire duplicate ledgers:** derive department/event balances from posted journal lines and remove localStorage ledgers only after migration and regression coverage.
 
-## First concrete change selected
+## First concrete change — completed
 
-Start with the **read-only finance service and contract tests**, then migrate the workspace ledger loader. This is the smallest safe vertical slice: it removes the false assumption that `financial_records` is a real persisted ledger without prematurely inventing transaction-writing RPC contracts. Mutation handlers must remain disabled or explicitly identified as development-only until the secure create/submit/approve/post path is implemented.
+The read-only finance service and workspace ledger migration are now implemented on `main`:
+
+- The workspace reads `financial_documents` and optional `giving_records` through `financeLedgerService.ts`.
+- Only receipt and payment documents are projected into the legacy presentation shape; transfers and adjustments are not misrepresented as income or expense.
+- The projection preserves the database workflow status in the notes and only marks a record completed when its source document is posted.
+- The `financial_records` loader and fabricated demo-ledger fallback have been removed from `FinanceOfficerWorkspace.tsx`.
+- Income/expense entry controls are temporarily disabled; approval handlers no longer perform direct table updates; requisition/event disbursement cannot claim ledger persistence while the secure workflow is unavailable.
+- Mapping tests cover giving associations, ordering, status mapping and exclusion of unsupported document types.
+
+This is a read-only vertical slice. It intentionally does not invent a transaction-writing RPC contract or add direct table DML grants.
 
 ## Validation and non-goals
 
