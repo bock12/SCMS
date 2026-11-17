@@ -249,3 +249,32 @@ describe('canonical finance configuration RPCs', () => {
     expect(ctx.read().approvalSteps).toHaveLength(1);
   });
 });
+
+
+describe('canonical finance transaction setup guards', () => {
+  test('rejects an inactive financial account', async () => {
+    const base = fixture();
+    const state = base.read();
+    state.financialAccounts[0].is_active = false;
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: () => { throw new Error('unexpected persistence'); }
+    }, () => ({ userId: 'user-creator' }));
+    const result = await rpc.rpc('create_financial_document_transaction', args);
+    expect(result.error?.message).toContain('Financial account is inactive');
+    expect(state.documents).toHaveLength(0);
+  });
+
+  test('rejects a transaction dated in a closed financial period', async () => {
+    const base = fixture();
+    const state = base.read();
+    state.periods[0].status = 'closed';
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: () => { throw new Error('unexpected persistence'); }
+    }, () => ({ userId: 'user-creator' }));
+    const result = await rpc.rpc('create_financial_document_transaction', args);
+    expect(result.error?.message).toContain('No open financial period');
+    expect(state.documents).toHaveLength(0);
+  });
+});
