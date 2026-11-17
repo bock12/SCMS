@@ -36,6 +36,19 @@ describe("composeBaseline", () => {
     expect(output).not.toMatch(/create\s+extension\s+if\s+not\s+exists\s+pgcrypto\s*;/i);
   });
 
+  test("adds the missing financial-document currency fields only to the generated baseline after migration 014", () => {
+    const output = composeBaseline(fixtures());
+    const migration014 = output.indexOf("-- 20261114140013_scms_014_fixture.sql");
+    const reconciliation = output.indexOf("Baseline-only reconciliation: complete financial-document currency fields");
+    const migration015 = output.indexOf("-- 20261114140014_scms_015_fixture.sql");
+    expect(migration014).toBeGreaterThan(-1);
+    expect(reconciliation).toBeGreaterThan(migration014);
+    expect(migration015).toBeGreaterThan(reconciliation);
+    expect(output).toContain("exchange_rate_to_base numeric(20,8) not null default 1");
+    expect(output).toContain("base_currency_code char(3) not null default 'SLE' references public.currencies(code)");
+    expect(output).toContain("check (currency_code <> base_currency_code or exchange_rate_to_base = 1)");
+  });
+
   test("rejects an incomplete recovered migration archive", () => {
     expect(() => composeBaseline(fixtures().slice(0, 21))).toThrow("Expected exactly 22");
   });
