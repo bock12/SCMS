@@ -49,6 +49,15 @@ describe("composeBaseline", () => {
     expect(output).toContain("check (currency_code <> base_currency_code or exchange_rate_to_base = 1)");
   });
 
+  test("adds a baseline-only guard preventing pending financial-document journals from posting", () => {
+    const output = composeBaseline(fixtures());
+    expect(output).toContain("prevent_pending_financial_document_journal_posting");
+    expect(output).toContain("new.source_type = 'financial_document_pending'");
+    expect(output).toContain("A financial-document journal cannot be posted before approval and linkage");
+    expect(output).toContain("before update of status on public.journal_entries");
+    expect(output).toContain("revoke all on function private.prevent_pending_financial_document_journal_posting()");
+  });
+
   test("rejects an incomplete recovered migration archive", () => {
     expect(() => composeBaseline(fixtures().slice(0, 21))).toThrow("Expected exactly 22");
   });
