@@ -114,7 +114,6 @@ export const useSystemNotifications = (profile: Profile | null) => {
     }
   }, [
     profile?.id,
-    profile?.primary_role,
     profile?.first_name,
     profile?.last_name,
     profile?.phone,
