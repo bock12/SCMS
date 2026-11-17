@@ -68,6 +68,10 @@ memberService.ts explicitly rejects a branch_id change outside an approved trans
 
 Similarly, church_settings, districts and church_branches are read-only in the baseline. No branch-configuration mutation RPC or deployable server operation was found. Keep these writes unavailable until the workflow, approval rules and manage_branches scope are defined.
 
+### High — H6: Explicitly cleared mock role assignments could be reconstructed from legacy role labels — fixed
+
+The mock database loader previously treated both a missing `profile_role_assignments` array and an explicitly empty array as a signal to bootstrap assignments from `profiles.primary_role`. That could silently restore permissions after assignments had been deliberately cleared. Commit 3c075638 changes the migration rule: bootstrap only when the assignment table is absent; an existing empty array is authoritative. A regression test verifies that an empty assignment table remains empty.
+
 ### Medium — M1: Survey submission contracts are inconsistent
 
 The baseline has private.submit_event_survey(uuid,jsonb), SECURITY DEFINER with an empty search_path, current-profile derivation, survey-window/respondent eligibility and atomic response/answer writes. The online service calls public.submit_event_survey_response with answer_value fields, but the baseline exposes only the private function, whose payload contract uses answer. The separate forward migration creates a SECURITY INVOKER public function that queries the legacy public.members table, which the unified-profile baseline deliberately does not contain. eventSurveyService.ts still has direct response/answer INSERT and compensating DELETE paths.
@@ -80,9 +84,9 @@ resources_authenticated_read allows members_only resources with branch_id NULL t
 
 These may be intentional church-wide portal semantics, but the exact meaning of members_only and whether inactive/unlinked profiles retain access is not explicit. No policy was changed without that decision.
 
-### Medium — M3: Trigger search_path hardening opportunity
+### Medium — M3: Trigger search_path hardening — fixed
 
-public.handle_new_user() is SECURITY DEFINER and uses SET search_path = pg_catalog, public rather than an empty search_path. Its current table references are schema-qualified and EXECUTE is revoked from PUBLIC, anon and authenticated, so no exploit was demonstrated in this audit. Prefer SET search_path = '' in a future focused migration after confirming the Auth trigger behavior.
+public.handle_new_user() was SECURITY DEFINER and used SET search_path = pg_catalog, public. Its table references were schema-qualified and direct EXECUTE was already revoked, so no exploit was demonstrated. Migration 20261117000400 now pins an empty search_path and explicitly preserves the EXECUTE revocation. PostgreSQL regression coverage verifies the function configuration, denied direct execution, trigger attachment, exact trusted profile linking and no linking for unprovisioned users.
 
 ### Medium — M4: Welfare and notification publishing have no protected write contract
 
@@ -112,7 +116,7 @@ welfareContributionService.ts uses localStorage; welfare_cases, welfare_assistan
 
 ## SECURITY DEFINER, grants and policy review
 
-- private.current_profile_id(), private.can_access_branch(), private.has_permission(), survey submission and finance workflow routines use SECURITY DEFINER where required and SET search_path = ''. The role-assignment public RPCs also use an empty search_path and explicit EXECUTE grants.
+- private.current_profile_id(), private.can_access_branch(), private.has_permission(), survey submission and finance workflow routines use SECURITY DEFINER where required and SET search_path = ''. The role-assignment public RPCs and public.handle_new_user() also use an empty search_path and explicit/revoked EXECUTE grants as appropriate.
 - private.has_district_permission() is intentionally not executable by authenticated clients; it is called only inside the SECURITY DEFINER role-assignment functions.
 - Role assignment RPC EXECUTE remains granted to authenticated; direct writes to profile_role_assignments remain denied.
 - Finance approval/post/reversal routines enforce permission and workflow state; journal triggers protect posted entries and draft-only line mutation.
@@ -132,6 +136,8 @@ welfareContributionService.ts uses localStorage; welfare_cases, welfare_assistan
 3. Added role-assignment mock tests for branch/district/church, inactive, expired and future-dated assignments.
 4. Added 20261117000300_remove_legacy_unscoped_resource_survey_policies.sql to remove additive role-name policies and direct survey INSERT policies.
 5. Extended the PostgreSQL workflow with legacy-policy cleanup and district-scope regression checks, plus broader deny-direct-DML coverage for branch configuration, finance approvals, audit logs and private credential/payload tables.
+6. Added 20261117000400_harden_auth_linking_trigger_search_path.sql to pin `public.handle_new_user()` to an empty search_path and preserve denied direct EXECUTE for client roles; added PostgreSQL trigger/linking regression coverage.
+7. Changed mock role-assignment bootstrap to migrate only when the assignment array is absent, not when it is explicitly empty; added a regression test against restoring cleared permissions from legacy role labels.
 
 ## Unresolved risks and decisions
 
@@ -144,9 +150,11 @@ welfareContributionService.ts uses localStorage; welfare_cases, welfare_assistan
 7. Implement protected mutation contracts for ministries, events, attendance, resources, survey authoring, welfare and notifications.
 8. Verify the actual applied migration history before production: the fresh-install baseline is still marked inactive/not approved for deployment and is not a substitute for inspecting a live Supabase schema.
 
-## Validation boundaries
+## Final validation — 17 November 2026
 
-- Build/unit/integration tests: to be verified on the final remediation commit by SCMS Build Validation.
-- PostgreSQL 17: the existing workflow's latest run before this remediation failed in the unrelated leader-console permission assertion because the SQL block starts with invalid DO $ instead of DO $$. The baseline and migrations applied successfully before that step. The new regression steps are placed before that failing step so their outcomes are still observable.
-- Browser/runtime: not exercised.
-- Live Supabase: not connected to or modified.
+- **Verified `main` head:** `2faf410d13036bf23db5b904dc9cf4f2d6394c61` — [final code commit](https://github.com/bock12/SCMS/commit/2faf410d13036bf23db5b904dc9cf4f2d6394c61).
+- **SCMS Build Validation #265:** [success](https://github.com/bock12/SCMS/actions/runs/44056808900) on the same SHA. Bun test suite: **57 passed, 0 failed, 258 assertions across 9 files**. Vite production build completed successfully; the existing large-bundle warning remains.
+- **PostgreSQL 17 Test #22:** [success](https://github.com/bock12/SCMS/actions/runs/44056809215) on the same SHA. All workflow steps passed against a disposable PostgreSQL 17 service, including auth-linking trigger/search_path checks, legacy-policy cleanup, exact church/district/branch role-management scope, inactive/expired/future-dated/inactive-role rejection, role-assignment RPC checks, profile isolation and deny-direct-DML assertions for protected domain tables.
+- The mutation scan of current application TypeScript/TSX found direct INSERT/UPDATE/DELETE paths and RPC calls, but no `.upsert()` call and no Supabase Storage upload/download/signed-URL call. Browser `localStorage` persistence remains present and is listed as an unresolved development-only data path.
+- **Browser/runtime:** not exercised; build and unit/integration tests do not prove browser behavior.
+- **Live Supabase:** not connected to, queried, migrated or modified. The disposable PostgreSQL run is not a live-schema migration-history check; verify actual applied migration history and the deployed Auth trigger before production.
