@@ -60,6 +60,29 @@ beforeEach(() => {
   memoryStorage.clear();
 });
 
+async function assignRoleToProfile(profileId: string, roleName: string) {
+  const login = await supabase.auth.signInWithPassword({
+    email: 'admin@faithconnect.church',
+    password: 'password123'
+  });
+  if (login.error) throw new Error(login.error.message);
+
+  const { data: role, error: roleError } = await supabase
+    .from('roles')
+    .select('id')
+    .eq('name', roleName)
+    .single();
+  if (roleError || !role) throw new Error(roleError?.message || `Role ${roleName} not found.`);
+
+  const assignment = await supabase.rpc('assign_profile_role', {
+    p_profile_id: profileId,
+    p_role_id: role.id,
+    p_scope_type: 'church'
+  });
+  await supabase.auth.signOut();
+  if (assignment.error) throw new Error(assignment.error.message);
+}
+
 describe('System Notification Aggregation per User', () => {
   test('aggregates member-scoped live streams, registered events, and personal reminders without leaking admin approvals', async () => {
     const { data: member } = await supabase
@@ -98,25 +121,33 @@ describe('System Notification Aggregation per User', () => {
     expect(items.some(i => i.source === 'requisition' && i.category === 'approvals')).toBe(false);
   });
 
-  test('includes pending approvals for pastors/admins and treasury items for finance officers', async () => {
-    const { data: pastor } = await supabase
+  test('uses active database permissions, not profiles.primary_role, for approvals and treasury alerts', async () => {
+    const { data: admin } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', 'usr-pastor-1')
+      .eq('id', 'usr-admin-1')
       .single();
 
-    const pastorItems = await getUserSystemNotifications(pastor);
-    expect(pastorItems.some(i => i.source === 'requisition' && i.title.includes('REQ-2026-007'))).toBe(true);
-    expect(pastorItems.some(i => i.source === 'transfer' && i.category === 'approvals')).toBe(true);
+    const adminItems = await getUserSystemNotifications(admin);
+    expect(adminItems.some(i => i.source === 'requisition' && i.title.includes('REQ-2026-007'))).toBe(true);
+    expect(adminItems.some(i => i.source === 'transfer' && i.category === 'approvals')).toBe(true);
 
-    const financeProfile = {
-      ...pastor,
-      id: 'usr-finance-test',
-      first_name: 'Sahr',
-      last_name: 'Sesay',
-      email: 'finance@faithconnect.church',
-      primary_role: 'finance_officer' as const
-    };
+    const { data: member } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', 'usr-member-1')
+      .single();
+
+    // A stale or forged profile label must not grant administrative notification visibility.
+    const forgedAdmin = { ...member, primary_role: 'super_admin' as const };
+    const forgedAdminItems = await getUserSystemNotifications(forgedAdmin);
+    expect(forgedAdminItems.some(i => i.source === 'requisition' && i.category === 'approvals')).toBe(false);
+    expect(forgedAdminItems.some(i => i.source === 'transfer' && i.category === 'approvals')).toBe(false);
+
+    // An explicit database finance assignment grants treasury notifications even though
+    // the compatibility display field still says "member".
+    await assignRoleToProfile('usr-member-1', 'finance_officer');
+    const financeProfile = { ...member, primary_role: 'member' as const };
     const financeItems = await getUserSystemNotifications(financeProfile);
     expect(financeItems.some(i => i.source === 'requisition' && i.title.includes('REQ-2026-008'))).toBe(true);
     expect(financeItems.some(i => i.source === 'requisition' && i.title.includes('Receipt Audit Ready'))).toBe(true);
