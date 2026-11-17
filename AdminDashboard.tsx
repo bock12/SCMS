@@ -9,7 +9,7 @@ import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { ResourcesAdminTab } from './ResourcesAdminTab';
 import { EventSurveysAdminTab } from './EventSurveysAdminTab';
 import { getCustomRoles, getRoleAssignments } from './roleService';
-import { hasEffectivePermission, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
+import { hasEffectivePermission, hasAnyEffectivePermission, ADMIN_DASHBOARD_PERMISSION_KEYS, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
 import { LocationMap } from './LocationMap';
@@ -107,10 +107,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
     return <div className="flex items-center justify-center h-96 text-slate-500">Loading your role permissions…</div>;
   }
 
-  const canOpenAdmin = [
-    'manage_roles', 'manage_members', 'manage_events', 'manage_ministries',
-    'manage_finances', 'manage_resources', 'manage_surveys', 'manage_streams'
-  ].some(can);
+  const canOpenAdmin = hasAnyEffectivePermission(resolution, ADMIN_DASHBOARD_PERMISSION_KEYS);
 
   if (!profile || permissionError || !canOpenAdmin) {
     return (
