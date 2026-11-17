@@ -127,6 +127,7 @@ returns trigger
 language plpgsql
 set search_path = ''
 as $
+
 begin
   if new.status = 'posted'
      and new.source_type = 'financial_document_pending' then
