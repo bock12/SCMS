@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   mapFinanceLedgerEntries,
+  mapFinanceLedgerEntriesToWorkspaceRecords,
   type FinancialDocumentRow,
   type GivingRecordRow
 } from './financeLedgerService';
