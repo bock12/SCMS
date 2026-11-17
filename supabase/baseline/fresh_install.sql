@@ -2276,19 +2276,6 @@ using (
 );
 
 -- -----------------------------------------------------------------------------
--- Baseline-only reconciliation: complete financial-document currency fields
--- -----------------------------------------------------------------------------
-alter table public.financial_documents
-  add column exchange_rate_to_base numeric(20,8) not null default 1,
-  add column base_currency_code char(3) not null default 'SLE' references public.currencies(code);
-
-alter table public.financial_documents
-  add constraint financial_documents_exchange_rate_to_base_check
-    check (exchange_rate_to_base > 0),
-  add constraint financial_document_base_rate
-    check (currency_code <> base_currency_code or exchange_rate_to_base = 1);
-
--- -----------------------------------------------------------------------------
 -- 20261114142400_scms_015_threshold_approval_schema.sql
 -- -----------------------------------------------------------------------------
 set local search_path = public, extensions;
@@ -4422,7 +4409,7 @@ create or replace function private.prevent_pending_financial_document_journal_po
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $$
 begin
   if new.status = 'posted'
      and new.source_type = 'financial_document_pending' then
@@ -4430,7 +4417,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 create trigger trg_prevent_pending_financial_document_journal_posting
 before update of status on public.journal_entries
