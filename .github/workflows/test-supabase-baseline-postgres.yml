@@ -1038,3 +1038,6 @@ jobs:
           END
           $scms_finance_rpc_security$;
           SQL
+
+      - name: Verify receipt and payment transaction lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
