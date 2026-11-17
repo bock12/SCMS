@@ -7,6 +7,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   manage_roles: 'Manage roles',
   manage_branches: 'Manage branches',
   manage_ministries: 'Manage ministries',
+  view_leader_console: 'Access ministry leader workspace',
   view_finances: 'View finances',
   manage_finances: 'Manage finances',
   approve_finances: 'Approve finances',
