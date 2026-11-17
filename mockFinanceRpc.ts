@@ -137,7 +137,9 @@ export function createMockFinanceRpc(
     const baseAmount = round4(amount * rate);
     const policy = state.approvalPolicies.find(p => {
       if (!p.is_active || p.transaction_type !== 'financial_document' ||
-          (p.branch_id !== null && p.branch_id !== branchId)) return false;
+          (p.branch_id !== null && p.branch_id !== branchId) ||
+          (p.effective_from && date < p.effective_from) ||
+          (p.effective_to && date > p.effective_to)) return false;
       const bands = state.approvalPolicyBands.filter(b => b.policy_id === p.id);
       return bands.length
         ? bands.some(b => baseAmount >= Number(b.min_amount_base) &&
@@ -261,14 +263,23 @@ export function createMockFinanceRpc(
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
     if (!actor) return fail('No active member profile is linked to this account', '42501');
     const branchId = args.p_branch_id ?? null;
-    if (!hasPermission(state, actor.id, 'manage_finances', branchId)) {
-      return fail('Insufficient permission to manage finance configuration in this scope', '42501');
-    }
     const config = args.p_configuration;
     const arrays = ['currencies', 'chartAccounts', 'financialAccounts', 'funds', 'financialYears',
       'periods', 'approvalPolicies', 'approvalPolicyBands', 'approvalPolicySteps'];
     if (!config || typeof config !== 'object' || arrays.some(key => !Array.isArray(config[key]))) {
       return fail('Finance configuration payload is incomplete');
+    }
+    const canManageFinance = hasPermission(state, actor.id, 'manage_finances', branchId);
+    const chartChanged = JSON.stringify([state.currencies, state.baseCurrencyCode, state.chartAccounts, state.financialAccounts, state.funds]) !==
+      JSON.stringify([config.currencies, config.baseCurrencyCode, config.chartAccounts, config.financialAccounts, config.funds]);
+    const periodsChanged = JSON.stringify([state.financialYears, state.periods]) !==
+      JSON.stringify([config.financialYears, config.periods]);
+    const approvalsChanged = JSON.stringify([state.approvalPolicies, state.approvalPolicyBands, state.approvalPolicySteps]) !==
+      JSON.stringify([config.approvalPolicies, config.approvalPolicyBands, config.approvalPolicySteps]);
+    if ((chartChanged && !canManageFinance && !hasPermission(state, actor.id, 'manage_chart_of_accounts', branchId)) ||
+        (periodsChanged && !canManageFinance && !hasPermission(state, actor.id, 'manage_financial_periods', branchId)) ||
+        (approvalsChanged && !canManageFinance && !hasPermission(state, actor.id, 'approve_finances', branchId))) {
+      return fail('Insufficient permission for one or more changed finance configuration areas', '42501');
     }
     const currencies = config.currencies.map((code: unknown) => String(code).trim().toUpperCase());
     if (currencies.some((code: string) => !/^[A-Z]{3}$/.test(code)) || new Set(currencies).size !== currencies.length) {
