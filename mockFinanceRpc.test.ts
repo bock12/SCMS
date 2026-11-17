@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
+import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
 
 function fixture() {
   const state: MockFinanceState = {
@@ -148,5 +148,34 @@ describe('deterministic mock financial-document RPC', () => {
     const result = await ctx.rpc.rpc('post_journal_entry', { p_journal_entry_id: journal.id });
     expect(result.error?.message).toContain('cannot be posted before approval');
     expect(ctx.read().journals[0].status).toBe('draft');
+  });
+});
+
+
+describe('mock finance local persistence', () => {
+  test('persists canonical finance state across adapter instances', async () => {
+    const values = new Map<string, string>();
+    const keyValue = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); }
+    };
+    const firstStorage = createBrowserMockFinanceStorage(keyValue, 'test-finance');
+    const state = createEmptyMockFinanceState();
+    state.baseCurrencyCode = 'SLL';
+    state.currencies = ['SLL'];
+    firstStorage.save(state);
+
+    const secondStorage = createBrowserMockFinanceStorage(keyValue, 'test-finance');
+    expect(secondStorage.load().baseCurrencyCode).toBe('SLL');
+    expect(secondStorage.load().currencies).toEqual(['SLL']);
+  });
+
+  test('rejects corrupt persisted finance state instead of silently resetting it', () => {
+    const keyValue = {
+      getItem: (_key: string) => '{broken json',
+      setItem: () => undefined
+    };
+    const storage = createBrowserMockFinanceStorage(keyValue, 'test-corrupt-finance');
+    expect(() => storage.load()).toThrow();
   });
 });
