@@ -152,8 +152,9 @@ welfareContributionService.ts uses localStorage; welfare_cases, welfare_assistan
 
 ## Final validation — 17 November 2026
 
-- **Verified `main` head:** `2faf410d13036bf23db5b904dc9cf4f2d6394c61` — [final code commit](https://github.com/bock12/SCMS/commit/2faf410d13036bf23db5b904dc9cf4f2d6394c61).
-- **SCMS Build Validation #265:** [success](https://github.com/bock12/SCMS/actions/runs/44056808900) on the same SHA. Bun test suite: **57 passed, 0 failed, 258 assertions across 9 files**. Vite production build completed successfully; the existing large-bundle warning remains.
+- **Verified implementation commit on `main`:** `2faf410d13036bf23db5b904dc9cf4f2d6394c61` — [implementation commit](https://github.com/bock12/SCMS/commit/2faf410d13036bf23db5b904dc9cf4f2d6394c61).
+- **Final `main` head:** `080e80e3f231c4d0b53eeb666635394d67b69542` — [audit-report commit](https://github.com/bock12/SCMS/commit/080e80e3f231c4d0b53eeb666635394d67b69542).
+- **SCMS Build Validation #265:** [success](https://github.com/bock12/SCMS/actions/runs/44056808900) on the implementation SHA. **SCMS Build Validation #266:** [success](https://github.com/bock12/SCMS/actions/runs/44057256863) on the final report SHA. The final-head run confirms **57 passed, 0 failed, 258 assertions across 9 files** and a successful Vite production build; the existing large-bundle warning remains.
 - **PostgreSQL 17 Test #22:** [success](https://github.com/bock12/SCMS/actions/runs/44056809215) on the same SHA. All workflow steps passed against a disposable PostgreSQL 17 service, including auth-linking trigger/search_path checks, legacy-policy cleanup, exact church/district/branch role-management scope, inactive/expired/future-dated/inactive-role rejection, role-assignment RPC checks, profile isolation and deny-direct-DML assertions for protected domain tables.
 - The mutation scan of current application TypeScript/TSX found direct INSERT/UPDATE/DELETE paths and RPC calls, but no `.upsert()` call and no Supabase Storage upload/download/signed-URL call. Browser `localStorage` persistence remains present and is listed as an unresolved development-only data path.
 - **Browser/runtime:** not exercised; build and unit/integration tests do not prove browser behavior.
