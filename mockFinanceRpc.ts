@@ -32,6 +32,36 @@ export interface MockFinanceAuth {
   userId: string | null;
 }
 
+export interface MockFinanceKeyValueStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const MOCK_FINANCE_STORAGE_KEY = 'scms_mock_finance_v1';
+
+/** Browser persistence is namespaced and versioned; corrupt data fails closed. */
+export function createBrowserMockFinanceStorage(
+  storage: MockFinanceKeyValueStorage,
+  key = MOCK_FINANCE_STORAGE_KEY
+): MockFinanceStorage {
+  return {
+    load() {
+      const raw = storage.getItem(key);
+      if (!raw) return createEmptyMockFinanceState();
+      const parsed = JSON.parse(raw) as MockFinanceState;
+      const requiredArrays = ['profiles', 'permissions', 'currencies', 'financialAccounts', 'chartAccounts',
+        'funds', 'periods', 'approvalPolicies', 'documents', 'journals', 'journalLines',
+        'approvalRequests', 'approvalSteps'];
+      if (!parsed || typeof parsed !== 'object' || requiredArrays.some(name => !Array.isArray((parsed as any)[name])) ||
+          typeof parsed.nextId !== 'number' || !Number.isInteger(parsed.nextId) || parsed.nextId < 1) {
+        throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
+      }
+      return parsed;
+    },
+    save(state) { storage.setItem(key, JSON.stringify(state)); }
+  };
+}
+
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const fail = (message: string, code = '22023') => ({ data: null, error: { code, message } });
 const success = <T>(data: T) => ({ data, error: null });
