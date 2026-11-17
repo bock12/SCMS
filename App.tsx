@@ -56,7 +56,14 @@ import {
   deleteNotification
 } from './inAppNotificationService';
 import type { InAppNotification } from './inAppNotificationService';
-import { hasEffectivePermission } from './permissionResolutionService';
+import {
+  hasEffectivePermission,
+  hasAnyEffectivePermission,
+  ADMIN_CONSOLE_PERMISSION_KEYS,
+  LEADER_CONSOLE_PERMISSION_KEYS,
+  FINANCE_CONSOLE_PERMISSION_KEYS,
+  MEMBER_ADMIN_PERMISSION_KEYS
+} from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import {
   getMinistryRoster,
@@ -390,14 +397,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('church-profile-updated', handleUpdate);
   }, []);
 
-  const isLeaderOrStaff =
-    can('manage_ministries') || can('manage_events') || can('view_attendance') ||
-    Boolean(profile?.assigned_department || profile?.department_name);
-  const isAdminOrPastor = [
-    'manage_roles', 'manage_members', 'manage_events', 'manage_ministries',
-    'manage_resources', 'manage_surveys', 'manage_streams'
-  ].some(can);
-  const canAccessFinance = can('view_finances') || can('manage_finances');
+  const isLeaderOrStaff = hasAnyEffectivePermission(resolution, LEADER_CONSOLE_PERMISSION_KEYS);
+  const isAdminOrPastor = hasAnyEffectivePermission(resolution, ADMIN_CONSOLE_PERMISSION_KEYS);
+  const canAccessFinance = hasAnyEffectivePermission(resolution, FINANCE_CONSOLE_PERMISSION_KEYS);
 
   const effectiveConsole: ConsoleKey =
     activeConsole === 'admin' && isAdminOrPastor
@@ -1761,7 +1763,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   } | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
-  const isAdminOrPastor = canDirectory('manage_members') || canDirectory('manage_roles');
+  const isAdminOrPastor = hasAnyEffectivePermission(directoryPermissions, MEMBER_ADMIN_PERMISSION_KEYS);
 
   useEffect(() => {
     loadDirectory();
@@ -2761,12 +2763,8 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const closeTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
 
-  const isLeader = Boolean(profile && (
-    canMinistry('manage_ministries') || canMinistry('manage_events') ||
-    canMinistry('view_attendance') ||
-    Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
-  ));
-  const isAdmin = canMinistry('manage_roles') || canMinistry('manage_members');
+  const isLeader = hasAnyEffectivePermission(ministryPermissions, LEADER_CONSOLE_PERMISSION_KEYS);
+  const isAdmin = hasAnyEffectivePermission(ministryPermissions, MEMBER_ADMIN_PERMISSION_KEYS);
 
   const loadMinistriesAndStatus = async () => {
     setLoadingMinistries(true);
@@ -3844,15 +3842,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const { resolution: leaderPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canLeader = (key: string) => hasEffectivePermission(leaderPermissions, key);
-  const isLeaderOrStaff = Boolean(profile && (
-    canLeader('manage_ministries') || canLeader('manage_events') || canLeader('view_attendance') ||
-    Boolean((profile as any)?.assigned_department || (profile as any)?.department_name)
-  ));
+  const isLeaderOrStaff = hasAnyEffectivePermission(leaderPermissions, LEADER_CONSOLE_PERMISSION_KEYS);
   const navigate = useNavigate();
   const location = useLocation();
 
   // Cross-department administration requires an explicit database permission.
-  const canSwitchDepts = canLeader('manage_roles') || canLeader('manage_members');
+  const canSwitchDepts = hasAnyEffectivePermission(leaderPermissions, MEMBER_ADMIN_PERMISSION_KEYS);
   
   // User's specifically assigned department
   const userAssignedDept = (profile as any)?.assigned_department || (profile as any)?.department_name || 'Media & IT Ministry';
@@ -9598,7 +9593,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const [latestReceipt, setLatestReceipt] = useState<any>(null);
   const [history, setHistory] = useState<FinancialRecord[]>([]);
 
-  const isStaff = canGiving('view_finances') || canGiving('manage_finances');
+  const isStaff = hasAnyEffectivePermission(givingPermissions, FINANCE_CONSOLE_PERMISSION_KEYS);
   const userFullName = profile ? `${profile.first_name} ${profile.last_name}` : 'Grace Cathedral Member';
 
   useEffect(() => {
