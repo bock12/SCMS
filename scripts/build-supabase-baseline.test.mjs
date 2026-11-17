@@ -48,10 +48,10 @@ describe("composeBaseline", () => {
   test("adds a baseline-only guard preventing pending financial-document journals from posting", () => {
     const output = composeBaseline(fixtures());
     expect(output).toContain("prevent_pending_financial_document_journal_posting");
-    expect(output).toContain("as $\\nbegin");
-    expect(output).toContain("end;\\n$;");
-    expect(output).toContain("as $\\nbegin");
-    expect(output).toContain("end;\\n$;");
+    expect(output).toContain("as $\nbegin");
+    expect(output).toContain("end;\n$;");
+    expect(output).toContain("as $\nbegin");
+    expect(output).toContain("end;\n$;");
     expect(output).toContain("new.source_type = 'financial_document_pending'");
     expect(output).toContain("A financial-document journal cannot be posted before approval and linkage");
     expect(output).toContain("before update of status on public.journal_entries");
