@@ -12,6 +12,8 @@ on:
       - "supabase/migrations/20261117000100_add_leader_console_permission.sql"
       - "supabase/migrations/20261117000200_enforce_exact_district_role_management_scope.sql"
       - "supabase/migrations/20261117000300_remove_legacy_unscoped_resource_survey_policies.sql"
+      - "supabase/migrations/20261113000100_secure_explicit_profile_auth_linking.sql"
+      - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "scripts/build-supabase-baseline.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
@@ -62,7 +64,11 @@ jobs:
           CREATE ROLE service_role NOLOGIN BYPASSRLS;
           CREATE SCHEMA auth;
           -- Minimal test-only stand-in for Supabase Auth; not used in the real project.
-          CREATE TABLE auth.users (id uuid PRIMARY KEY);
+          CREATE TABLE auth.users (
+            id uuid PRIMARY KEY,
+            email text,
+            raw_app_meta_data jsonb NOT NULL DEFAULT '{}'::jsonb
+          );
           CREATE FUNCTION auth.uid()
           RETURNS uuid
           LANGUAGE sql
@@ -76,6 +82,87 @@ jobs:
 
       - name: Apply fresh-install baseline
         run: psql -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
+
+      - name: Apply explicit profile auth-linking function
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261113000100_secure_explicit_profile_auth_linking.sql
+
+      - name: Install Supabase Auth trigger in the disposable test harness
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TRIGGER on_auth_user_created
+            AFTER INSERT ON auth.users
+            FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+          SQL
+
+      - name: Harden auth-linking trigger search_path
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql
+
+      - name: Verify auth-linking trigger security and identity-link behavior
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $scms_auth_linking$
+          DECLARE
+            v_profile_id uuid := '94000000-0000-4000-8000-000000000001';
+            v_linked_user_id uuid := '95000000-0000-4000-8000-000000000001';
+            v_unlinked_user_id uuid := '95000000-0000-4000-8000-000000000002';
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_proc p
+              WHERE p.oid = 'public.handle_new_user()'::regprocedure
+                AND EXISTS (
+                  SELECT 1
+                  FROM unnest(p.proconfig) setting
+                  WHERE split_part(setting, '=', 1) = 'search_path'
+                    AND trim(both '"' from split_part(setting, '=', 2)) = ''
+                )
+            ) THEN
+              RAISE EXCEPTION 'Auth-linking trigger does not pin an empty search_path.';
+            END IF;
+
+            IF has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE')
+              OR has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE') THEN
+              RAISE EXCEPTION 'Untrusted client roles can execute the auth-linking trigger function directly.';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_trigger t
+              WHERE t.tgname = 'on_auth_user_created'
+                AND t.tgfoid = 'public.handle_new_user()'::regprocedure
+                AND NOT t.tgisinternal
+            ) THEN
+              RAISE EXCEPTION 'Auth-linking trigger is not attached in the test harness.';
+            END IF;
+
+            INSERT INTO public.profiles (id, first_name, last_name, email)
+            VALUES (v_profile_id, 'Link', 'Target', 'link-test@example.invalid');
+
+            INSERT INTO auth.users (id, email, raw_app_meta_data)
+            VALUES (
+              v_linked_user_id,
+              'link-test@example.invalid',
+              jsonb_build_object('provisioned_profile_id', v_profile_id::text)
+            );
+
+            IF NOT EXISTS (
+              SELECT 1 FROM public.profiles
+              WHERE id = v_profile_id AND auth_user_id = v_linked_user_id
+            ) THEN
+              RAISE EXCEPTION 'Trusted provisioned auth user was not linked to the exact directory profile.';
+            END IF;
+
+            INSERT INTO auth.users (id, email, raw_app_meta_data)
+            VALUES (v_unlinked_user_id, 'unlinked@example.invalid', '{}'::jsonb);
+
+            IF EXISTS (
+              SELECT 1 FROM public.profiles WHERE auth_user_id = v_unlinked_user_id
+            ) THEN
+              RAISE EXCEPTION 'Unprovisioned auth user was linked to a directory profile.';
+            END IF;
+          END
+          $scms_auth_linking$;
+          SQL
 
       - name: Simulate historical unscoped policies for cleanup regression coverage
         run: |
