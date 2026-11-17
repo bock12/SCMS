@@ -1,6 +1,6 @@
 # FIN-INT-001 — Secure transaction-entry workflow design
 
-**Status:** Secure database RPCs and behavior-level PostgreSQL lifecycle tests are implemented and passing on `main`; deterministic mock adapter and UI integration remain pending. Not deployed to live Supabase.
+**Status:** Secure database RPCs, PostgreSQL lifecycle tests, deterministic mock finance adapter, canonical configuration RPCs and accounting setup UI are implemented on `main`. Receipt/payment entry UI remains disabled pending final integration. Not deployed to live Supabase.
 
 ## Scope
 
@@ -153,3 +153,26 @@ Validation on commit `fc8fff29287791e1477f0340a155a37dd7af35b8`:
 - SCMS Build Validation: passed.
 
 The CI workflow path filter now includes `supabase/tests/**`, so future fixture-only changes trigger the PostgreSQL job.
+
+
+## Canonical mock finance configuration checkpoint — 2026-11-17
+
+The development mock now exposes two additional RPC operations:
+- `get_finance_configuration` reads the canonical configuration from the isolated finance store.
+- `save_finance_configuration` validates and persists currencies/base currency, chart accounts, financial accounts, funds, financial years/periods, approval policies, amount bands and approval steps.
+
+The mock client resolves the finance configuration permission keys from active role assignments. Configuration writes require the current actor's scoped `manage_finances` permission; reads require an active finance permission. Configuration is stored separately from legacy `GivingConfig` and `FinancialRecord` data. The mock storage namespace was versioned for the expanded canonical state.
+
+The mock transaction workflow now evaluates configured approval amount bands against the transaction's base-currency amount and creates approval steps from the matching band's configured approvers. It does not flatten multiple bands into one unlimited policy.
+
+Added:
+- `financeConfigurationService.ts` and service contract tests.
+- `FinanceConfigurationWorkspace.tsx`, integrated as the Accounting Setup tab in `FinanceOfficerWorkspace.tsx`.
+- Mock RPC tests for configuration validation, persistence, retrieval and uncovered amount-band rejection.
+
+Validation on commit `4268ffcffee0f5f93d3e4ff6dbf2a593a0690b7c`:
+- Bun automated tests: passed.
+- Vite application build: passed.
+- SCMS Build Validation run [44187912207](https://github.com/bock12/SCMS/actions/runs/44187912207): success.
+
+This is a development mock implementation. It does not perform live Supabase writes or add direct finance-table DML privileges. The production database remains protected by the reviewed read-only table grants and narrow RPC boundary. The receipt/payment entry forms remain disabled until they are connected to the canonical configuration selectors and transaction service.
