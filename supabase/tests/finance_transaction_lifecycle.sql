@@ -4,7 +4,7 @@
 
 DO $finance_transaction_lifecycle$
 DECLARE
-  v_branch_id uuid := '96000000-0000-4000-8000-000000000001';
+  v_branch_id uuid := '10000000-0000-4000-8000-000000000001';
   v_auth_id uuid := '96000000-0000-4000-8000-000000000002';
   v_profile_id uuid := '96000000-0000-4000-8000-000000000003';
   v_cash_chart_id uuid := '96000000-0000-4000-8000-000000000004';
@@ -25,9 +25,6 @@ DECLARE
   v_base_debits numeric(20,4);
   v_base_credits numeric(20,4);
 BEGIN
-  INSERT INTO public.church_branches (id, name, code, country, is_main_branch)
-  VALUES (v_branch_id, 'FIN-INT Test Branch', 'FIN-INT-001', 'Sierra Leone', true);
-
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
 
