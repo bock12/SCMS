@@ -4415,4 +4415,29 @@ revoke all on function private.submit_budget_for_approval(uuid)
 grant execute on function private.submit_budget_for_approval(uuid)
   to authenticated;
 
+-- -----------------------------------------------------------------------------
+-- Baseline-only finance safety guard: pending document journals cannot post
+-- -----------------------------------------------------------------------------
+create or replace function private.prevent_pending_financial_document_journal_posting()
+returns trigger
+language plpgsql
+set search_path = ''
+as $
+begin
+  if new.status = 'posted'
+     and new.source_type = 'financial_document_pending' then
+    raise exception 'A financial-document journal cannot be posted before approval and linkage';
+  end if;
+  return new;
+end;
+$;
+
+create trigger trg_prevent_pending_financial_document_journal_posting
+before update of status on public.journal_entries
+for each row
+execute function private.prevent_pending_financial_document_journal_posting();
+
+revoke all on function private.prevent_pending_financial_document_journal_posting()
+from public, anon, authenticated, service_role;
+
 commit;
