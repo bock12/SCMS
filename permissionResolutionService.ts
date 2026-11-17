@@ -26,6 +26,49 @@ export const PERMISSION_LABELS: Record<string, string> = {
   send_stream_chat: 'Send stream chat messages'
 };
 
+export const ADMIN_CONSOLE_PERMISSION_KEYS = [
+  'manage_roles',
+  'manage_members',
+  'manage_events',
+  'manage_ministries',
+  'manage_resources',
+  'manage_surveys',
+  'manage_streams'
+] as const;
+
+export const ADMIN_DASHBOARD_PERMISSION_KEYS = [
+  ...ADMIN_CONSOLE_PERMISSION_KEYS,
+  'manage_finances'
+] as const;
+
+export const LEADER_CONSOLE_PERMISSION_KEYS = [
+  'view_leader_console',
+  'manage_ministries',
+  'manage_events'
+] as const;
+
+export const FINANCE_CONSOLE_PERMISSION_KEYS = [
+  'view_finances',
+  'manage_finances'
+] as const;
+
+export const MEMBER_ADMIN_PERMISSION_KEYS = [
+  'manage_members',
+  'manage_roles'
+] as const;
+
+export const DEPARTMENT_OVERSIGHT_PERMISSION_KEYS = [
+  'manage_roles',
+  'manage_members',
+  'manage_ministries'
+] as const;
+
+export const FINANCE_ACTION_PERMISSION_KEYS = [
+  'manage_finances',
+  'approve_finances',
+  'post_journals'
+] as const;
+
 export type AuthorizationScopeType = 'church' | 'district' | 'branch';
 
 export interface AuthorizationRole {
@@ -185,4 +228,11 @@ export function hasEffectivePermission(
   permissionKey: string
 ): boolean {
   return Boolean(resolution?.permissions.includes(permissionKey));
+}
+
+export function hasAnyEffectivePermission(
+  resolution: PermissionResolution | null | undefined,
+  permissionKeys: readonly string[]
+): boolean {
+  return permissionKeys.some(permissionKey => hasEffectivePermission(resolution, permissionKey));
 }
