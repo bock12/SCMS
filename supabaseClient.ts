@@ -1,4 +1,5 @@
 import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
+import { createBrowserMockFinanceStorage, createMockFinanceRpc } from './mockFinanceRpc';
 
 // Storage keys
 function createMockUuid(): string {
@@ -1075,6 +1076,55 @@ function saveLocalDatabase(db: any) {
 // Global in-memory & synced database
 let localDb = loadLocalDatabase();
 
+// Canonical mock finance records are stored separately from legacy demo
+// FinancialRecord data. Identity and effective permissions are resolved from
+// the existing mock directory/role-assignment tables on every RPC call.
+const persistedMockFinanceStorage = createBrowserMockFinanceStorage(localStorage);
+const mockFinanceRpc = createMockFinanceRpc({
+  load() {
+    const state = persistedMockFinanceStorage.load();
+    state.profiles = (localDb.profiles || []).map((profile: any) => ({
+      id: profile.id,
+      auth_user_id: profile.auth_user_id || null,
+      status: profile.status
+    }));
+    const branches = localDb.church_branches || [];
+    const now = Date.now();
+    const resolved: Array<{ profile_id: string; permission: string; branch_id: string | null }> = [];
+    (localDb.profile_role_assignments || []).forEach((assignment: any) => {
+      if (!assignment.is_active || new Date(assignment.assigned_at || 0).getTime() > now ||
+          (assignment.expires_at && new Date(assignment.expires_at).getTime() <= now)) return;
+      const role = (localDb.roles || []).find((item: any) => item.id === assignment.role_id && item.is_active);
+      if (!role) return;
+      const permissionIds = (localDb.role_permissions || [])
+        .filter((link: any) => link.role_id === role.id)
+        .map((link: any) => link.permission_id);
+      const permissionKeys = (localDb.permissions || [])
+        .filter((permission: any) => permissionIds.includes(permission.id))
+        .map((permission: any) => permission.key);
+      const scopedBranches = assignment.scope_type === 'church'
+        ? [null]
+        : assignment.scope_type === 'branch'
+          ? branches.filter((branch: any) => branch.id === assignment.branch_id).map((branch: any) => branch.id)
+          : assignment.scope_type === 'district'
+            ? branches.filter((branch: any) => branch.district_id === assignment.district_id).map((branch: any) => branch.id)
+            : [];
+      permissionKeys.filter((key: string) => key === 'manage_finances' || key === 'approve_finances')
+        .forEach((permission: string) => scopedBranches.forEach((branchId: string | null) => {
+          resolved.push({ profile_id: assignment.profile_id, permission, branch_id: branchId });
+        }));
+    });
+    state.permissions = resolved;
+    return state;
+  },
+  save(state) {
+    // Profiles and permissions are authoritative in the shared mock directory;
+    // only finance configuration and transaction state belong in this store.
+    persistedMockFinanceStorage.save({ ...state, profiles: [], permissions: [] });
+  }
+}, () => ({ userId: getCurrentSession()?.user?.id || null }));
+
+
 // Auth event listeners
 type AuthListener = (event: string, session: any) => void;
 const authListeners = new Set<AuthListener>();
@@ -1837,6 +1887,11 @@ export const supabase = {
     localDb = loadLocalDatabase();
     const session = getCurrentSession();
     const actor = (localDb.profiles || []).find((item: any) => item.auth_user_id === session?.user?.id);
+    if (functionName === 'create_financial_document_transaction' ||
+        functionName === 'decide_financial_document_approval' ||
+        functionName === 'post_journal_entry') {
+      return mockFinanceRpc.rpc(functionName, args);
+    }
     if (!actor) {
       return { data: null, error: { code: '42501', message: 'An authenticated church profile is required.' } };
     }
