@@ -179,3 +179,73 @@ describe('mock finance local persistence', () => {
     expect(() => storage.load()).toThrow();
   });
 });
+
+
+describe('canonical finance configuration RPCs', () => {
+  test('validates, saves and reloads canonical setup independently of legacy giving data', async () => {
+    const ctx = fixture();
+    const configuration = {
+      currencies: ['SLL', 'USD'], baseCurrencyCode: 'SLL',
+      chartAccounts: [
+        { id: 'cash-chart', code: '1000', name: 'Cash', account_type: 'asset', normal_balance: 'debit', is_active: true },
+        { id: 'income-chart', code: '4000', name: 'Offering Income', account_type: 'income', normal_balance: 'credit', is_active: true }
+      ],
+      financialAccounts: [
+        { id: 'cash-account', chart_account_id: 'cash-chart', branch_id: 'branch-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true }
+      ],
+      funds: [{ id: 'fund-a', code: 'GEN', name: 'General Fund', fund_type: 'general', is_default: true, is_active: true }],
+      financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      periods: [{ id: 'period-a', financial_year_id: 'fy-2026', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      approvalPolicies: [{ id: 'policy-a', name: 'Receipt and Payment Approval', transaction_type: 'financial_document', branch_id: 'branch-a', version: 1, effective_from: '2026-01-01', is_active: true }],
+      approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 100 }],
+      approvalPolicySteps: [{ id: 'step-a', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true, approver_profile_ids: ['approver-1'] }]
+    };
+    const saved = await ctx.rpc.rpc('save_finance_configuration', {
+      p_branch_id: 'branch-a', p_configuration: configuration
+    });
+    expect(saved.error).toBeNull();
+    const loaded = await ctx.rpc.rpc('get_finance_configuration');
+    expect(loaded.error).toBeNull();
+    expect(loaded.data.baseCurrencyCode).toBe('SLL');
+    expect(loaded.data.chartAccounts).toHaveLength(2);
+    expect(loaded.data.approvalPolicyBands[0].max_amount_base).toBe(100);
+    expect(ctx.read().financialYears).toHaveLength(1);
+  });
+
+  test('rejects incomplete or malformed configuration without persisting partial state', async () => {
+    const ctx = fixture();
+    const before = ctx.read();
+    const result = await ctx.rpc.rpc('save_finance_configuration', {
+      p_branch_id: 'branch-a',
+      p_configuration: { currencies: ['SLE'], baseCurrencyCode: 'USD' }
+    });
+    expect(result.error?.message).toContain('incomplete');
+    expect(ctx.read()).toEqual(before);
+  });
+
+  test('enforces approval amount bands rather than flattening them into one unlimited policy', async () => {
+    const ctx = fixture();
+    const configuration = {
+      currencies: ['SLL'], baseCurrencyCode: 'SLL',
+      chartAccounts: [
+        { id: 'cash-chart', code: '1000', name: 'Cash', account_type: 'asset', is_active: true },
+        { id: 'income-chart', code: '4000', name: 'Offering Income', account_type: 'income', is_active: true }
+      ],
+      financialAccounts: [{ id: 'cash-account', chart_account_id: 'cash-chart', branch_id: 'branch-a', name: 'Cash', account_type: 'cash', currency_code: 'SLL', is_active: true }],
+      funds: [],
+      financialYears: [{ id: 'fy', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      periods: [{ id: 'period', financial_year_id: 'fy', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      approvalPolicies: [{ id: 'policy', name: 'Limited Band', transaction_type: 'financial_document', branch_id: 'branch-a', version: 1, effective_from: '2026-01-01', is_active: true }],
+      approvalPolicyBands: [{ id: 'band', policy_id: 'policy', min_amount_base: 0, max_amount_base: 100 }],
+      approvalPolicySteps: [{ id: 'step', band_id: 'band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true, approver_profile_ids: ['approver-1'] }]
+    };
+    const saved = await ctx.rpc.rpc('save_finance_configuration', { p_branch_id: 'branch-a', p_configuration: configuration });
+    expect(saved.error).toBeNull();
+    const uncovered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_amount: 150 });
+    expect(uncovered.error?.message).toContain('No active approval policy');
+    expect(ctx.read().documents).toHaveLength(0);
+    const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_amount: 50 });
+    expect(covered.error).toBeNull();
+    expect(ctx.read().approvalSteps).toHaveLength(1);
+  });
+});
