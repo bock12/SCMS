@@ -15,6 +15,7 @@ on:
       - "supabase/migrations/20261113000100_secure_explicit_profile_auth_linking.sql"
       - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "scripts/build-supabase-baseline.mjs"
+      - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
   workflow_dispatch:
 
