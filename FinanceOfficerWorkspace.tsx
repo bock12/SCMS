@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { getFinanceLedgerEntries, mapFinanceLedgerEntriesToWorkspaceRecords } from './financeLedgerService';
 import { hasEffectivePermission } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
@@ -49,6 +50,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   };
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
   const [churchProfile, setChurchProfile] = useState(getChurchProfile());
 
@@ -195,67 +197,13 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
   const fetchRecords = async () => {
     setLoading(true);
-    const { data } = await supabase.from('financial_records').select('*').order('date', { ascending: false });
-    if (data && data.length > 0) {
-      setRecords(data as unknown as FinancialRecord[]);
+    setLedgerError(null);
+    const { data, error } = await getFinanceLedgerEntries();
+    if (error) {
+      setRecords([]);
+      setLedgerError(error.message || 'The finance ledger could not be loaded.');
     } else {
-      setRecords([
-        {
-          id: 'rec-1',
-          contributor_name: 'Grace Campbell',
-          type: 'income',
-          category: 'Tithe',
-          amount: 1500,
-          currency: 'SLE',
-          date: new Date(Date.now() - 3600000 * 5).toISOString(),
-          payment_method: 'mobile_money',
-          status: 'pending_verification',
-          frequency: 'monthly',
-          sender_phone: '077 444 555',
-          transaction_id: 'AFRI-88912',
-          notes: '10% Covenant Tithe for October'
-        },
-        {
-          id: 'rec-2',
-          contributor_name: 'Sierra Leone Electricity Co (EDSA)',
-          type: 'expense',
-          category: 'Utilities & Electricity',
-          amount: 2400,
-          currency: 'SLE',
-          date: new Date(Date.now() - 3600000 * 18).toISOString(),
-          payment_method: 'bank_transfer',
-          status: 'completed',
-          approved_by: 'Rev. Sarah Johnson',
-          transaction_id: 'EDSA-UTIL-9912',
-          notes: 'Sanctuary October Power Grid Bill'
-        },
-        {
-          id: 'rec-3',
-          contributor_name: 'Sahr Sesay',
-          type: 'income',
-          category: 'Building & Sanctuary Expansion',
-          amount: 5000,
-          currency: 'SLE',
-          date: new Date(Date.now() - 86400000).toISOString(),
-          payment_method: 'bank_transfer',
-          status: 'pending_verification',
-          transaction_id: 'SLCB-WIRE-9921',
-          notes: 'Sanctuary Renovation Seed'
-        },
-        {
-          id: 'rec-4',
-          contributor_name: 'Grace Cathedral Choir Dept',
-          type: 'expense',
-          category: 'Ministry & Worship Budgets',
-          amount: 1800,
-          currency: 'SLE',
-          date: new Date(Date.now() - 86400000 * 2).toISOString(),
-          payment_method: 'cash',
-          status: 'completed',
-          approved_by: 'Hannah Adams',
-          notes: 'Choir Robes Dry Cleaning & Easter Music Sheets'
-        }
-      ]);
+      setRecords(mapFinanceLedgerEntriesToWorkspaceRecords(data || []));
     }
     setLoading(false);
   };
@@ -272,144 +220,29 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   };
 
   // --- RECORD VERIFICATION ACTIONS ---
-  const handleApproveRecord = async (recordId: string) => {
-    await supabase.from('financial_records').update({ status: 'completed' }).eq('id', recordId);
-    setRecords(prev => prev.map(r => r.id === recordId ? { ...r, status: 'completed' } : r));
+  const handleApproveRecord = async (_recordId: string) => {
+    alert('Finance approvals will be enabled after this workspace is connected to the database approval-decision workflow.');
   };
 
-  const handleRejectRecord = async (recordId: string) => {
-    if (!confirm("Are you sure you want to flag/reject this transaction entry?")) return;
-    await supabase.from('financial_records').update({ status: 'rejected' }).eq('id', recordId);
-    setRecords(prev => prev.map(r => r.id === recordId ? { ...r, status: 'rejected' } : r));
+  const handleRejectRecord = async (_recordId: string) => {
+    alert('Finance rejections will be enabled after this workspace is connected to the database approval-decision workflow.');
   };
 
   // --- SAVE INCOME ENTRY ---
   const handleSaveIncome = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || Number(amount) <= 0) return;
-
-    let fundName = 'Tithe';
-    if (selectedFundId === 'custom_fund') {
-      fundName = customFundInput.trim() || 'Custom Fund';
-    } else {
-      const found = givingConfig.funds.find(f => f.id === selectedFundId);
-      if (found) fundName = found.name;
-    }
-
-    const newRecord: Partial<FinancialRecord> = {
-      contributor_name: contributor.trim() || 'Anonymous Congregant',
-      type: 'income',
-      category: fundName,
-      amount: Number(amount),
-      currency: givingConfig.currency_symbol || 'SLE',
-      date: new Date().toISOString(),
-      payment_method: method,
-      status: method === 'cash' || method === 'card' ? 'completed' : 'pending_verification',
-      is_recurring: incomeFrequency !== 'one_time',
-      frequency: incomeFrequency,
-      sender_phone: method === 'mobile_money' ? senderPhone.trim() : undefined,
-      transaction_id: txnId.trim() || undefined,
-      notes: notes.trim() || undefined
-    };
-
-    const { data, error } = await supabase.from('financial_records').insert([newRecord]).select().maybeSingle();
-    if (!error && data) {
-      setRecords(prev => [data as unknown as FinancialRecord, ...prev]);
-    } else {
-      const mockObj: FinancialRecord = {
-        id: `rec-${Date.now()}`,
-        contributor_name: newRecord.contributor_name!,
-        type: 'income',
-        category: newRecord.category!,
-        amount: newRecord.amount!,
-        currency: newRecord.currency,
-        date: newRecord.date!,
-        payment_method: newRecord.payment_method!,
-        status: newRecord.status,
-        frequency: newRecord.frequency,
-        sender_phone: newRecord.sender_phone,
-        transaction_id: newRecord.transaction_id,
-        notes: newRecord.notes
-      };
-      setRecords(prev => [mockObj, ...prev]);
-    }
-
-    setShowIncomeModal(false);
-    setContributor('');
-    setAmount('');
-    setSenderPhone('');
-    setTxnId('');
-    setNotes('');
+    alert('Income entry is temporarily unavailable while the secure financial-document and journal creation workflow is being integrated.');
   };
 
   // --- SAVE EXPENSE ENTRY ---
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expenseAmount || Number(expenseAmount) <= 0) return;
-
-    const newRecord: Partial<FinancialRecord> = {
-      contributor_name: expensePayee.trim() || 'Vendor / Church Department',
-      type: 'expense',
-      category: expenseCategory,
-      amount: Number(expenseAmount),
-      currency: givingConfig.currency_symbol || 'SLE',
-      date: new Date().toISOString(),
-      payment_method: expenseMethod,
-      status: 'completed',
-      approved_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer',
-      transaction_id: expenseRef.trim() || undefined,
-      notes: expenseNotes.trim() || undefined
-    };
-
-    const { data, error } = await supabase.from('financial_records').insert([newRecord]).select().maybeSingle();
-    if (!error && data) {
-      setRecords(prev => [data as unknown as FinancialRecord, ...prev]);
-    } else {
-      const mockObj: FinancialRecord = {
-        id: `rec-${Date.now()}`,
-        contributor_name: newRecord.contributor_name!,
-        type: 'expense',
-        category: newRecord.category!,
-        amount: newRecord.amount!,
-        currency: newRecord.currency,
-        date: newRecord.date!,
-        payment_method: newRecord.payment_method!,
-        status: 'completed',
-        approved_by: newRecord.approved_by,
-        transaction_id: newRecord.transaction_id,
-        notes: newRecord.notes
-      };
-      setRecords(prev => [mockObj, ...prev]);
-    }
-
-    setShowExpenseModal(false);
-    setExpensePayee('');
-    setExpenseAmount('');
-    setExpenseRef('');
-    setExpenseNotes('');
+    alert('Expense entry is temporarily unavailable while the secure financial-document and journal creation workflow is being integrated.');
   };
 
   // Persist a disbursement ledger entry exactly once. Deterministic IDs make retries safe.
-  const persistDisbursementRecord = async (record: FinancialRecord): Promise<FinancialRecord> => {
-    const { data: existing, error: lookupError } = await supabase
-      .from('financial_records')
-      .select('*')
-      .eq('id', record.id)
-      .maybeSingle();
-
-    if (lookupError) throw new Error('Could not check the finance ledger: ' + lookupError.message);
-    if (existing) return existing as unknown as FinancialRecord;
-
-    const { data, error } = await supabase
-      .from('financial_records')
-      .insert([record])
-      .select('*')
-      .maybeSingle();
-
-    if (error) throw new Error('Could not save the disbursement to the finance ledger: ' + error.message);
-    const inserted = Array.isArray(data) ? data[0] : data;
-    if (!inserted) throw new Error('The finance ledger did not confirm the saved disbursement.');
-    return inserted as unknown as FinancialRecord;
+  const persistDisbursementRecord = async (_record: FinancialRecord): Promise<FinancialRecord> => {
+    throw new Error('Disbursement posting is temporarily unavailable until the secure financial-document, approval and journal-posting workflow is integrated.');
   };
 
   const normalizeDisbursementPaymentMethod = (method?: string): FinancialRecord['payment_method'] => {
@@ -1255,19 +1088,28 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </p>
           </div>
 
+          {ledgerError && (
+            <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-800">
+              Finance ledger unavailable: {ledgerError}. No demo records have been substituted.
+            </div>
+          )}
           {/* Quick Action Buttons - Touch friendly 2-col on mobile, flex on desktop */}
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
             <button
+              disabled
+              title="Secure income entry is being integrated"
               onClick={() => setShowIncomeModal(true)}
-              className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              className="px-3.5 sm:px-4 py-2.5 bg-slate-300 text-slate-600 rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-not-allowed transition-all min-h-[44px]"
             >
               <Plus size={16} />
               <span>Record Income</span>
             </button>
 
             <button
+              disabled
+              title="Secure expense entry is being integrated"
               onClick={() => setShowExpenseModal(true)}
-              className="px-3.5 sm:px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              className="px-3.5 sm:px-4 py-2.5 bg-slate-300 text-slate-600 rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-not-allowed transition-all min-h-[44px]"
             >
               <Plus size={16} />
               <span>Record Expense</span>
