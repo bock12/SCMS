@@ -1079,7 +1079,14 @@ let localDb = loadLocalDatabase();
 // Canonical mock finance records are stored separately from legacy demo
 // FinancialRecord data. Identity and effective permissions are resolved from
 // the existing mock directory/role-assignment tables on every RPC call.
-const persistedMockFinanceStorage = createBrowserMockFinanceStorage(localStorage);
+const mockFinanceFallbackValues = new Map<string, string>();
+const mockFinanceKeyValueStorage = typeof localStorage !== 'undefined'
+  ? localStorage
+  : {
+      getItem: (key: string) => mockFinanceFallbackValues.get(key) ?? null,
+      setItem: (key: string, value: string) => { mockFinanceFallbackValues.set(key, value); }
+    };
+const persistedMockFinanceStorage = createBrowserMockFinanceStorage(mockFinanceKeyValueStorage);
 const mockFinanceRpc = createMockFinanceRpc({
   load() {
     const state = persistedMockFinanceStorage.load();
