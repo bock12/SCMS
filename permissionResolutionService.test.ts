@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   hasEffectivePermission,
+  hasAnyEffectivePermission,
   resolveEffectivePermissions,
   type PermissionResolutionInput
 } from './permissionResolutionService';
@@ -178,5 +179,12 @@ describe('database-backed permission resolution', () => {
   test('permission checks fail closed when no resolution is available', () => {
     expect(hasEffectivePermission(null, 'manage_roles')).toBe(false);
     expect(hasEffectivePermission({ permissions: ['view_members'], assignmentIds: [] }, 'manage_roles')).toBe(false);
+  });
+
+  test('grouped console checks use only the resolved effective permissions', () => {
+    const resolution = { permissions: ['view_leader_console'], assignmentIds: ['assignment-leader'] };
+    expect(hasAnyEffectivePermission(resolution, ['manage_roles', 'view_leader_console'])).toBe(true);
+    expect(hasAnyEffectivePermission(resolution, ['manage_finances', 'approve_finances'])).toBe(false);
+    expect(hasAnyEffectivePermission(null, ['view_leader_console'])).toBe(false);
   });
 });
