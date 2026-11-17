@@ -14,7 +14,8 @@ import {
   DEPARTMENT_OVERSIGHT_PERMISSION_KEYS,
   LEADER_CONSOLE_PERMISSION_KEYS,
   FINANCE_APPROVAL_PERMISSION_KEYS,
-  FINANCE_ACTION_PERMISSION_KEYS
+  FINANCE_ACTION_PERMISSION_KEYS,
+  type PermissionResolution
 } from './permissionResolutionService';
 import type {
   ChurchEvent,
@@ -172,7 +173,7 @@ function isInAppNotificationForUser(
   profile: Profile,
   userDeptNames: Set<string>,
   canOverseeDepartments: boolean,
-  isDeptLeader: boolean
+  canManageDepartmentNotifications: boolean
 ): boolean {
   const fullName = normalizeText(`${profile.first_name} ${profile.last_name}`);
   const recipientId = (notif.recipient_member_id || '').trim();
@@ -200,7 +201,7 @@ function isInAppNotificationForUser(
     return true;
   }
 
-  if (isDeptLeader && deptName && userDeptNames.has(deptName)) {
+  if (canManageDepartmentNotifications && deptName && userDeptNames.has(deptName)) {
     return true;
   }
 
@@ -214,7 +215,7 @@ export async function getUserSystemNotifications(profile: Profile | null): Promi
 
   // Role-derived notifications follow scoped, active, expiring database assignments.
   // A permission-load failure hides privileged notifications but preserves personal notices.
-  let permissionResolution = null;
+  let permissionResolution: PermissionResolution | null = null;
   try {
     permissionResolution = await loadPermissionResolution(profile.id, profile.branch_id);
   } catch {
