@@ -990,7 +990,11 @@ function loadLocalDatabase() {
         ...parsed.role_permissions,
         ...seededRolePermissionLinks.filter((link: any) => !existingRolePermissionKeys.has(`${link.role_id}:${link.permission_id}`))
       ];
-      if (!Array.isArray(parsed.profile_role_assignments) || parsed.profile_role_assignments.length === 0) {
+      // Bootstrap legacy role assignments only when the table is absent.
+      // An explicit empty array is authoritative: never reconstruct permissions
+      // from the compatibility-only profiles.primary_role field.
+      let migratedLegacyRoleAssignments = false;
+      if (!Array.isArray(parsed.profile_role_assignments)) {
         const roleIds = new Map(initialSystemRoles.map(role => [role.name, role.id]));
         parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => ({
           id: `mock-assignment-${profile.id}`,
@@ -1004,10 +1008,11 @@ function loadLocalDatabase() {
           expires_at: null,
           is_active: true
         }));
+        migratedLegacyRoleAssignments = true;
       }
 
       const migrated = migrateUnifiedDirectoryData(parsed);
-      if (migrated.changed) {
+      if (migrated.changed || migratedLegacyRoleAssignments) {
         saveLocalDatabase(migrated.db);
       }
       return migrated.db;

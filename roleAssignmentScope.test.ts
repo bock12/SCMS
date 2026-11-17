@@ -172,4 +172,13 @@ describe('mock role-assignment scope enforcement', () => {
     });
     expect(future.error?.code).toBe('42501');
   });
+  test('does not recreate cleared authoritative assignments from legacy profile role labels', async () => {
+    const cleared = await supabase.from('profile_role_assignments').delete();
+    expect(cleared.error).toBeNull();
+
+    const result = await supabase.from('profile_role_assignments').select('*');
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual([]);
+  });
+
 });
