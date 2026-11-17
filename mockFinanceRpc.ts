@@ -6,10 +6,13 @@ export interface MockFinanceState {
   permissions: Array<{ profile_id: string; permission: string; branch_id: string | null }>;
   currencies: string[];
   baseCurrencyCode: string | null;
-  financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string }>;
-  chartAccounts: Array<{ id: string; is_active: boolean; account_type: string; is_control_account?: boolean }>;
-  funds: Array<{ id: string; is_active: boolean }>;
-  periods: Array<{ id: string; start_date: string; end_date: string; status: string; year_status: string }>;
+  financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
+  chartAccounts: Array<{ id: string; is_active: boolean; account_type: string; is_control_account?: boolean; [key: string]: any }>;
+  funds: Array<{ id: string; is_active: boolean; [key: string]: any }>;
+  periods: Array<{ id: string; start_date: string; end_date: string; status: string; year_status: string; [key: string]: any }>;
+  financialYears: Array<Record<string, any>>;
+  approvalPolicyBands: Array<Record<string, any>>;
+  approvalPolicySteps: Array<Record<string, any>>;
   approvalPolicies: Array<{
     id: string; is_active: boolean; transaction_type: 'financial_document';
     branch_id: string | null; min_amount: number; max_amount: number | null;
@@ -50,7 +53,7 @@ export function createBrowserMockFinanceStorage(
       if (!raw) return createEmptyMockFinanceState();
       const parsed = JSON.parse(raw) as MockFinanceState;
       const requiredArrays = ['profiles', 'permissions', 'currencies', 'financialAccounts', 'chartAccounts',
-        'funds', 'periods', 'approvalPolicies', 'documents', 'journals', 'journalLines',
+        'funds', 'periods', 'financialYears', 'approvalPolicyBands', 'approvalPolicySteps', 'approvalPolicies', 'documents', 'journals', 'journalLines',
         'approvalRequests', 'approvalSteps'];
       if (!parsed || typeof parsed !== 'object' || requiredArrays.some(name => !Array.isArray((parsed as any)[name])) ||
           typeof parsed.nextId !== 'number' || !Number.isInteger(parsed.nextId) || parsed.nextId < 1) {
@@ -70,8 +73,8 @@ const round4 = (value: number) => Math.round((value + Number.EPSILON) * 10000) /
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
     profiles: [], permissions: [], currencies: [], baseCurrencyCode: null,
-    financialAccounts: [], chartAccounts: [], funds: [], periods: [],
-    approvalPolicies: [], documents: [], journals: [], journalLines: [],
+    financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
+    approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], documents: [], journals: [], journalLines: [],
     approvalRequests: [], approvalSteps: [], nextId: 1
   };
 }
@@ -218,9 +221,121 @@ export function createMockFinanceRpc(
     return success({ document_id: document.id, approval_request_id: request.id, journal_entry_id: journalId, approval_status: request.status });
   }
 
+  function getFinanceConfiguration() {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    if (!state.permissions.some(p => p.profile_id === actor.id &&
+      ['view_finances', 'manage_finances', 'manage_chart_of_accounts', 'manage_financial_periods', 'approve_finances'].includes(p.permission))) {
+      return fail('Insufficient permission to view finance configuration', '42501');
+    }
+    return success({
+      currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
+      chartAccounts: clone(state.chartAccounts), financialAccounts: clone(state.financialAccounts),
+      funds: clone(state.funds), financialYears: clone(state.financialYears), periods: clone(state.periods),
+      approvalPolicies: clone(state.approvalPolicies), approvalPolicyBands: clone(state.approvalPolicyBands),
+      approvalPolicySteps: clone(state.approvalPolicySteps)
+    });
+  }
+
+  function saveFinanceConfiguration(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = args.p_branch_id ?? null;
+    if (!hasPermission(state, actor.id, 'manage_finances', branchId)) {
+      return fail('Insufficient permission to manage finance configuration in this scope', '42501');
+    }
+    const config = args.p_configuration;
+    const arrays = ['currencies', 'chartAccounts', 'financialAccounts', 'funds', 'financialYears',
+      'periods', 'approvalPolicies', 'approvalPolicyBands', 'approvalPolicySteps'];
+    if (!config || typeof config !== 'object' || arrays.some(key => !Array.isArray(config[key]))) {
+      return fail('Finance configuration payload is incomplete');
+    }
+    const currencies = config.currencies.map((code: unknown) => String(code).trim().toUpperCase());
+    if (currencies.some((code: string) => !/^[A-Z]{3}$/.test(code)) || new Set(currencies).size !== currencies.length) {
+      return fail('Currency codes must be unique three-letter codes');
+    }
+    const baseCurrency = String(config.baseCurrencyCode || '').trim().toUpperCase();
+    if (!currencies.includes(baseCurrency)) return fail('Base currency must be included in supported currencies');
+    const chartAccounts = config.chartAccounts;
+    if (chartAccounts.some((a: any) => !a.id || !a.code?.trim() || !a.name?.trim() ||
+      !['asset', 'liability', 'equity', 'income', 'expense'].includes(a.account_type))) {
+      return fail('Every chart account requires an ID, code, name and valid account type');
+    }
+    if (new Set(chartAccounts.map((a: any) => String(a.code).toLowerCase())).size !== chartAccounts.length) {
+      return fail('Chart account codes must be unique');
+    }
+    const chartIds = new Set(chartAccounts.map((a: any) => a.id));
+    if (config.financialAccounts.some((a: any) => !a.id || !a.name?.trim() || !currencies.includes(a.currency_code) ||
+      !chartIds.has(a.chart_account_id) || !['cash', 'bank', 'mobile_money', 'clearing'].includes(a.account_type))) {
+      return fail('Financial accounts require a name, supported currency, valid chart account and account type');
+    }
+    if (config.funds.some((fund: any) => !fund.id || !fund.name?.trim() || !fund.code?.trim())) {
+      return fail('Every fund requires an ID, code and name');
+    }
+    if (config.financialYears.some((year: any) => !year.id || !Number.isInteger(Number(year.year_number)) ||
+      year.start_date !== String(year.year_number) + '-01-01' || year.end_date !== String(year.year_number) + '-12-31' ||
+      !['open', 'closed'].includes(year.status))) {
+      return fail('Financial years must use calendar-year dates and a valid status');
+    }
+    const yearIds = new Set(config.financialYears.map((year: any) => year.id));
+    if (config.periods.some((period: any) => !period.id || !period.name?.trim() ||
+      !yearIds.has(period.financial_year_id) || period.start_date > period.end_date ||
+      !['open', 'closed'].includes(period.status))) {
+      return fail('Every financial period requires a valid financial year, name, date range and status');
+    }
+    if (config.approvalPolicies.some((policy: any) => !policy.id || !policy.name?.trim() ||
+      policy.transaction_type !== 'financial_document' || !Number.isInteger(Number(policy.version)) ||
+      !policy.effective_from || (policy.effective_to && policy.effective_to < policy.effective_from))) {
+      return fail('Approval policies require a name, version, transaction type and valid effective dates');
+    }
+    const policyIds = new Set(config.approvalPolicies.map((policy: any) => policy.id));
+    if (config.approvalPolicyBands.some((band: any) => !band.id || !policyIds.has(band.policy_id) ||
+      !Number.isFinite(Number(band.min_amount_base)) || Number(band.min_amount_base) < 0 ||
+      (band.max_amount_base != null && Number(band.max_amount_base) <= Number(band.min_amount_base)))) {
+      return fail('Approval amount bands must belong to a policy and have a valid amount range');
+    }
+    const bandIds = new Set(config.approvalPolicyBands.map((band: any) => band.id));
+    if (config.approvalPolicySteps.some((step: any) => !step.id || !bandIds.has(step.band_id) ||
+      !Number.isInteger(Number(step.step_number)) || Number(step.step_number) < 1 ||
+      !step.required_permission_key || !Number.isInteger(Number(step.required_approvals)) ||
+      Number(step.required_approvals) < 1 || !Array.isArray(step.approver_profile_ids))) {
+      return fail('Approval steps require a valid band, order, permission, approval count and approvers');
+    }
+    state.currencies = currencies;
+    state.baseCurrencyCode = baseCurrency;
+    state.chartAccounts = clone(chartAccounts);
+    state.financialAccounts = clone(config.financialAccounts);
+    state.funds = clone(config.funds);
+    state.financialYears = clone(config.financialYears);
+    state.periods = clone(config.periods).map((period: any) => ({
+      ...period,
+      year_status: config.financialYears.find((year: any) => year.id === period.financial_year_id)?.status ?? 'closed'
+    }));
+    state.approvalPolicies = clone(config.approvalPolicies).map((policy: any) => ({
+      ...policy,
+      min_amount: Math.min(...config.approvalPolicyBands.filter((band: any) => band.policy_id === policy.id).map((band: any) => Number(band.min_amount_base)), 0),
+      max_amount: null,
+      approver_profile_ids: config.approvalPolicySteps
+        .filter((step: any) => config.approvalPolicyBands.some((band: any) => band.id === step.band_id && band.policy_id === policy.id))
+        .flatMap((step: any) => step.approver_profile_ids)
+    }));
+    state.approvalPolicyBands = clone(config.approvalPolicyBands);
+    state.approvalPolicySteps = clone(config.approvalPolicySteps);
+    storage.save(state);
+    return success({ saved: true });
+  }
+
   return {
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
+        if (name === 'get_finance_configuration') return getFinanceConfiguration();
+        if (name === 'save_finance_configuration') return saveFinanceConfiguration(args);
         if (name === 'create_financial_document_transaction') return createTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
         if (name === 'post_journal_entry') {
