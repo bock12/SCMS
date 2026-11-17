@@ -15,6 +15,21 @@ DECLARE
   v_period_id uuid := '96000000-0000-4000-8000-000000000009';
   v_policy_id uuid := '96000000-0000-4000-8000-000000000010';
   v_band_id uuid := '96000000-0000-4000-8000-000000000011';
+  v_approver1_auth uuid := '96000000-0000-4000-8000-000000000012';
+  v_approver1_profile uuid := '96000000-0000-4000-8000-000000000013';
+  v_approver2_auth uuid := '96000000-0000-4000-8000-000000000014';
+  v_approver2_profile uuid := '96000000-0000-4000-8000-000000000015';
+  v_policy2_id uuid := '96000000-0000-4000-8000-000000000016';
+  v_band2_id uuid := '96000000-0000-4000-8000-000000000017';
+  v_policy3_id uuid := '96000000-0000-4000-8000-000000000018';
+  v_band3_id uuid := '96000000-0000-4000-8000-000000000019';
+  v_policy4_id uuid := '96000000-0000-4000-8000-000000000020';
+  v_band4_id uuid := '96000000-0000-4000-8000-000000000021';
+  v_result jsonb;
+  v_approval_result jsonb;
+  v_request_id uuid;
+  v_step1_id uuid;
+  v_step2_id uuid;
   v_receipt jsonb;
   v_payment jsonb;
   v_document_id uuid;
@@ -196,6 +211,200 @@ BEGIN
     RAISE EXCEPTION 'Payment journal debit/credit account orientation is incorrect';
   END IF;
 
-  RAISE NOTICE 'FIN-INT-001 receipt/payment immediate-approval lifecycle checks passed';
+
+  -- A branch-scoped finance permission must not authorize transactions in
+  -- another branch. The permission check runs before account compatibility.
+  BEGIN
+    PERFORM public.create_financial_document_transaction(
+      'receipt', '2026-11-17', '10000000-0000-4000-8000-000000000002',
+      NULL, 'Out-of-branch Donor', 10, 'SLE', 'cash',
+      v_financial_account_id, v_income_chart_id, NULL,
+      'FIN-INT-BRANCH-DENIED', 'Branch authorization test', 1
+    );
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_BRANCH_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_BRANCH_DENIAL' THEN RAISE; END IF;
+    IF position('permission' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  IF EXISTS (
+    SELECT 1 FROM public.financial_documents
+    WHERE external_reference = 'FIN-INT-BRANCH-DENIED'
+  ) THEN
+    RAISE EXCEPTION 'Branch-denied transaction left a financial document';
+  END IF;
+
+  -- A live policy without a matching amount band is a configuration error,
+  -- not an implicit immediate-approval policy.
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_policy2_id, 'FIN-INT Missing Band Policy', 'financial_document',
+    v_branch_id, 2, '2020-01-01', true, v_profile_id
+  );
+
+  BEGIN
+    PERFORM public.create_financial_document_transaction(
+      'receipt', '2026-11-17', v_branch_id, NULL, 'Unbanded Donor', 50,
+      'SLE', 'cash', v_financial_account_id, v_income_chart_id,
+      NULL, 'FIN-INT-NO-BAND', 'Missing amount band rollback test', 1
+    );
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_BAND_FAILURE';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_BAND_FAILURE' THEN RAISE; END IF;
+    IF position('threshold band' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  IF EXISTS (
+    SELECT 1 FROM public.financial_documents
+    WHERE external_reference = 'FIN-INT-NO-BAND'
+  ) THEN
+    RAISE EXCEPTION 'Missing amount band left a partial financial document';
+  END IF;
+
+  UPDATE public.approval_policies SET is_active = false WHERE id = v_policy2_id;
+
+  -- Two distinct approvers must complete the configured steps in order.
+  INSERT INTO auth.users (id, email) VALUES
+    (v_approver1_auth, 'fin-int-approver1@example.invalid'),
+    (v_approver2_auth, 'fin-int-approver2@example.invalid');
+
+  INSERT INTO public.profiles (id, auth_user_id, branch_id, first_name, last_name, email)
+  VALUES
+    (v_approver1_profile, v_approver1_auth, v_branch_id, 'Finance', 'Approver One', 'fin-int-approver1@example.invalid'),
+    (v_approver2_profile, v_approver2_auth, v_branch_id, 'Finance', 'Approver Two', 'fin-int-approver2@example.invalid');
+
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, assigned_at, is_active
+  )
+  SELECT actor.profile_id, r.id, 'branch', v_branch_id, now() - interval '1 day', true
+  FROM (VALUES (v_approver1_profile), (v_approver2_profile)) AS actor(profile_id)
+  CROSS JOIN public.roles r
+  WHERE r.name = 'finance_officer' AND r.is_active;
+
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_policy3_id, 'FIN-INT Two-Step Policy', 'financial_document',
+    v_branch_id, 3, '2020-01-01', true, v_profile_id
+  );
+
+  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
+  VALUES (v_band3_id, v_policy3_id, 0, NULL);
+
+  INSERT INTO public.approval_policy_steps (
+    band_id, step_number, required_permission_key, required_approvals,
+    prohibit_submitter_approval
+  ) VALUES
+    (v_band3_id, 1, 'approve_finances', 1, true),
+    (v_band3_id, 2, 'approve_finances', 1, true);
+
+  v_result := public.create_financial_document_transaction(
+    'receipt', '2026-11-17', v_branch_id, NULL, 'Two-Step Donor', 200,
+    'SLE', 'cash', v_financial_account_id, v_income_chart_id,
+    NULL, 'FIN-INT-TWO-STEP', 'Two-step approval lifecycle test', 1
+  );
+
+  v_document_id := (v_result->>'document_id')::uuid;
+  v_journal_id := (v_result->>'journal_entry_id')::uuid;
+  v_request_id := (v_result->>'approval_request_id')::uuid;
+
+  IF v_result->>'status' <> 'pending_approval'
+     OR v_request_id IS NULL OR v_journal_id IS NULL THEN
+    RAISE EXCEPTION 'Two-step receipt did not enter pending approval with a pending journal';
+  END IF;
+
+  SELECT id INTO v_step1_id FROM public.approval_request_steps
+  WHERE approval_request_id = v_request_id AND step_number = 1;
+  SELECT id INTO v_step2_id FROM public.approval_request_steps
+  WHERE approval_request_id = v_request_id AND step_number = 2;
+
+  IF v_step1_id IS NULL OR v_step2_id IS NULL THEN
+    RAISE EXCEPTION 'Two-step approval request did not create both approval steps';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_approver1_auth::text, true);
+  v_approval_result := public.decide_financial_document_approval(v_step1_id, 'approved', 'First approval');
+  IF v_approval_result->>'approval_status' <> 'pending'
+     OR EXISTS (
+       SELECT 1 FROM public.financial_documents
+       WHERE id = v_document_id AND (status <> 'pending_approval' OR journal_entry_id IS NOT NULL)
+     ) THEN
+    RAISE EXCEPTION 'First approval incorrectly completed the two-step workflow';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_approver2_auth::text, true);
+  v_approval_result := public.decide_financial_document_approval(v_step2_id, 'approved', 'Final approval');
+
+  IF v_approval_result->>'approval_status' <> 'approved'
+     OR NOT EXISTS (
+       SELECT 1 FROM public.financial_documents d
+       JOIN public.journal_entries j ON j.id = d.journal_entry_id
+       WHERE d.id = v_document_id AND d.status = 'approved'
+         AND j.id = v_journal_id AND j.status = 'draft'
+         AND j.source_type = 'financial_document' AND j.source_id = d.id
+     ) THEN
+    RAISE EXCEPTION 'Final approval did not approve and link the pending journal';
+  END IF;
+
+  -- A rejection must reject the document and leave its journal unlinked and
+  -- guarded as pending; it must never become postable.
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_policy4_id, 'FIN-INT Rejection Policy', 'financial_document',
+    v_branch_id, 4, '2020-01-01', true, v_profile_id
+  );
+
+  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
+  VALUES (v_band4_id, v_policy4_id, 0, NULL);
+
+  INSERT INTO public.approval_policy_steps (
+    band_id, step_number, required_permission_key, required_approvals,
+    prohibit_submitter_approval
+  ) VALUES (v_band4_id, 1, 'approve_finances', 1, true);
+
+  PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
+  v_result := public.create_financial_document_transaction(
+    'payment', '2026-11-17', v_branch_id, NULL, 'Rejected Supplier', 60,
+    'SLE', 'cash', v_financial_account_id, v_expense_chart_id,
+    NULL, 'FIN-INT-REJECTED', 'Rejection lifecycle test', 1
+  );
+
+  v_document_id := (v_result->>'document_id')::uuid;
+  v_journal_id := (v_result->>'journal_entry_id')::uuid;
+  v_request_id := (v_result->>'approval_request_id')::uuid;
+  SELECT id INTO v_step1_id FROM public.approval_request_steps
+  WHERE approval_request_id = v_request_id AND step_number = 1;
+
+  PERFORM set_config('request.jwt.claim.sub', v_approver1_auth::text, true);
+  v_approval_result := public.decide_financial_document_approval(v_step1_id, 'rejected', 'Rejected in test');
+
+  IF v_approval_result->>'approval_status' <> 'rejected'
+     OR NOT EXISTS (
+       SELECT 1 FROM public.financial_documents
+       WHERE id = v_document_id AND status = 'rejected' AND journal_entry_id IS NULL
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.journal_entries
+       WHERE id = v_journal_id AND status = 'draft'
+         AND source_type = 'financial_document_pending' AND source_id = v_document_id
+     ) THEN
+    RAISE EXCEPTION 'Rejected document was not retained with an unlinked pending journal';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
+  BEGIN
+    UPDATE public.journal_entries SET status = 'posted' WHERE id = v_journal_id;
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_PENDING_JOURNAL_POSTING_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_PENDING_JOURNAL_POSTING_DENIAL' THEN RAISE; END IF;
+    IF position('before approval' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  RAISE NOTICE 'FIN-INT-001 receipt/payment and approval lifecycle checks passed';
 END
 $finance_transaction_lifecycle$;
