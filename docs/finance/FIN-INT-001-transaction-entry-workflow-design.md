@@ -75,3 +75,9 @@ For both lines, set branch to the document branch. Set transaction amount on one
 The Finance Officer Workspace should call the new RPC and display the returned document, journal and approval identifiers/status. It should refresh the canonical ledger after successful creation. It must not write finance tables directly or infer approval from a successful create response.
 
 The mock client needs an explicit finance-RPC adapter and deterministic test fixtures before these actions are enabled in the mock UI. Until both the database migration and mock adapter are implemented and tested, transaction-entry controls remain disabled.
+
+## Pending-journal posting guard
+
+The generated inactive fresh-install baseline now includes a defensive trigger on `journal_entries`: a draft whose `source_type` is `financial_document_pending` cannot transition to `posted`. The trigger function is not executable by application roles. This is a baseline-only safety patch; it does not alter the immutable recovered migration archive and is not a live Supabase migration.
+
+Before any production deployment, the same guard must be represented as a reviewed forward migration and tested against the target schema. The eventual transaction-creation RPC will set the pending marker only after creating the draft journal. A separate approval-completion operation must verify the marker and source document before calling the existing attachment routine.
