@@ -303,16 +303,30 @@ export function createMockFinanceRpc(
     if (config.funds.some((fund: any) => !fund.id || !fund.name?.trim() || !fund.code?.trim())) {
       return fail('Every fund requires an ID, code and name');
     }
+    if (config.funds.filter((fund: any) => fund.is_default).length > 1) {
+      return fail('Only one fund can be marked as the default fund');
+    }
     if (config.financialYears.some((year: any) => !year.id || !Number.isInteger(Number(year.year_number)) ||
       year.start_date !== String(year.year_number) + '-01-01' || year.end_date !== String(year.year_number) + '-12-31' ||
       !['open', 'closed'].includes(year.status))) {
       return fail('Financial years must use calendar-year dates and a valid status');
     }
     const yearIds = new Set(config.financialYears.map((year: any) => year.id));
-    if (config.periods.some((period: any) => !period.id || !period.name?.trim() ||
-      !yearIds.has(period.financial_year_id) || period.start_date > period.end_date ||
-      !['open', 'closed'].includes(period.status))) {
-      return fail('Every financial period requires a valid financial year, name, date range and status');
+    if (config.periods.some((period: any) => {
+      const year = config.financialYears.find((item: any) => item.id === period.financial_year_id);
+      return !period.id || !period.name?.trim() || !year ||
+        period.start_date > period.end_date || period.start_date < year.start_date ||
+        period.end_date > year.end_date || !['open', 'closed'].includes(period.status);
+    })) {
+      return fail('Every financial period must fit within its financial year and have a valid name, date range and status');
+    }
+    for (let i = 0; i < config.periods.length; i++) {
+      for (let j = i + 1; j < config.periods.length; j++) {
+        const a = config.periods[i], b = config.periods[j];
+        if (a.financial_year_id === b.financial_year_id && a.start_date <= b.end_date && b.start_date <= a.end_date) {
+          return fail('Financial periods in the same year cannot overlap');
+        }
+      }
     }
     if (config.approvalPolicies.some((policy: any) => !policy.id || !policy.name?.trim() ||
       policy.transaction_type !== 'financial_document' || !Number.isInteger(Number(policy.version)) ||
@@ -325,12 +339,34 @@ export function createMockFinanceRpc(
       (band.max_amount_base != null && Number(band.max_amount_base) <= Number(band.min_amount_base)))) {
       return fail('Approval amount bands must belong to a policy and have a valid amount range');
     }
+    for (let i = 0; i < config.approvalPolicyBands.length; i++) {
+      for (let j = i + 1; j < config.approvalPolicyBands.length; j++) {
+        const a = config.approvalPolicyBands[i], b = config.approvalPolicyBands[j];
+        const aMax = a.max_amount_base == null ? Number.POSITIVE_INFINITY : Number(a.max_amount_base);
+        const bMax = b.max_amount_base == null ? Number.POSITIVE_INFINITY : Number(b.max_amount_base);
+        if (a.policy_id === b.policy_id && Number(a.min_amount_base) < bMax && Number(b.min_amount_base) < aMax) {
+          return fail('Approval amount bands for the same policy cannot overlap');
+        }
+      }
+    }
     const bandIds = new Set(config.approvalPolicyBands.map((band: any) => band.id));
     if (config.approvalPolicySteps.some((step: any) => !step.id || !bandIds.has(step.band_id) ||
       !Number.isInteger(Number(step.step_number)) || Number(step.step_number) < 1 ||
       !step.required_permission_key || !Number.isInteger(Number(step.required_approvals)) ||
-      Number(step.required_approvals) < 1 || !Array.isArray(step.approver_profile_ids))) {
-      return fail('Approval steps require a valid band, order, permission, approval count and approvers');
+      Number(step.required_approvals) < 1 || !Array.isArray(step.approver_profile_ids) ||
+      Number(step.required_approvals) > step.approver_profile_ids.length)) {
+      return fail('Approval steps require a valid band, order, permission, approval count and sufficient approvers');
+    }
+    for (const step of config.approvalPolicySteps) {
+      const band = config.approvalPolicyBands.find((item: any) => item.id === step.band_id);
+      const policy = config.approvalPolicies.find((item: any) => item.id === band?.policy_id);
+      const scope = policy?.branch_id ?? branchId;
+      if (new Set(step.approver_profile_ids).size !== step.approver_profile_ids.length ||
+          step.approver_profile_ids.some((profileId: string) =>
+            !state.profiles.some(profile => profile.id === profileId && profile.status !== 'suspended' && profile.status !== 'archived') ||
+            !hasPermission(state, profileId, step.required_permission_key, scope))) {
+        return fail('Every approval step approver must be active and hold its required permission in the policy scope');
+      }
     }
     state.currencies = currencies;
     state.baseCurrencyCode = baseCurrency;
