@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { getFinanceLedgerEntries, mapFinanceLedgerEntriesToWorkspaceRecords } from './financeLedgerService';
@@ -16,7 +16,7 @@ import {
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
   Trash2, Edit, AlertCircle, FileText, CheckCircle2, ArrowRightLeft,
-  Download, ArrowUpRight, ArrowDownRight, PieChart, Calendar, ShoppingCart, Send, FileCode, CheckSquare, Shield, Upload, Bell, CheckCircle
+  ArrowUpRight, ArrowDownRight, PieChart, Calendar, ShoppingCart, Send, FileCode, CheckSquare, Shield, Upload, Bell, CheckCircle
 } from 'lucide-react';
 import { PieChart as RechartsPieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -834,60 +834,11 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
   const periodRecords = records.filter(r => isWithinPeriod(r.date));
 
-  const totalIncome = periodRecords
-    .filter(r => r.type !== 'expense' && (r.status === 'completed' || !r.status))
-    .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-
-  const totalExpenses = periodRecords
-    .filter(r => r.type === 'expense')
-    .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-
-  const netBalance = totalIncome - totalExpenses;
-
   const pendingCount = periodRecords.filter(r => r.status === 'pending_verification').length;
   const pendingAmount = periodRecords.filter(r => r.status === 'pending_verification').reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
+
   const pendingReqsCount = requisitions.filter(r => r.status === 'pending_approval').length;
-
-  // Ministry Spending Breakdown by Department / Category for Pie Chart
-  const departmentSpendingData = useMemo(() => {
-    const spendingMap: Record<string, number> = {};
-
-    // 1. From financial records (expenses)
-    periodRecords.filter(r => r.type === 'expense').forEach(r => {
-      const cat = r.category || 'General Administration';
-      spendingMap[cat] = (spendingMap[cat] || 0) + Number(r.amount || 0);
-    });
-
-    // 2. From department requisitions (disbursed or approved)
-    requisitions.filter(req => req.status === 'disbursed' || req.status === 'approved').forEach(req => {
-      const dept = req.department_name || 'Ministry Requisitions';
-      spendingMap[dept] = (spendingMap[dept] || 0) + Number(req.requested_amount || 0);
-    });
-
-    // 3. From event budget approvals (disbursed or approved)
-    eventBudgets.filter(b => b.status === 'disbursed' || b.status === 'approved').forEach(b => {
-      const dept = b.event_title ? `${b.event_title}` : 'Event Operations';
-      spendingMap[dept] = (spendingMap[dept] || 0) + Number(b.total_budget || 0);
-    });
-
-    const total = Object.values(spendingMap).reduce((sum, v) => sum + v, 0);
-
-    const palette = [
-      '#4f46e5', '#0284c7', '#0d9488', '#16a34a', '#d97706',
-      '#dc2626', '#9333ea', '#db2777', '#2563eb', '#64748b'
-    ];
-
-    return Object.entries(spendingMap)
-      .map(([name, value], idx) => ({
-        name,
-        value,
-        percentage: total > 0 ? ((value / total) * 100).toFixed(1) : '0',
-        color: palette[idx % palette.length]
-      }))
-      .filter(item => item.value > 0)
-      .sort((a, b) => b.value - a.value);
-  }, [periodRecords, requisitions, eventBudgets]);
 
   if (financePermissionsLoading) {
     return <div className="p-10 text-center text-slate-500">Loading finance permissions…</div>;
