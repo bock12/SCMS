@@ -135,3 +135,20 @@ Validation for the database-backed listing increment on commit [585342bb](https:
 - [PostgreSQL 17 fresh-install/security workflow #44274447182](https://github.com/bock12/SCMS/actions/runs/44274447182): passed — fresh baseline replay, finance migrations, grant/search_path checks, transaction lifecycle and listing authorization tests.
 
 No browser/runtime verification or live Supabase operation was performed.
+
+
+## Journal posting and posted-ledger projection — 2026-11-18
+
+Implemented on `main`:
+
+- Added `20261118000200_finance_journal_posting_and_ledger_api.sql`.
+- `public.post_finance_journal_entry(uuid)` is a narrow authenticated SECURITY DEFINER wrapper with an empty search path. It checks the linked profile and `post_journals` scope, rejects pending/unlinked financial-document journals, verifies an approved document is linked to the exact journal, and delegates balance/account/period/year validation to `private.post_journal_entry(uuid)`.
+- The public posting wrapper returns an already-posted result on safe retries without changing the immutable posted journal.
+- `public.get_finance_journals(uuid)` returns branch-scoped journal entries and line details. It exposes posting actions only for eligible drafts and authorized actors.
+- Account balances are grouped by account and base currency from `journal_entries.status = 'posted'` joined to `journal_lines`. Pending, rejected and approved-but-unposted journals are excluded.
+- Added `financeJournalService.ts` and `FinanceJournalWorkspace.tsx`. The workspace distinguishes awaiting approval, rejected, approved-but-unposted and posted journals; it displays posted account balances and exposes a post action only when the API says the current actor can post.
+- Replaced the old FinancialRecord-derived summary cards in the Finance Officer ledger view with the posted-journal account-balance projection.
+- Extended `mockFinanceRpc.ts` with `get_finance_journals` and `post_finance_journal_entry`; mock posting checks authorization, approval linkage, balanced transaction/base totals, active accounts, branch consistency, exchange rate and open period/year.
+- Extended mock lifecycle tests and the PostgreSQL lifecycle fixture for approval-gated posting, safe retries, pending-journal rejection and posted-only balances. CI now applies the migration and checks grants, SECURITY DEFINER/empty-search-path hardening and absence of direct journal-table DML grants.
+
+**Boundary:** This remains an incremental finance integration. The legacy department/event spending chart and PDF/CSV exports still require migration to canonical posted journal projections. Finance configuration remains mock-only. No live Supabase migration, deployment or production data write was performed.
