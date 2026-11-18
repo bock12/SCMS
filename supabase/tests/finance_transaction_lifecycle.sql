@@ -39,6 +39,8 @@ DECLARE
   v_credits numeric(20,4);
   v_base_debits numeric(20,4);
   v_base_credits numeric(20,4);
+  v_post_result jsonb;
+  v_journal_listing jsonb;
 BEGIN
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
@@ -173,6 +175,42 @@ BEGIN
       AND account_id = v_income_chart_id AND debit_amount = 0 AND credit_amount = 125
   ) THEN
     RAISE EXCEPTION 'Receipt journal debit/credit account orientation is incorrect';
+  END IF;
+
+  -- Approved is not posted: explicitly post only through the narrow RPC.
+  v_post_result := public.post_finance_journal_entry(v_journal_id);
+  IF v_post_result->>'status' <> 'posted'
+     OR coalesce((v_post_result->>'already_posted')::boolean, true) THEN
+    RAISE EXCEPTION 'Controlled posting RPC did not post the approved receipt journal';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.journal_entries
+    WHERE id = v_journal_id AND status = 'posted' AND posted_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'Posted receipt journal status/timestamp was not persisted';
+  END IF;
+
+  -- A retry is safe and does not mutate an already-posted immutable entry.
+  v_post_result := public.post_finance_journal_entry(v_journal_id);
+  IF v_post_result->>'status' <> 'posted'
+     OR (v_post_result->>'already_posted')::boolean IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Posting retry did not return the already-posted result';
+  END IF;
+
+  v_journal_listing := public.get_finance_journals(v_branch_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'journals') j
+    WHERE j->>'id' = v_journal_id::text
+      AND j->>'status' = 'posted'
+      AND j->>'can_post' = 'false'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'account_balances') b
+    WHERE b->>'account_id' = v_cash_chart_id::text
+      AND (b->>'debit_total')::numeric = 125
+      AND (b->>'credit_total')::numeric = 0
+  ) THEN
+    RAISE EXCEPTION 'Journal listing or posted-only account balance projection is incorrect';
   END IF;
 
   v_payment := public.create_financial_document_transaction(
@@ -397,6 +435,14 @@ BEGIN
   END IF;
 
   PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
+  BEGIN
+    PERFORM public.post_finance_journal_entry(v_journal_id);
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_PENDING_RPC_POSTING_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_PENDING_RPC_POSTING_DENIAL' THEN RAISE; END IF;
+    IF position('before approval' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
   BEGIN
     UPDATE public.journal_entries SET status = 'posted' WHERE id = v_journal_id;
     RAISE EXCEPTION 'FIN_INT_EXPECTED_PENDING_JOURNAL_POSTING_DENIAL';
