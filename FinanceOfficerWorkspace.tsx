@@ -1108,7 +1108,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             <button
               title="Open canonical payment entry"
               onClick={() => setWorkspaceTab('setup')}
-              className="px-3.5 sm:px-4 py-2.5 bg-slate-300 text-slate-600 rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-not-allowed transition-all min-h-[44px]"
+              className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
             >
               <Plus size={16} />
               <span>Record Expense</span>
