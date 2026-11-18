@@ -69,6 +69,31 @@ describe('deterministic mock financial-document RPC', () => {
     expect(state.documents[0].payee_or_payer_name).toBe('Sunday Service');
   });
 
+  test('lists canonical documents with approval progress and only the signed-in approver action', async () => {
+    const ctx = fixture();
+    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    expect(created.error).toBeNull();
+    ctx.setUser('user-approver-1');
+    const listed = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    expect(listed.error).toBeNull();
+    expect(listed.data.documents).toHaveLength(1);
+    expect(listed.data.documents[0].approval_request_id).toBe(created.data.approval_request_id);
+    expect(listed.data.documents[0].actor_approval_step_id).toBe(ctx.read().approvalSteps[0].id);
+    expect(listed.data.documents[0].approval_steps_total).toBe(2);
+    expect(listed.data.documents[0].approval_steps_completed).toBe(0);
+  });
+
+  test('does not expose finance documents to an unrelated branch or unauthorized profile', async () => {
+    const ctx = fixture();
+    await ctx.rpc.rpc('create_financial_document_transaction', args);
+    ctx.setUser('user-creator');
+    const crossBranch = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-b' });
+    expect(crossBranch.data.documents).toHaveLength(0);
+    ctx.setUser(null);
+    const unauthenticated = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    expect(unauthenticated.error?.code).toBe('42501');
+  });
+
   test('fails closed for missing approval policy and leaves no partial records', async () => {
     const ctx = fixture();
     const state = ctx.read();
