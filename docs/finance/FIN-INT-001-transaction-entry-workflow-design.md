@@ -176,3 +176,18 @@ Validation on commit `4268ffcffee0f5f93d3e4ff6dbf2a593a0690b7c`:
 - SCMS Build Validation run [44187912207](https://github.com/bock12/SCMS/actions/runs/44187912207): success.
 
 This is a development mock implementation. It does not perform live Supabase writes or add direct finance-table DML privileges. The production database remains protected by the reviewed read-only table grants and narrow RPC boundary. The receipt/payment entry forms remain disabled until they are connected to the canonical configuration selectors and transaction service.
+
+
+## UI integration checkpoint — 2026-11-18
+
+The development UI now submits receipts and payments through the canonical transaction service and presents their canonical document/approval state in the Finance Officer Ledger tab.
+
+- The entry form uses canonical setup selectors and calls `create_financial_document_transaction`; it does not write legacy FinancialRecord/localStorage entries.
+- The workflow list shows document type, counterparty, date, amount, payment method, reference, approval-step progress and whether the draft journal has been linked.
+- Approve/reject actions call `decide_financial_document_approval` with the currently assigned pending step. The mock RPC rechecks identity, approver assignment, branch permission and step order.
+- Approval queue listing is provided by mock-only `get_finance_documents`; this listing endpoint is not yet implemented as a SQL/public RPC. It must be designed or replaced with secure database reads before a live Supabase UI can use this view.
+- Approval decisions update the document workflow; this does not itself post the journal. Journal posting remains a separate controlled operation.
+
+Validation on `8c4723ac72ef3f0a5ca56cd9c69a0e50dae058d4`: automated tests passed and the Vite production build passed in [SCMS Build Validation run 44208093229](https://github.com/bock12/SCMS/actions/runs/44208093229).
+
+No live Supabase migration replay, deployment, production authentication change or database writes were performed.
