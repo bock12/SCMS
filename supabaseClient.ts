@@ -1896,6 +1896,7 @@ export const supabase = {
     const actor = (localDb.profiles || []).find((item: any) => item.auth_user_id === session?.user?.id);
     if (functionName === 'create_financial_document_transaction' ||
         functionName === 'decide_financial_document_approval' ||
+        functionName === 'get_finance_documents' ||
         functionName === 'post_journal_entry') {
       return mockFinanceRpc.rpc(functionName, args);
     }
