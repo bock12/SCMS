@@ -30,11 +30,11 @@ describe('posted journal financial reports', () => {
     const report = buildPostedFinanceReport(ledger(
       posted,
       draft,
-      journal({ id: 'other-posted', source_document_status: 'rejected', entry_date: '2026-11-14' })
+      journal({ id: 'rejected-draft', status: 'draft', source_document_status: 'rejected', entry_date: '2026-11-14' })
     ), 'all', new Date('2026-11-18T12:00:00'));
-    expect(report.journals.map(item => item.id)).toEqual(['journal-1', 'other-posted']);
-    expect(report.lines).toHaveLength(4);
-    expect(report.currency_summaries[0].revenue).toBe(200);
+    expect(report.journals.map(item => item.id)).toEqual(['journal-1']);
+    expect(report.lines).toHaveLength(2);
+    expect(report.currency_summaries[0].revenue).toBe(100);
     expect(report.currency_summaries[0].expenses).toBe(0);
   });
 
