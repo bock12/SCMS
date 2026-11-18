@@ -89,7 +89,7 @@ export function createMockFinanceRpc(
   getAuth: () => MockFinanceAuth
 ) {
   const id = (state: MockFinanceState, prefix: string) => `${prefix}-${state.nextId++}`;
-  const hasPermission = (state: MockFinanceState, profileId: string, permission: string, branchId: string) =>
+  const hasPermission = (state: MockFinanceState, profileId: string, permission: string, branchId: string | null) =>
     state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
       (p.branch_id === null || p.branch_id === branchId));
 
@@ -295,6 +295,144 @@ export function createMockFinanceRpc(
     });
   }
 
+  function postJournalEntry(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const journal = state.journals.find(item => item.id === args.p_journal_entry_id);
+    if (!journal) return fail('Journal entry not found');
+    if (!hasPermission(state, actor.id, 'post_journals', journal.branch_id ?? null)) {
+      return fail('Insufficient permission to post journals', '42501');
+    }
+    if (journal.status === 'posted') {
+      return success({ journal_entry_id: journal.id, status: 'posted', already_posted: true });
+    }
+    if (journal.status !== 'draft') return fail('Only draft journal entries can be posted');
+    if (journal.source_type === 'financial_document_pending') {
+      return fail('A financial-document journal cannot be posted before approval and linkage');
+    }
+    if (journal.source_type === 'financial_document') {
+      const document = state.documents.find(item => item.id === journal.source_id);
+      if (!document || document.status !== 'approved' || document.journal_entry_id !== journal.id) {
+        return fail('Financial-document journal must be linked to an approved document before posting');
+      }
+    }
+
+    const period = state.periods.find(item => item.id === journal.period_id);
+    if (!period || period.status !== 'open' || period.year_status !== 'open' ||
+        journal.entry_date < period.start_date || journal.entry_date > period.end_date) {
+      return fail('Journal entry period or financial year is not open');
+    }
+    if (!state.baseCurrencyCode || journal.base_currency_code !== state.baseCurrencyCode) {
+      return fail('Journal base currency does not match church base currency');
+    }
+    if (journal.currency_code === journal.base_currency_code && Number(journal.exchange_rate_to_base) !== 1) {
+      return fail('Exchange rate must be 1 for the base currency');
+    }
+
+    const lines = state.journalLines.filter(line => line.journal_entry_id === journal.id);
+    if (lines.length < 2) return fail('A journal entry must contain at least two lines');
+    const debits = lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0);
+    const credits = lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0);
+    const baseDebits = lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0);
+    const baseCredits = lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0);
+    if (debits !== credits) return fail('Journal is not balanced in transaction currency');
+    if (baseDebits !== baseCredits) return fail('Journal is not balanced in base currency');
+
+    for (const line of lines) {
+      const account = state.chartAccounts.find(item => item.id === line.account_id);
+      if (!account || !account.is_active) return fail('Journal contains an inactive chart-of-accounts entry');
+      if (journal.branch_id != null && line.branch_id != null && line.branch_id !== journal.branch_id) {
+        return fail('Journal line branch does not match journal branch');
+      }
+      const rate = Number(journal.exchange_rate_to_base);
+      if ((Number(line.debit_amount) > 0 && Number(line.base_debit_amount) !== round4(Number(line.debit_amount) * rate)) ||
+          (Number(line.credit_amount) > 0 && Number(line.base_credit_amount) !== round4(Number(line.credit_amount) * rate))) {
+        return fail('Journal line base amount does not match the recorded exchange rate');
+      }
+    }
+
+    journal.status = 'posted';
+    journal.posted_at = new Date().toISOString();
+    storage.save(state);
+    return success({ journal_entry_id: journal.id, status: 'posted', already_posted: false });
+  }
+
+  function getFinanceJournals(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const branchId = args.p_branch_id ?? null;
+    const canView = hasPermission(state, actor.id, 'view_finances', branchId)
+      || hasPermission(state, actor.id, 'manage_finances', branchId)
+      || hasPermission(state, actor.id, 'approve_finances', branchId)
+      || hasPermission(state, actor.id, 'post_journals', branchId);
+    if (!canView) return fail('Insufficient permission to view journal entries in this branch', '42501');
+
+    const journals = state.journals.filter(journal => (journal.branch_id ?? null) === branchId)
+      .map(journal => {
+        const document = ['financial_document', 'financial_document_pending'].includes(journal.source_type)
+          ? state.documents.find(item => item.id === journal.source_id)
+          : null;
+        const lines = state.journalLines.filter(line => line.journal_entry_id === journal.id)
+          .sort((a, b) => Number(a.line_number) - Number(b.line_number))
+          .map(line => {
+            const account = state.chartAccounts.find(item => item.id === line.account_id);
+            return {
+              ...clone(line),
+              account_code: account?.code ?? null,
+              account_name: account?.name ?? 'Unknown account',
+              account_type: account?.account_type ?? null,
+              normal_balance: account?.normal_balance ?? null
+            };
+          });
+        const canPost = journal.status === 'draft'
+          && journal.source_type !== 'financial_document_pending'
+          && hasPermission(state, actor.id, 'post_journals', journal.branch_id ?? null)
+          && (journal.source_type !== 'financial_document'
+            || (document?.status === 'approved' && document.journal_entry_id === journal.id));
+        return {
+          ...clone(journal),
+          source_document_status: document?.status ?? null,
+          can_post: canPost,
+          total_debits: lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0),
+          total_credits: lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0),
+          base_total_debits: lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0),
+          base_total_credits: lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0),
+          lines
+        };
+      })
+      .sort((a, b) => String(b.entry_date).localeCompare(String(a.entry_date)) || String(b.id).localeCompare(String(a.id)));
+
+    const balances = new Map<string, any>();
+    for (const journal of state.journals.filter(item => item.status === 'posted' && (item.branch_id ?? null) === branchId)) {
+      for (const line of state.journalLines.filter(item => item.journal_entry_id === journal.id)) {
+        const account = state.chartAccounts.find(item => item.id === line.account_id);
+        if (!account) continue;
+        const key = account.id + ':' + journal.base_currency_code;
+        const current = balances.get(key) || {
+          account_id: account.id, account_code: account.code ?? '', account_name: account.name ?? '',
+          account_type: account.account_type, normal_balance: account.normal_balance ?? null,
+          base_currency_code: journal.base_currency_code, debit_total: 0, credit_total: 0
+        };
+        current.debit_total += Number(line.base_debit_amount || 0);
+        current.credit_total += Number(line.base_credit_amount || 0);
+        balances.set(key, current);
+      }
+    }
+    const accountBalances = [...balances.values()].map(item => ({
+      ...item, net_debit_balance: item.debit_total - item.credit_total
+    })).sort((a, b) => String(a.account_code).localeCompare(String(b.account_code)));
+
+    return success({ actor_profile_id: actor.id, journals, account_balances: accountBalances });
+  }
+
   function saveFinanceConfiguration(args: Record<string, any>) {
     const state = clone(storage.load());
     const auth = getAuth();
@@ -436,16 +574,12 @@ export function createMockFinanceRpc(
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration();
         if (name === 'get_finance_documents') return getFinanceDocuments(args);
+        if (name === 'get_finance_journals') return getFinanceJournals(args);
+        if (name === 'post_finance_journal_entry') return postJournalEntry(args);
         if (name === 'save_finance_configuration') return saveFinanceConfiguration(args);
         if (name === 'create_financial_document_transaction') return createTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
-        if (name === 'post_journal_entry') {
-          const state = storage.load();
-          const journal = state.journals.find(j => j.id === args.p_journal_entry_id);
-          if (journal?.source_type === 'financial_document_pending') {
-            return fail('A financial-document journal cannot be posted before approval and linkage');
-          }
-        }
+        if (name === 'post_journal_entry') return postJournalEntry(args);
         return fail(`Mock RPC function not implemented: ${name}`);
       } catch (error) {
         return fail(error instanceof Error ? error.message : 'Mock finance operation failed');
