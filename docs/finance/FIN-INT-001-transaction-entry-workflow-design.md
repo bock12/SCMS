@@ -1,6 +1,6 @@
 # FIN-INT-001 — Secure transaction-entry workflow design
 
-**Status:** Secure database RPCs, PostgreSQL lifecycle tests, deterministic mock finance adapter, canonical configuration RPCs and accounting setup UI are implemented on `main`. Receipt/payment entry UI remains disabled pending final integration. Not deployed to live Supabase.
+**Status:** Secure receipt/payment creation, approval, document listing, controlled journal posting, posted-ledger projection, PostgreSQL lifecycle tests, deterministic mock finance adapter and development accounting setup UI are implemented on `main`. Not deployed to live Supabase.
 
 ## Scope
 
@@ -219,3 +219,21 @@ Validation on commit [585342bb](https://github.com/bock12/SCMS/commit/585342bb58
 - [PostgreSQL 17 fresh-install/security workflow #44274447182](https://github.com/bock12/SCMS/actions/runs/44274447182): passed; the baseline replay, finance transaction/listing migrations, grant checks, lifecycle tests and branch/auth listing tests all completed successfully.
 
 These are automated build and disposable-database results only. The UI was not exercised in a browser, and no live Supabase project was connected or changed.
+
+
+## Journal posting and posted-ledger checkpoint — 2026-11-18
+
+The next lifecycle boundary is now implemented:
+
+1. The browser calls `public.post_finance_journal_entry(uuid)`; it does not call the private schema or update journal tables directly.
+2. The public wrapper requires an authenticated linked profile and `post_journals` at the journal's branch scope. It rejects a pending financial-document marker and verifies that a financial-document journal is linked to an approved source document.
+3. The wrapper delegates final accounting validation to `private.post_journal_entry(uuid)`, which checks draft state, open period/year, active chart accounts, branch consistency, transaction/base currency balance and exchange-rate calculations.
+4. A repeated request for an already-posted journal returns its posted state without attempting a second mutation.
+5. `public.get_finance_journals(uuid)` returns the branch journal register, line details and account balances. Balance aggregation includes only entries whose status is `posted`.
+6. The development mock exposes matching `get_finance_journals` and `post_finance_journal_entry` operations. It remains a local simulation, not a live database connection.
+
+The Finance Officer ledger now includes a journal register, explicit posting controls and posted-only account balances. Approved journals remain visible as unposted drafts; pending and rejected journals cannot be posted. The former summary cards based on the legacy FinancialRecord projection have been removed.
+
+The CI lifecycle fixture posts an immediately approved receipt through the public API, checks its immutable posted state and posted-only account balance, checks a safe repeat call, and verifies a rejected pending-marker journal cannot be posted. No direct journal-table DML grant was introduced.
+
+Remaining: move the legacy department/event spending analytics and PDF/CSV reporting onto canonical posted journal lines; add database-backed finance configuration APIs; and reconcile the mock's fixed approver assignments with the permission-based SQL approval model before treating the two implementations as behaviorally interchangeable.
