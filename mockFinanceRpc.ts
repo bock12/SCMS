@@ -80,9 +80,10 @@ export function createEmptyMockFinanceState(): MockFinanceState {
 }
 
 /**
- * Deterministic, isolated implementation of the two financial-document RPCs.
- * State is only committed after a complete operation succeeds. Supply a storage
- * adapter to persist it; no legacy FinancialRecord data is read or modified.
+ * Deterministic, isolated implementation of canonical finance configuration,
+ * document, approval, journal-posting and ledger-read RPCs. State is committed
+ * only after a complete operation succeeds; legacy FinancialRecord data is
+ * never read or modified.
  */
 export function createMockFinanceRpc(
   storage: MockFinanceStorage,
