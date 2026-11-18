@@ -10,6 +10,7 @@ import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } fro
 import { getEventBudgetApprovals, approveEventBudget, rejectEventBudget, disburseEventBudget as executeDisburseEventBudget } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
+import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -1215,6 +1216,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {/* --- WORKSPACE TAB 1: FINANCIAL LEDGER & REPORTS --- */}
       {workspaceTab === 'ledger' && (
         <div className="space-y-6">
+          <FinanceDocumentWorkflowWorkspace branchId={profile?.branch_id || null} />
           {/* Summary Metrics Bar - 2 columns per row on mobile and tablet */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
             <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1">
