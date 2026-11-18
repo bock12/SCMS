@@ -166,7 +166,7 @@ export function createMockFinanceRpc(
       profile_id: args.p_profile_id ?? null, payee_or_payer_name: party, amount, currency_code: currency,
       payment_method: method, financial_account_id: financialAccount.id, fund_id: args.p_fund_id ?? null,
       external_reference: String(args.p_external_reference || '').trim() || null,
-      description, status: docStatus, created_by_profile_id: actor.id,
+      description, status: docStatus, created_by_profile_id: actor.id, approval_request_id: requestId,
       exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode, journal_entry_id: null
     };
     const journal = {
