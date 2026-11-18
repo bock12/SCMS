@@ -11,6 +11,7 @@ function fixture() {
     ],
     permissions: [
       { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-a' },
+      { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-a' },
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
@@ -163,16 +164,88 @@ describe('deterministic mock financial-document RPC', () => {
     expect(ctx.read().journals[0].source_type).toBe('financial_document_pending');
   });
 
-  test('does not post an unapproved pending journal', async () => {
+  test('does not post an unapproved pending journal or include it in account balances', async () => {
     const ctx = fixture();
     await ctx.rpc.rpc('create_financial_document_transaction', args);
     const journal = ctx.read().journals[0];
     expect(journal.status).toBe('draft');
     expect(journal.source_type).toBe('financial_document_pending');
-    // The canonical posting RPC is intentionally not exposed by this adapter.
-    const result = await ctx.rpc.rpc('post_journal_entry', { p_journal_entry_id: journal.id });
+    const result = await ctx.rpc.rpc('post_finance_journal_entry', { p_journal_entry_id: journal.id });
     expect(result.error?.message).toContain('cannot be posted before approval');
     expect(ctx.read().journals[0].status).toBe('draft');
+    const listing = await ctx.rpc.rpc('get_finance_journals', { p_branch_id: 'branch-a' });
+    expect(listing.error).toBeNull();
+    expect(listing.data.journals[0].status).toBe('draft');
+    expect(listing.data.journals[0].can_post).toBe(false);
+    expect(listing.data.account_balances).toHaveLength(0);
+  });
+
+  test('posts only after final approval and derives balances from posted journal lines', async () => {
+    const ctx = fixture();
+    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const steps = ctx.read().approvalSteps;
+    ctx.setUser('user-approver-1');
+    const first = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved'
+    });
+    expect(first.data.approval_status).toBe('pending');
+    ctx.setUser('user-approver-2');
+    const final = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[1].id, p_decision: 'approved'
+    });
+    expect(final.data.approval_status).toBe('approved');
+
+    ctx.setUser('user-creator');
+    const posted = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+    expect(posted.data.status).toBe('posted');
+    expect(posted.data.already_posted).toBe(false);
+    expect(ctx.read().journals[0].status).toBe('posted');
+
+    const listing = await ctx.rpc.rpc('get_finance_journals', { p_branch_id: 'branch-a' });
+    expect(listing.error).toBeNull();
+    expect(listing.data.journals[0].can_post).toBe(false);
+    expect(listing.data.account_balances).toHaveLength(2);
+    const cash = listing.data.account_balances.find((item: any) => item.account_id === 'cash-chart');
+    const income = listing.data.account_balances.find((item: any) => item.account_id === 'income-chart');
+    expect(cash.debit_total).toBe(250);
+    expect(cash.credit_total).toBe(0);
+    expect(income.debit_total).toBe(0);
+    expect(income.credit_total).toBe(250);
+
+    const retry = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(retry.error).toBeNull();
+    expect(retry.data.already_posted).toBe(true);
+  });
+
+  test('requires post_journals permission and respects closed periods', async () => {
+    const ctx = fixture();
+    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const steps = ctx.read().approvalSteps;
+    ctx.setUser('user-approver-1');
+    await ctx.rpc.rpc('decide_financial_document_approval', { p_request_step_id: steps[0].id, p_decision: 'approved' });
+    ctx.setUser('user-approver-2');
+    await ctx.rpc.rpc('decide_financial_document_approval', { p_request_step_id: steps[1].id, p_decision: 'approved' });
+    ctx.setUser('user-approver-1');
+    const denied = await ctx.rpc.rpc('post_finance_journal_entry', { p_journal_entry_id: created.data.journal_entry_id });
+    expect(denied.error?.code).toBe('42501');
+    expect(ctx.read().journals[0].status).toBe('draft');
+
+    ctx.setUser('user-creator');
+    const state = ctx.read();
+    state.periods[0].status = 'closed';
+    const closedPeriodRpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: () => { throw new Error('unexpected persistence'); }
+    }, () => ({ userId: 'user-creator' }));
+    const closed = await closedPeriodRpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(closed.error?.message).toContain('period or financial year is not open');
   });
 });
 
