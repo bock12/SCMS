@@ -212,3 +212,10 @@ The Finance Workflow DTO now allows nullable branch/approver metadata returned b
 **Approval-model parity gap to resolve before live use:** the recovered PostgreSQL schema authorizes approvers by the step's required permission and `required_approvals`; it does not store fixed approver assignments. The development mock currently stores `approver_profile_ids` and restricts actions to those selected profiles. The SQL RPC follows the existing database permission-based contract. The mock/configuration contract must be aligned with that model, or explicit assignee persistence must be added to the database, before treating mock and live approval behavior as interchangeable.
 
 No live Supabase project was connected, migrated or deployed. Browser/runtime verification was not performed.
+
+
+Validation on commit [585342bb](https://github.com/bock12/SCMS/commit/585342bb5856120142d051afe1b5e34348acb77b):
+- [SCMS Build Validation #44274447184](https://github.com/bock12/SCMS/actions/runs/44274447184): passed; Bun automated tests and Vite production build completed successfully.
+- [PostgreSQL 17 fresh-install/security workflow #44274447182](https://github.com/bock12/SCMS/actions/runs/44274447182): passed; the baseline replay, finance transaction/listing migrations, grant checks, lifecycle tests and branch/auth listing tests all completed successfully.
+
+These are automated build and disposable-database results only. The UI was not exercised in a browser, and no live Supabase project was connected or changed.

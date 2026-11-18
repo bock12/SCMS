@@ -3,7 +3,7 @@
 **Reviewed:** 2026-11-18  
 **Repository:** `bock12/SCMS`  
 **Branch:** `main`  
-**Reviewed head:** `1bd482f0c48b5ca24548038d61662b602819117a` (before the listing API increment)
+**Reviewed head:** `585342bb5856120142d051afe1b5e34348acb77b`
 
 ## Executive finding
 
@@ -128,3 +128,10 @@ Still outstanding:
 5. Add controlled journal posting UI and live-ready account/category selectors only after the configuration/read APIs are integrated.
 
 The legacy `financial_records` table remains absent from the PostgreSQL baseline. No direct finance-table DML grants were added. No live Supabase project was connected or changed; CI uses a disposable PostgreSQL 17 database. Build/test success does not establish browser/runtime behavior.
+
+
+Validation for the database-backed listing increment on commit [585342bb](https://github.com/bock12/SCMS/commit/585342bb5856120142d051afe1b5e34348acb77b):
+- [SCMS Build Validation #44274447184](https://github.com/bock12/SCMS/actions/runs/44274447184): passed — Bun tests and Vite production build.
+- [PostgreSQL 17 fresh-install/security workflow #44274447182](https://github.com/bock12/SCMS/actions/runs/44274447182): passed — fresh baseline replay, finance migrations, grant/search_path checks, transaction lifecycle and listing authorization tests.
+
+No browser/runtime verification or live Supabase operation was performed.
