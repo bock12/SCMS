@@ -11,6 +11,7 @@ import { getEventBudgetApprovals, approveEventBudget, rejectEventBudget, disburs
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
+import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -1217,52 +1218,10 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {workspaceTab === 'ledger' && (
         <div className="space-y-6">
           <FinanceDocumentWorkflowWorkspace branchId={profile?.branch_id || null} />
-          {/* Summary Metrics Bar - 2 columns per row on mobile and tablet */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-            <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
-                <span className="truncate">TOTAL REVENUE</span>
-                <ArrowUpRight size={18} className="text-emerald-500 shrink-0" />
-              </div>
-              <div className="text-lg sm:text-2xl font-black text-emerald-600 font-mono tabular-nums truncate">
-                SLE {totalIncome.toLocaleString()}
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">Tithes, offerings & pledges</p>
-            </div>
-
-            <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
-                <span className="truncate">EXPENDITURES</span>
-                <ArrowDownRight size={18} className="text-rose-500 shrink-0" />
-              </div>
-              <div className="text-lg sm:text-2xl font-black text-rose-600 font-mono tabular-nums truncate">
-                SLE {totalExpenses.toLocaleString()}
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">Stipends, invoices & power</p>
-            </div>
-
-            <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
-                <span className="truncate">NET POSITION</span>
-                <DollarSign size={18} className="text-indigo-500 shrink-0" />
-              </div>
-              <div className={`text-lg sm:text-2xl font-black font-mono tabular-nums truncate ${netBalance >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
-                SLE {netBalance.toLocaleString()}
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">Net operating balance</p>
-            </div>
-
-            <div className="bg-white p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-1">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
-                <span className="truncate">PENDING AUDIT</span>
-                <Clock size={18} className="text-amber-500 shrink-0" />
-              </div>
-              <div className="text-lg sm:text-2xl font-black text-amber-600 font-mono tabular-nums truncate">
-                {pendingCount} Txns
-              </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">SLE {pendingAmount.toLocaleString()}</p>
-            </div>
-          </div>
+          <FinanceJournalWorkspace branchId={profile?.branch_id || null} />
+          {/* Revenue, expenditure and net-position figures are now rendered from
+              posted journal lines in FinanceJournalWorkspace above. Do not restore
+              the legacy FinancialRecord-derived summary cards here. */}
 
           {/* Ministry & Department Spending Breakdown Pie Chart Section */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
