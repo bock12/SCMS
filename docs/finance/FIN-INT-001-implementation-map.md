@@ -151,3 +151,22 @@ Implemented on `main`:
 - Extended mock lifecycle tests and the PostgreSQL lifecycle fixture for approval-gated posting, safe retries, pending-journal rejection and posted-only balances. CI now applies the migration and checks grants, SECURITY DEFINER/empty-search-path hardening and absence of direct journal-table DML grants.
 
 **Boundary:** This remains an incremental finance integration. The legacy department/event spending chart and PDF/CSV exports still require migration to canonical posted journal projections. Finance configuration remains mock-only. No live Supabase migration, deployment or production data write was performed.
+
+
+## Posted-journal reporting integration — 2026-11-18
+
+Implemented on `main`:
+
+- Added `financeReportService.ts` with a deterministic report projection built from journal entries and journal lines. It filters to `status = posted` before calculating any report totals.
+- Reports aggregate income and expense account balances from base-currency journal line amounts. Revenue, expenses and net operating position are grouped separately by base currency; balances are not added across currencies.
+- Added calendar period filters (all time, last seven days, current month, current quarter and current year).
+- Added a canonical report panel to `FinanceJournalWorkspace.tsx` with posted-only CSV export, printable/PDF output, income/expense/net summaries and posted expense-account breakdown.
+- Removed the old `FinancialRecord`-based CSV and PDF exports and removed the spending chart that combined historical records with approved/disbursed requisition and event-budget amounts.
+- Legacy records remain visible as a clearly labelled informational view, but are excluded from official reports and posted ledger balances.
+- Requisition and event-budget tabs now state that approval/disbursement workflow statuses do not themselves constitute posted accounting expenditure.
+
+### Remaining source-linking boundary
+
+Department requisitions and event budgets do not yet carry a canonical financial-document/journal relationship. The current disbursement handler deliberately fails closed because `persistDisbursementRecord` is disabled pending canonical payment workflow integration. Consequently, posted journal balances can be reported by chart-of-accounts expense category, but they cannot yet be reliably attributed to a specific requisition, department or event. Do not infer department/event actual expenditure from approved budgets, disbursed workflow flags or legacy records.
+
+Next coherent integration: add explicit source linkage from a requisition/event budget to a canonical payment document and its journal; only after approval/posting should the actual expense appear in the department/event actuals report.
