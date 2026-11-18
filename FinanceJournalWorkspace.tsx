@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { getFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
+import { buildPostedFinanceReport, type FinanceReportPeriod } from './financeReportService';
 
 interface Props { branchId: string | null; }
 
@@ -24,6 +25,8 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
   const [postingId, setPostingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
+  const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -39,6 +42,58 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
   }, [branchId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  const downloadPostedCsv = () => {
+    if (!report) return;
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const headers = ['Journal ID', 'Entry Number', 'Date', 'Description', 'Reference', 'Transaction Currency', 'Base Currency', 'Account Code', 'Account Name', 'Account Type', 'Debit', 'Credit', 'Base Debit', 'Base Credit'];
+    const rows = report.lines.map(line => [
+      line.journal_id, line.entry_number ?? '', line.entry_date, line.description, line.reference ?? '',
+      line.currency_code, line.base_currency_code, line.account_code ?? '', line.account_name,
+      line.account_type ?? '', line.debit_amount, line.credit_amount, line.base_debit_amount, line.base_credit_amount
+    ].map(quote).join(','));
+    const csv = [headers.map(quote).join(','), ...rows].join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scms_posted_finance_report_${reportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const printPostedReport = () => {
+    if (!report) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setError('Allow pop-ups to print the posted-journal report.');
+      return;
+    }
+    const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char] || char));
+    const summaries = report.currency_summaries.map(item => `
+      <tr><td>${escapeHtml(item.base_currency_code)}</td><td>${item.revenue.toFixed(2)}</td><td>${item.expenses.toFixed(2)}</td><td>${item.net_operating_position.toFixed(2)}</td></tr>
+    `).join('');
+    const accounts = report.account_balances.map(item => `
+      <tr><td>${escapeHtml(item.account_code)}</td><td>${escapeHtml(item.account_name)}</td><td>${escapeHtml(item.account_type)}</td><td>${escapeHtml(item.base_currency_code)}</td><td>${item.debit_total.toFixed(2)}</td><td>${item.credit_total.toFixed(2)}</td><td>${item.balance.toFixed(2)}</td></tr>
+    `).join('');
+    const lines = report.lines.map(line => `
+      <tr><td>${escapeHtml(line.entry_date)}</td><td>${escapeHtml(line.entry_number ?? line.journal_id)}</td><td>${escapeHtml(line.description)}</td><td>${escapeHtml(line.account_code)} — ${escapeHtml(line.account_name)}</td><td>${escapeHtml(line.base_currency_code)}</td><td class="number">${line.base_debit_amount.toFixed(2)}</td><td class="number">${line.base_credit_amount.toFixed(2)}</td></tr>
+    `).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>SCMS Posted Finance Report</title>
+      <style>body{font:12px system-ui,sans-serif;color:#0f172a;padding:28px}h1{font-size:22px}h2{font-size:15px;margin-top:28px}p{color:#475569}.note{padding:10px;background:#ecfdf5;border:1px solid #a7f3d0}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{padding:7px;border:1px solid #e2e8f0;text-align:left}th{background:#f1f5f9}.number{text-align:right}@media print{body{padding:0}}</style>
+      </head><body><h1>SCMS — Posted Journal Financial Report</h1>
+      <p>Period: ${escapeHtml(reportPeriod)} · Generated: ${escapeHtml(new Date().toLocaleString())}</p>
+      <p class="note">This report includes posted journal entries only. Draft, pending approval, approved-but-unposted and rejected entries are excluded.</p>
+      <h2>Operating summary by base currency</h2><table><thead><tr><th>Currency</th><th>Revenue</th><th>Expenses</th><th>Net operating position</th></tr></thead><tbody>${summaries || '<tr><td colspan="4">No posted transactions in this period.</td></tr>'}</tbody></table>
+      <h2>Posted account balances</h2><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Currency</th><th>Debits</th><th>Credits</th><th>Balance</th></tr></thead><tbody>${accounts || '<tr><td colspan="7">No posted account balances.</td></tr>'}</tbody></table>
+      <h2>Posted journal lines (${report.lines.length})</h2><table><thead><tr><th>Date</th><th>Entry</th><th>Description</th><th>Account</th><th>Currency</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No posted journal lines.</td></tr>'}</tbody></table>
+      <script>window.onload=()=>window.print()</script></body></html>`;
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
 
   const post = async (journal: FinanceJournal) => {
     if (!journal.can_post || journal.status !== 'draft') return;
@@ -69,6 +124,33 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
 
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertCircle size={17} />{error}</div>}
       {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 size={17} />{notice}</div>}
+
+      <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-black text-slate-900">Official financial reports</h4>
+            <p className="mt-1 text-xs text-slate-600">CSV and printable reports are generated from posted journal lines only. Approved budgets and unposted transactions are not reported as actual income or expenditure.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select aria-label="Report period" value={reportPeriod} onChange={event => setReportPeriod(event.target.value as FinanceReportPeriod)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">
+              <option value="all">All time</option><option value="week">Last 7 days</option><option value="month">This month</option><option value="quarter">This quarter</option><option value="year">This year</option>
+            </select>
+            <button type="button" onClick={downloadPostedCsv} disabled={loading || !report?.lines.length} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Export posted CSV</button>
+            <button type="button" onClick={printPostedReport} disabled={loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Print / PDF</button>
+          </div>
+        </div>
+        {report?.currency_summaries.length ? <div className="grid gap-3 sm:grid-cols-3">
+          {report.currency_summaries.map(summary => <React.Fragment key={summary.base_currency_code}>
+            <article className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} revenue</div><div className="mt-1 text-lg font-black">{money(summary.base_currency_code, summary.revenue)}</div></article>
+            <article className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} expenses</div><div className="mt-1 text-lg font-black">{money(summary.base_currency_code, summary.expenses)}</div></article>
+            <article className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} net operating position</div><div className="mt-1 text-lg font-black">{money(summary.base_currency_code, summary.net_operating_position)}</div></article>
+          </React.Fragment>)}
+        </div> : <p className="rounded-lg bg-white p-3 text-xs text-slate-500">No posted transactions are available for this reporting period.</p>}
+        {report?.account_balances.some(item => item.account_type === 'expense') && <div>
+          <h5 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Posted expenditure by expense account</h5>
+          <div className="space-y-2">{report.account_balances.filter(item => item.account_type === 'expense' && item.balance !== 0).map(item => <div key={item.account_id + item.base_currency_code} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs"><span className="font-semibold text-slate-700">{item.account_code} · {item.account_name}</span><strong className="tabular-nums">{money(item.base_currency_code, item.balance)}</strong></div>)}</div>
+        </div>}
+      </div>
 
       <div>
         <h4 className="mb-2 text-sm font-black text-slate-800">Posted account balances</h4>
