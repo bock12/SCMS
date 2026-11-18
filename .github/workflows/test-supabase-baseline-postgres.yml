@@ -17,6 +17,7 @@ on:
       - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql"
       - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
+      - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
