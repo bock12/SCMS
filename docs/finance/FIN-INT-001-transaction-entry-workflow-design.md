@@ -185,9 +185,30 @@ The development UI now submits receipts and payments through the canonical trans
 - The entry form uses canonical setup selectors and calls `create_financial_document_transaction`; it does not write legacy FinancialRecord/localStorage entries.
 - The workflow list shows document type, counterparty, date, amount, payment method, reference, approval-step progress and whether the draft journal has been linked.
 - Approve/reject actions call `decide_financial_document_approval` with the currently assigned pending step. The mock RPC rechecks identity, approver assignment, branch permission and step order.
-- Approval queue listing is provided by mock-only `get_finance_documents`; this listing endpoint is not yet implemented as a SQL/public RPC. It must be designed or replaced with secure database reads before a live Supabase UI can use this view.
+- At this checkpoint, approval queue listing was provided by mock-only `get_finance_documents`; the secure SQL/public listing API is implemented in the database-listing checkpoint below.
 - Approval decisions update the document workflow; this does not itself post the journal. Journal posting remains a separate controlled operation.
 
 Validation on `8c4723ac72ef3f0a5ca56cd9c69a0e50dae058d4`: automated tests passed and the Vite production build passed in [SCMS Build Validation run 44208093229](https://github.com/bock12/SCMS/actions/runs/44208093229).
 
 No live Supabase migration replay, deployment, production authentication change or database writes were performed.
+
+
+## Database-backed document listing API — 2026-11-18
+
+Added `supabase/migrations/20261118000100_get_finance_documents_read_api.sql` with the narrow public RPC `get_finance_documents(uuid)`, matching the existing client service name.
+
+The RPC:
+- Requires `auth.uid()`, a linked profile and one of `view_finances`, `manage_finances` or `approve_finances` at the exact requested branch scope.
+- Returns only receipt/payment documents for that exact branch (or church-wide documents when the requested branch is null).
+- Includes canonical document fields, linked/pending journal state, approval request state, ordered approval-step progress and the current actionable step.
+- Exposes an actionable step only when the request is pending, all earlier steps are approved, the actor holds that step's required permission, submitter separation permits it, and the actor has not already decided that step.
+- Uses `SECURITY DEFINER` with an empty search path because it reads protected approval metadata; it revokes EXECUTE from PUBLIC, anon and service_role and grants only authenticated.
+- Adds no direct INSERT, UPDATE or DELETE privileges on finance tables.
+
+Added `supabase/tests/finance_document_listing.sql` and wired the PostgreSQL 17 workflow to apply the migration and test creator visibility, submitter separation, scoped approver visibility, completed approval/journal linkage, missing permission, cross-branch access and unauthenticated denial. The workflow also checks the function's security-definer/search-path contract and confirms no DML grants were introduced.
+
+The Finance Workflow DTO now allows nullable branch/approver metadata returned by the canonical schema. The transaction-entry confirmation message now distinguishes immediate approval from pending approval; approval still does not mean the journal has been posted.
+
+**Approval-model parity gap to resolve before live use:** the recovered PostgreSQL schema authorizes approvers by the step's required permission and `required_approvals`; it does not store fixed approver assignments. The development mock currently stores `approver_profile_ids` and restricts actions to those selected profiles. The SQL RPC follows the existing database permission-based contract. The mock/configuration contract must be aligned with that model, or explicit assignee persistence must be added to the database, before treating mock and live approval behavior as interchangeable.
+
+No live Supabase project was connected, migrated or deployed. Browser/runtime verification was not performed.

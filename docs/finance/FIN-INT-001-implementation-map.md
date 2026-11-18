@@ -1,21 +1,21 @@
 # FIN-INT-001 — Finance integration implementation map
 
-**Reviewed:** 2026-11-17  
+**Reviewed:** 2026-11-18  
 **Repository:** `bock12/SCMS`  
 **Branch:** `main`  
-**Reviewed head:** `dd6532f881f68c03aed9c9781847cbf77240a85e`
+**Reviewed head:** `1bd482f0c48b5ca24548038d61662b602819117a` (before the listing API increment)
 
 ## Executive finding
 
-The Finance Officer Workspace is not yet integrated with the database-backed accounting model. It still treats the legacy `financial_records` table as its ledger, while the PostgreSQL baseline intentionally does not define that table. The UI silently substitutes in-memory demo records when reads or writes fail. This makes a successful-looking development interaction materially different from a persisted, authorized accounting transaction.
+The original Finance Officer Workspace used the legacy `financial_records` model, which is intentionally absent from the PostgreSQL baseline. Main now has a canonical receipt/payment entry path, balanced journal creation, database approval routines, a mock workflow adapter and a Finance Officer approval view. This is a substantial vertical slice, not yet a complete finance-module migration: finance setup is still mock-only, and requisitions, event budgets, department/event balances and several summary/report surfaces still use legacy localStorage or FinancialRecord projections.
 
-Do not solve this by adding `financial_records` to the baseline or granting broad table DML. The baseline already contains the intended accounting and approval domain.
+Do not reintroduce `financial_records` or grant broad table DML. The intended accounting source of truth is `financial_documents`, `journal_entries` and `journal_lines`, with approval requests and narrow RPC boundaries.
 
 ## Current application map
 
 | Area | Current implementation | Integration gap |
 |---|---|---|
-| Finance Officer Workspace | `FinanceOfficerWorkspace.tsx`; loads `financial_records`, creates income/expense rows and updates status directly | Legacy schema; direct writes are not permitted by the real baseline; failed inserts are presented as successful local records |
+| Finance Officer Workspace | `FinanceOfficerWorkspace.tsx` mounts `FinanceTransactionEntryWorkspace` and `FinanceDocumentWorkflowWorkspace` for canonical receipts/payments | Main receipt/payment entry and approval path uses RPCs; legacy summary metrics, requisition/event disbursement and some reporting still need migration |
 | Giving configuration | `givingConfig.ts`; funds, payment gateways and bank details persisted in localStorage | Funds and financial accounts exist in PostgreSQL; gateway/bank configuration needs a deliberate mapping before migration |
 | Requisitions | `requisitionService.ts`; seeded data and localStorage state | No matching requisition domain table found in the baseline; `approval_requests.transaction_type` allows `requisition`, but that alone does not provide a requisition record/workflow |
 | Event budget approvals | `eventBudgetService.ts`; localStorage state and local approval/disbursement updates | Baseline has `budgets`/`budget_lines`, approval policies and requests; map event budgets to `budgets` with `budget_type = 'event'` and `event_id` |
@@ -48,7 +48,7 @@ Approval decisions validate the active step, prior steps, required permission an
 
 ## Mock-client boundary
 
-`supabaseClient.ts` implements a local mock query builder and has special-case RPC simulation for role assignment. It does not currently simulate the finance routines above. Do not interpret local mock CRUD success or a local fallback record as database authorization or a persisted accounting event. A finance mock adapter must be explicit, deterministic, testable and clearly separated from production RPC semantics.
+`supabaseClient.ts` preserves the local mock query builder and mock authentication. `mockFinanceRpc.ts` now simulates canonical finance configuration, receipt/payment creation, approval decisions and document listing in an isolated finance store. This is development behavior only; it does not prove live PostgreSQL authorization or persistence. The SQL RPCs are independently exercised by the disposable PostgreSQL 17 workflow.
 
 ## First safe implementation sequence
 
@@ -108,3 +108,23 @@ Implemented:
 Validation on commit `8c4723ac72ef3f0a5ca56cd9c69a0e50dae058d4`: Bun automated tests and Vite build passed in SCMS Build Validation run [44208093229](https://github.com/bock12/SCMS/actions/runs/44208093229).
 
 **Important boundary:** `get_finance_documents` is currently implemented in the development mock RPC adapter only. The SQL/public API does not yet expose this listing RPC. No live Supabase migration replay, deployment or data writes have occurred. The older summary metrics and legacy requisition/event disbursement surfaces are not yet converted into posted-journal projections.
+
+
+## Current integration status — 2026-11-18
+
+The receipt/payment vertical slice is implemented on `main`:
+
+- `public.create_financial_document_transaction(...)` creates the source document and balanced two-line draft journal atomically, then submits through the hardened approval policy.
+- `public.decide_financial_document_approval(...)` delegates to the existing approval routine and links the pending journal only after final approval.
+- The Finance Officer UI uses typed services and the mock finance RPC adapter; it does not create new `FinancialRecord` rows for receipt/payment entry.
+- `public.get_finance_documents(uuid)` is now added by `20261118000100_get_finance_documents_read_api.sql`. It applies authentication, finance permission and exact branch-scope checks and returns document/approval progress without direct table DML grants.
+- The PostgreSQL 17 workflow applies the finance creation and listing migrations and executes lifecycle and listing authorization fixtures.
+
+Still outstanding:
+1. Reconcile approval-model parity: SQL steps are permission-based and support `required_approvals`; the mock currently uses selected `approver_profile_ids` and sequential assigned steps.
+2. Add database-backed finance configuration read/write APIs for currencies, chart accounts, financial accounts, funds, periods and approval policies. The Accounting Setup UI currently persists only to the development mock.
+3. Migrate event budgets to `budgets`/`budget_lines` and approval routines; design a real requisition domain before retiring the local requisition workflow.
+4. Replace department/event local ledgers and legacy summary/report calculations with projections from posted journal lines.
+5. Add controlled journal posting UI and live-ready account/category selectors only after the configuration/read APIs are integrated.
+
+The legacy `financial_records` table remains absent from the PostgreSQL baseline. No direct finance-table DML grants were added. No live Supabase project was connected or changed; CI uses a disposable PostgreSQL 17 database. Build/test success does not establish browser/runtime behavior.

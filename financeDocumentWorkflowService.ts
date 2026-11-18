@@ -5,7 +5,7 @@ export interface FinanceWorkflowDocument {
   id: string;
   document_type: 'receipt' | 'payment';
   transaction_date: string;
-  branch_id: string;
+  branch_id: string | null;
   profile_id: string | null;
   payee_or_payer_name: string;
   amount: number;
@@ -21,7 +21,7 @@ export interface FinanceWorkflowDocument {
   actor_approval_step_id: string | null;
   approval_steps_completed: number;
   approval_steps_total: number;
-  approval_steps: Array<{ id: string; step_order: number; approver_profile_id: string; status: string; decision: string | null; comments: string | null }>;
+  approval_steps: Array<{ id: string; step_order: number; approver_profile_id: string | null; status: string; decision: string | null; comments: string | null }>;
 }
 
 type RpcClient = {

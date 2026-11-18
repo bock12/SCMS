@@ -16,6 +16,7 @@ on:
       - "supabase/migrations/20261113000100_secure_explicit_profile_auth_linking.sql"
       - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql"
+      - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
@@ -960,6 +961,9 @@ jobs:
       - name: Apply secure financial-document transaction RPCs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql
 
+      - name: Apply scoped financial-document listing RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261118000100_get_finance_documents_read_api.sql
+
       - name: Verify finance RPC and direct-table security boundary
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1040,5 +1044,54 @@ jobs:
           $scms_finance_rpc_security$;
           SQL
 
+      - name: Verify finance document listing RPC grants and hardening
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $finance_document_listing_grants$
+          BEGIN
+            IF NOT has_function_privilege(
+              'authenticated', 'public.get_finance_documents(uuid)', 'EXECUTE'
+            ) THEN
+              RAISE EXCEPTION 'Authenticated role is missing the finance document listing RPC grant.';
+            END IF;
+
+            IF has_function_privilege(
+              'anon', 'public.get_finance_documents(uuid)', 'EXECUTE'
+            ) OR has_function_privilege(
+              'service_role', 'public.get_finance_documents(uuid)', 'EXECUTE'
+            ) THEN
+              RAISE EXCEPTION 'Finance document listing RPC must not be executable by anon or service_role.';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1
+              FROM pg_proc p
+              WHERE p.oid = 'public.get_finance_documents(uuid)'::regprocedure
+                AND p.prosecdef
+                AND EXISTS (
+                  SELECT 1
+                  FROM unnest(p.proconfig) setting
+                  WHERE split_part(setting, '=', 1) = 'search_path'
+                    AND trim(both '"' from split_part(setting, '=', 2)) = ''
+                )
+            ) THEN
+              RAISE EXCEPTION 'Finance document listing RPC must be SECURITY DEFINER with an empty search_path.';
+            END IF;
+
+            IF has_table_privilege('authenticated', 'public.financial_documents', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'DELETE')
+              OR has_table_privilege('authenticated', 'public.approval_requests', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.approval_requests', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.approval_requests', 'DELETE') THEN
+              RAISE EXCEPTION 'Finance listing RPC must not introduce direct finance-table DML grants.';
+            END IF;
+          END
+          $finance_document_listing_grants$;
+          SQL
+
       - name: Verify receipt and payment transaction lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
+
+      - name: Verify finance document listing and scope isolation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_listing.sql
