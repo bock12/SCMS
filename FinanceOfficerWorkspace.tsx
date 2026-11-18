@@ -889,155 +889,6 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       .sort((a, b) => b.value - a.value);
   }, [periodRecords, requisitions, eventBudgets]);
 
-  // CSV Statement Export
-  const downloadCSVReport = () => {
-    const headers = ["ID", "Contributor / Payee", "Type", "Category", "Amount (SLE)", "Payment Method", "Status", "Date", "Transaction Ref", "Notes"];
-    const rows = filteredRecords.map(r => [
-      r.id,
-      `"${r.contributor_name.replace(/"/g, '""')}"`,
-      r.type || 'income',
-      `"${r.category}"`,
-      r.amount,
-      r.payment_method,
-      r.status || 'completed',
-      new Date(r.date).toISOString().slice(0, 10),
-      `"${(r.transaction_id || '').replace(/"/g, '""')}"`,
-      `"${(r.notes || '').replace(/"/g, '""')}"`
-    ]);
-
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `grace_cathedral_treasury_report_${periodFilter}_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const downloadFullFinancialPDF = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    const cp = getChurchProfile();
-
-    const periodLabel = 
-      periodFilter === 'week' ? 'Weekly Financial Statement (Last 7 Days)' :
-      periodFilter === 'month' ? `Monthly Financial Statement (${new Date().toLocaleDateString([], { month: 'long', year: 'numeric' })})` :
-      periodFilter === 'quarter' ? `Quarterly Financial Statement (Q${Math.floor(new Date().getMonth() / 3) + 1} ${new Date().getFullYear()})` :
-      periodFilter === 'year' ? `Yearly Financial Report (${new Date().getFullYear()})` :
-      'All-Time Comprehensive Financial Statement';
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${cp.name} - ${periodLabel}</title>
-          <style>
-            body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 40px; color: #0f172a; background: #fff; }
-            .header { border-bottom: 3px solid #4338ca; padding-bottom: 20px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; }
-            .title { font-size: 26px; font-weight: 900; color: #1e1b4b; margin: 0; }
-            .subtitle { font-size: 13px; color: #64748b; font-weight: 600; margin-top: 4px; }
-            .badge { background: #e0e7ff; color: #3730a3; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-            
-            .summary-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 25px; }
-            .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
-            .card-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #64748b; }
-            .card-val { font-size: 20px; font-weight: 900; margin-top: 4px; }
-            .val-income { color: #059669; }
-            .val-expense { color: #e11d48; }
-            .val-net { color: #4338ca; }
-
-            table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }
-            th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; }
-            td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
-            .type-income { color: #059669; font-weight: 800; text-transform: uppercase; font-size: 10px; }
-            .type-expense { color: #e11d48; font-weight: 800; text-transform: uppercase; font-size: 10px; }
-
-            .sign-block { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 50px; border-top: 2px dashed #e2e8f0; padding-top: 30px; }
-            .sign-line { border-bottom: 1px solid #94a3b8; width: 220px; height: 40px; margin-bottom: 8px; }
-            .sign-title { font-size: 12px; font-weight: 800; color: #334155; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1 class="title">${cp.name.toUpperCase()}</h1>
-              <div class="subtitle">Official Treasury Audit & Financial Operations Statement</div>
-            </div>
-            <div style="text-align: right;">
-              <span class="badge">${periodFilter.toUpperCase()} REPORT</span>
-              <div class="subtitle" style="margin-top: 8px;">Generated: ${new Date().toLocaleString()}</div>
-            </div>
-          </div>
-
-          <h2 style="font-size: 16px; margin-bottom: 15px;">${periodLabel}</h2>
-
-          <div class="summary-cards">
-            <div class="card">
-              <div class="card-label">Total Revenue (Income)</div>
-              <div class="card-val val-income">SLE ${totalIncome.toLocaleString()}</div>
-            </div>
-            <div class="card">
-              <div class="card-label">Total Expenditures (Expenses)</div>
-              <div class="card-val val-expense">SLE ${totalExpenses.toLocaleString()}</div>
-            </div>
-            <div class="card">
-              <div class="card-label">Net Operating Position</div>
-              <div class="card-val val-net">SLE ${netBalance.toLocaleString()}</div>
-            </div>
-          </div>
-
-          <h3 style="font-size: 14px; margin-bottom: 10px;">Itemized Treasury Transactions Ledger (${filteredRecords.length} Entries)</h3>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Contributor / Beneficiary</th>
-                <th>Category</th>
-                <th>Method</th>
-                <th style="text-align: right;">Amount (SLE)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filteredRecords.map(r => `
-                <tr>
-                  <td>${new Date(r.date).toLocaleDateString()}</td>
-                  <td><span class="${r.type === 'expense' ? 'type-expense' : 'type-income'}">${r.type || 'income'}</span></td>
-                  <td><strong>${r.contributor_name}</strong></td>
-                  <td>${r.category}</td>
-                  <td style="text-transform: capitalize;">${r.payment_method.replace('_', ' ')}</td>
-                  <td style="text-align: right; font-weight: 800; color: ${r.type === 'expense' ? '#e11d48' : '#059669'}">
-                    ${r.type === 'expense' ? '-' : '+'}${Number(r.amount).toLocaleString()}
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <div class="sign-block">
-            <div>
-              <div class="sign-line"></div>
-              <div class="sign-title">Prepared By: Finance Officer / Treasury</div>
-              <div style="font-size: 11px; color: #64748b;">${profile ? `${profile.first_name} ${profile.last_name}` : 'Church Financial Officer'}</div>
-            </div>
-            <div>
-              <div class="sign-line"></div>
-              <div class="sign-title">Approved By: Senior Pastor / Church Board</div>
-              <div style="font-size: 11px; color: #64748b;">${cp.name} Leadership</div>
-            </div>
-          </div>
-
-          <script>window.onload = function() { window.print(); }</script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  };
-
   if (financePermissionsLoading) {
     return <div className="p-10 text-center text-slate-500">Loading finance permissions…</div>;
   }
@@ -1117,11 +968,11 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </button>
 
             <button
-              onClick={downloadFullFinancialPDF}
+              onClick={() => setWorkspaceTab('ledger')}
               className="col-span-2 sm:col-span-1 px-3.5 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
             >
               <Printer size={16} />
-              <span>Export PDF Audit</span>
+              <span>Open Posted Reports</span>
             </button>
           </div>
         </div>
@@ -1223,120 +1074,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
               posted journal lines in FinanceJournalWorkspace above. Do not restore
               the legacy FinancialRecord-derived summary cards here. */}
 
-          {/* Ministry & Department Spending Breakdown Pie Chart Section */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                    Treasury Financial Analytics
-                  </span>
-                  <span className="text-xs font-semibold text-slate-400">
-                    • Total Expenditure: SLE {totalExpenses.toLocaleString()}
-                  </span>
-                </div>
-                <h3 className="text-xl font-black text-slate-900 mt-1 flex items-center gap-2">
-                  Ministry & Department Spending Breakdown
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Legacy operational planning view combining expense projections and ministry/event allocations. It is not a posted-journal balance or an accounting statement.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 self-start sm:self-auto">
-                <span className="px-3 py-1 bg-slate-100 text-slate-700 font-extrabold rounded-xl text-xs">
-                  {departmentSpendingData.length} Active Categories
-                </span>
-              </div>
-            </div>
-
-            {departmentSpendingData.length > 0 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center pt-2">
-                {/* Recharts Pie Chart Container */}
-                <div className="lg:col-span-5 h-[280px] w-full flex items-center justify-center relative">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RechartsPieChart>
-                      <Pie
-                        data={departmentSpendingData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={65}
-                        outerRadius={105}
-                        paddingAngle={4}
-                        dataKey="value"
-                      >
-                        {departmentSpendingData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip
-                        formatter={(val: any) => [`SLE ${Number(val).toLocaleString()}`, 'Amount']}
-                        contentStyle={{
-                          backgroundColor: '#0f172a',
-                          color: '#ffffff',
-                          borderRadius: '12px',
-                          border: 'none',
-                          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.3)',
-                          fontSize: '12px',
-                          fontWeight: 'bold',
-                          padding: '10px 14px'
-                        }}
-                        itemStyle={{ color: '#38bdf8' }}
-                      />
-                    </RechartsPieChart>
-                  </ResponsiveContainer>
-
-                  {/* Center Stat inside Doughnut Hole */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Total Disbursed</span>
-                    <span className="text-sm font-black text-slate-900 font-mono mt-0.5">
-                      SLE {totalExpenses > 1000 ? `${(totalExpenses / 1000).toFixed(1)}k` : totalExpenses}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Department Legend & Percentage Share */}
-                <div className="lg:col-span-7 space-y-2.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
-                  {departmentSpendingData.map((dept, idx) => (
-                    <div key={idx} className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/80 transition-all">
-                      <div className="flex items-center justify-between text-xs mb-1.5">
-                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                          <span
-                            className="w-3.5 h-3.5 rounded-md shrink-0 shadow-2xs"
-                            style={{ backgroundColor: dept.color }}
-                          />
-                          <span className="font-extrabold text-slate-800 truncate">{dept.name}</span>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <strong className="font-black text-slate-900 font-mono text-xs">
-                            SLE {dept.value.toLocaleString()}
-                          </strong>
-                          <span className="ml-2 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-200 text-slate-800">
-                            {dept.percentage}%
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Visual Spending Bar */}
-                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${dept.percentage}%`, backgroundColor: dept.color }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200/60 text-slate-400 space-y-2">
-                <PieChart size={32} className="mx-auto text-slate-300" />
-                <p className="text-xs font-semibold">No expense records or disbursed requisitions logged for this selected timeframe.</p>
-                <p className="text-[11px]">Record an expenditure entry above or disburse a ministry proposal to generate pie chart breakdown analytics.</p>
-              </div>
-            )}
-          </div>
+          {/* Department/event budget allocations are operational planning data, not posted accounting expenditure. */}
 
           {/* Filter Controls - Period Dropdown with Download CSV button on the right */}
           <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-xs space-y-3">
@@ -1356,14 +1094,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                 </select>
               </div>
 
-              <button
-                onClick={downloadCSVReport}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs min-h-[38px]"
-              >
-                <Download size={14} />
-                <span className="hidden sm:inline">Download CSV Ledger</span>
-                <span className="sm:hidden">CSV Ledger</span>
-              </button>
+              <span className="text-[10px] font-semibold text-slate-500">Legacy records below are not included in official reports.</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100">
@@ -1414,6 +1145,10 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                 <option value="Media & IT Equipment">Media & IT Equipment</option>
               </select>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+            <strong>Legacy financial records — informational only.</strong> These historical/demo records are not canonical financial documents or posted journal entries and are excluded from official CSV/PDF reports and ledger balances.
           </div>
 
           {/* Records View: Mobile/Tablet Cards + Desktop Table */}
