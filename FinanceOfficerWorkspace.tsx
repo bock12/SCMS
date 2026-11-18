@@ -888,7 +888,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Church Financial Operations</h1>
             <p className="text-slate-500 text-xs sm:text-sm mt-0.5">
-              Review ministry proposals, generate expense invoices, upload vendor payment receipts & link transactions directly to the financial ledger.
+              Create canonical receipts and payments, review approval workflows, explicitly post journals and monitor posted accounting balances.
             </p>
           </div>
 
@@ -938,7 +938,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             }`}
           >
             <PieChart size={15} />
-            <span>Financial Ledger</span>
+            <span>Journal Ledger</span>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
           </button>
 
