@@ -256,6 +256,45 @@ export function createMockFinanceRpc(
     });
   }
 
+  function getFinanceDocuments(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const requestedBranch = args.p_branch_id ?? null;
+    const canView = (branchId: string) =>
+      hasPermission(state, actor.id, 'view_finances', branchId) ||
+      hasPermission(state, actor.id, 'manage_finances', branchId) ||
+      hasPermission(state, actor.id, 'approve_finances', branchId);
+    const visible = state.documents.filter(document =>
+      (!requestedBranch || document.branch_id === requestedBranch) && canView(document.branch_id)
+    );
+    return success({
+      actor_profile_id: actor.id,
+      documents: visible.map(document => {
+        const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
+        const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
+          .sort((a, b) => Number(a.step_order) - Number(b.step_order));
+        const actorStep = steps.find(step => step.approver_profile_id === actor.id && step.status === 'pending' &&
+          hasPermission(state, actor.id, 'approve_finances', document.branch_id));
+        return {
+          ...clone(document),
+          approval_request_id: request?.id ?? null,
+          approval_status: request?.status ?? null,
+          approval_steps: steps.map(step => ({
+            id: step.id, step_order: step.step_order, approver_profile_id: step.approver_profile_id,
+            status: step.status, decision: step.decision, comments: step.comments
+          })),
+          actor_approval_step_id: actorStep?.id ?? null,
+          approval_steps_completed: steps.filter(step => step.status === 'approved').length,
+          approval_steps_total: steps.length
+        };
+      }).sort((a, b) => String(b.transaction_date).localeCompare(String(a.transaction_date)) ||
+        String(b.id).localeCompare(String(a.id)))
+    });
+  }
+
   function saveFinanceConfiguration(args: Record<string, any>) {
     const state = clone(storage.load());
     const auth = getAuth();
@@ -396,6 +435,7 @@ export function createMockFinanceRpc(
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration();
+        if (name === 'get_finance_documents') return getFinanceDocuments(args);
         if (name === 'save_finance_configuration') return saveFinanceConfiguration(args);
         if (name === 'create_financial_document_transaction') return createTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
