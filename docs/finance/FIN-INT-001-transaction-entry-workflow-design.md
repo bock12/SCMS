@@ -237,3 +237,14 @@ The Finance Officer ledger now includes a journal register, explicit posting con
 The CI lifecycle fixture posts an immediately approved receipt through the public API, checks its immutable posted state and posted-only account balance, checks a safe repeat call, and verifies a rejected pending-marker journal cannot be posted. No direct journal-table DML grant was introduced.
 
 Remaining: move the legacy department/event spending analytics and PDF/CSV reporting onto canonical posted journal lines; add database-backed finance configuration APIs; and reconcile the mock's fixed approver assignments with the permission-based SQL approval model before treating the two implementations as behaviorally interchangeable.
+
+
+## Posted-journal reporting checkpoint — 2026-11-18
+
+Official CSV and printable/PDF reporting now uses `buildPostedFinanceReport` from `financeReportService.ts`. It selects posted journals first, then calculates base-currency revenue, expenses, net operating position and account balances from their journal lines. It supports all-time, last-seven-days, current-month, current-quarter and current-year periods. Currency totals remain separated by base currency.
+
+The Finance Officer ledger's old FinancialRecord-based CSV/PDF export actions have been removed. The previous spending chart, which mixed recorded legacy expenses with approved/disbursed department and event budget amounts, has also been removed. Legacy financial records remain visible for reference with a warning that they are not the accounting ledger and are excluded from official reports.
+
+Department requisition and event-budget approval/disbursement screens now explain that their workflow statuses are not accounting postings. The disbursement handlers continue to fail closed while the legacy persistence function is disabled. There is currently no canonical source relationship linking a department requisition or event budget to a financial document and journal. Therefore, department/event actual expenditure cannot be accurately derived yet; chart-of-accounts expense balances are the supported posted accounting projection until that source-linking task is completed.
+
+Tests cover posted-only inclusion, draft/rejected exclusion, income/expense balance arithmetic, calendar period filtering and separation of base currencies.
