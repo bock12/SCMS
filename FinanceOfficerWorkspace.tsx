@@ -18,7 +18,6 @@ import {
   Trash2, Edit, AlertCircle, FileText, CheckCircle2, ArrowRightLeft,
   ArrowUpRight, ArrowDownRight, PieChart, Calendar, ShoppingCart, Send, FileCode, CheckSquare, Shield, Upload, Bell, CheckCircle
 } from 'lucide-react';
-import { PieChart as RechartsPieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface FinanceOfficerWorkspaceProps {
   profile: Profile | null;
@@ -885,7 +884,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                 <ShieldCheck size={12} className="text-amber-700" />
                 Finance Officer Console
               </span>
-              <span className="text-xs text-slate-400 font-semibold">• Currency: SLE</span>
+              <span className="text-xs text-slate-400 font-semibold">• Base currency: configured in Accounting Setup</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Church Financial Operations</h1>
             <p className="text-slate-500 text-xs sm:text-sm mt-0.5">
@@ -940,9 +939,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
           >
             <PieChart size={15} />
             <span>Financial Ledger</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">
-              {filteredRecords.length}
-            </span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
           </button>
 
           <button
@@ -1329,6 +1326,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {workspaceTab === 'requisitions' && (
         <div className="space-y-6">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+            <strong>Operational proposal workflow only.</strong> Pastor approval, finance approval and the disbursed status do not themselves create a posted accounting expense. Record the actual vendor payment through the canonical Finance transaction entry and post its journal. Automatic requisition-to-journal source linking is not yet implemented.
+          </div>
           {/* Requisitions Overview Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-1">
@@ -1661,6 +1661,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {/* --- WORKSPACE TAB 3: EVENT BUDGET APPROVALS --- */}
       {workspaceTab === 'event_budgets' && (
         <div className="space-y-6">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+            <strong>Budget approval is not a posted expense.</strong> Approved budgets and disbursement workflow records remain planning/operational data until a corresponding canonical payment journal is created and posted. Automatic event-budget-to-journal source linking is not yet implemented.
+          </div>
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
               <div>
