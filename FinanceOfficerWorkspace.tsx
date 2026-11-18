@@ -1097,19 +1097,17 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
           {/* Quick Action Buttons - Touch friendly 2-col on mobile, flex on desktop */}
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
             <button
-              disabled
-              title="Secure income entry is being integrated"
-              onClick={() => setShowIncomeModal(true)}
-              className="px-3.5 sm:px-4 py-2.5 bg-slate-300 text-slate-600 rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-not-allowed transition-all min-h-[44px]"
+              title="Open canonical receipt entry"
+              onClick={() => setWorkspaceTab('setup')}
+              className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
             >
               <Plus size={16} />
               <span>Record Income</span>
             </button>
 
             <button
-              disabled
-              title="Secure expense entry is being integrated"
-              onClick={() => setShowExpenseModal(true)}
+              title="Open canonical payment entry"
+              onClick={() => setWorkspaceTab('setup')}
               className="px-3.5 sm:px-4 py-2.5 bg-slate-300 text-slate-600 rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-not-allowed transition-all min-h-[44px]"
             >
               <Plus size={16} />
