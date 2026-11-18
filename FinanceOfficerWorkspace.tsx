@@ -1239,7 +1239,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                   Ministry & Department Spending Breakdown
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Visual distribution of operational expenses, event allocations, and ministry department requisitions across the cathedral lifecycle.
+                  Legacy operational planning view combining expense projections and ministry/event allocations. It is not a posted-journal balance or an accounting statement.
                 </p>
               </div>
 
