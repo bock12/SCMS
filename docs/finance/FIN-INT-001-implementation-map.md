@@ -125,7 +125,6 @@ Still outstanding:
 2. Add database-backed finance configuration read/write APIs for currencies, chart accounts, financial accounts, funds, periods and approval policies. The Accounting Setup UI currently persists only to the development mock.
 3. Migrate event budgets to `budgets`/`budget_lines` and approval routines; design a real requisition domain before retiring the local requisition workflow.
 4. Replace department/event local ledgers and legacy summary/report calculations with projections from posted journal lines.
-5. Add controlled journal posting UI and live-ready account/category selectors only after the configuration/read APIs are integrated.
 
 The legacy `financial_records` table remains absent from the PostgreSQL baseline. No direct finance-table DML grants were added. No live Supabase project was connected or changed; CI uses a disposable PostgreSQL 17 database. Build/test success does not establish browser/runtime behavior.
 
