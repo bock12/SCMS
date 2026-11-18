@@ -90,3 +90,21 @@ The mock validates configuration before persistence and applies the selected amo
 Validation on commit `4268ffcffee0f5f93d3e4ff6dbf2a593a0690b7c`: Bun tests and Vite build passed in SCMS Build Validation run [44187912207](https://github.com/bock12/SCMS/actions/runs/44187912207).
 
 **Remaining:** connect the receipt/payment forms to the canonical account, category, currency and fund selectors; submit through `financeTransactionService.ts`; display approval status and refresh the canonical ledger. Do not enable the existing legacy save handlers or disbursement flows. No live Supabase write, migration replay or deployment was performed.
+
+
+## Receipt/payment entry and approval queue — 2026-11-18
+
+The canonical receipt/payment entry form and Finance Officer workflow list are now connected on `main`.
+
+Implemented:
+- `FinanceTransactionEntryWorkspace.tsx` loads canonical currencies, financial accounts, chart categories and funds; submits receipts/payments only through `financeTransactionService.ts`.
+- `FinanceDocumentWorkflowWorkspace.tsx` displays canonical mock financial documents, approval progress, linked-journal state and pending approval actions.
+- `financeDocumentWorkflowService.ts` provides the typed document-list and approval-decision boundary.
+- `mockFinanceRpc.ts` now implements `get_finance_documents`, returning only branch-visible documents and exposing an actionable approval step only to its assigned approver with `approve_finances`.
+- The mock document stores its approval-request ID, and tests cover approval progress, assigned approver action and branch/auth visibility.
+- The workflow list is mounted in the Finance Officer Ledger tab. Quick actions route to the canonical entry workspace.
+- Legacy demo FinancialRecord save handlers and legacy disbursement persistence remain disabled.
+
+Validation on commit `8c4723ac72ef3f0a5ca56cd9c69a0e50dae058d4`: Bun automated tests and Vite build passed in SCMS Build Validation run [44208093229](https://github.com/bock12/SCMS/actions/runs/44208093229).
+
+**Important boundary:** `get_finance_documents` is currently implemented in the development mock RPC adapter only. The SQL/public API does not yet expose this listing RPC. No live Supabase migration replay, deployment or data writes have occurred. The older summary metrics and legacy requisition/event disbursement surfaces are not yet converted into posted-journal projections.
