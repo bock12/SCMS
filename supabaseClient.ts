@@ -1897,6 +1897,8 @@ export const supabase = {
     if (functionName === 'create_financial_document_transaction' ||
         functionName === 'decide_financial_document_approval' ||
         functionName === 'get_finance_documents' ||
+        functionName === 'get_finance_journals' ||
+        functionName === 'post_finance_journal_entry' ||
         functionName === 'post_journal_entry') {
       return mockFinanceRpc.rpc(functionName, args);
     }
