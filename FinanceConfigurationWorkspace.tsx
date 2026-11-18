@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { getFinanceConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
+import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 
 interface FinanceConfigurationWorkspaceProps {
   branchId: string | null;
@@ -273,7 +274,10 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
           <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version}</li>)}</ul>
         </div>
       </section>
+
       <p className="text-xs text-slate-500">Configuration is stored in the development mock finance store. It is not a live Supabase write. Live database configuration still requires separately reviewed database routines and deployment approval.</p>
+
+      <FinanceTransactionEntryWorkspace branchId={branchId} />
     </div>
   );
 };
