@@ -200,15 +200,15 @@ BEGIN
 
   v_journal_listing := public.get_finance_journals(v_branch_id);
   IF NOT EXISTS (
-    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'journals') j
-    WHERE j->>'id' = v_journal_id::text
-      AND j->>'status' = 'posted'
-      AND j->>'can_post' = 'false'
+    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'journals') AS j(value)
+    WHERE j.value->>'id' = v_journal_id::text
+      AND j.value->>'status' = 'posted'
+      AND j.value->>'can_post' = 'false'
   ) OR NOT EXISTS (
-    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'account_balances') b
-    WHERE b->>'account_id' = v_cash_chart_id::text
-      AND (b->>'debit_total')::numeric = 125
-      AND (b->>'credit_total')::numeric = 0
+    SELECT 1 FROM jsonb_array_elements(v_journal_listing->'account_balances') AS b(value)
+    WHERE b.value->>'account_id' = v_cash_chart_id::text
+      AND (b.value->>'debit_total')::numeric = 125
+      AND (b.value->>'credit_total')::numeric = 0
   ) THEN
     RAISE EXCEPTION 'Journal listing or posted-only account balance projection is incorrect';
   END IF;
