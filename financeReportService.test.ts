@@ -54,6 +54,20 @@ describe('posted journal financial reports', () => {
     expect(report.account_balances.find(item => item.account_id === 'offering')?.balance).toBe(100);
   });
 
+  test('keeps operating totals separated by base currency', () => {
+    const usdJournal = journal({
+      id: 'usd-receipt', entry_number: 3, base_currency_code: 'USD', currency_code: 'USD',
+      lines: [
+        { id: 'usd-cash', line_number: 1, account_id: 'usd-cash', account_code: '1010', account_name: 'USD Cash', account_type: 'asset', normal_balance: 'debit', fund_id: null, branch_id: 'branch-1', profile_id: null, description: null, debit_amount: 50, credit_amount: 0, base_debit_amount: 50, base_credit_amount: 0 },
+        { id: 'usd-income', line_number: 2, account_id: 'usd-income', account_code: '4010', account_name: 'USD Income', account_type: 'income', normal_balance: 'credit', fund_id: null, branch_id: 'branch-1', profile_id: null, description: null, debit_amount: 0, credit_amount: 50, base_debit_amount: 0, base_credit_amount: 50 }
+      ]
+    });
+    const report = buildPostedFinanceReport(ledger(journal(), usdJournal));
+    expect(report.currency_summaries).toHaveLength(2);
+    expect(report.currency_summaries.find(item => item.base_currency_code === 'SLE')?.revenue).toBe(100);
+    expect(report.currency_summaries.find(item => item.base_currency_code === 'USD')?.revenue).toBe(50);
+  });
+
   test('applies calendar week, month, quarter and year boundaries', () => {
     const now = new Date('2026-11-18T12:00:00');
     expect(isWithinFinanceReportPeriod('2026-11-12', 'week', now)).toBe(true);
