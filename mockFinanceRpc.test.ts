@@ -415,6 +415,47 @@ describe('canonical finance configuration RPCs', () => {
 });
 
 
+describe('finance configuration authorization parity', () => {
+  test('branch finance managers cannot modify church-wide chart configuration', async () => {
+    const ctx = fixture();
+    const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
+    expect(loaded.error).toBeNull();
+    const before = ctx.read();
+    const changed = structuredClone(loaded.data);
+    changed.chartAccounts[0].name = 'Unauthorized chart change';
+
+    const saved = await ctx.rpc.rpc('save_finance_configuration', {
+      p_branch_id: 'branch-a',
+      p_configuration: changed
+    });
+
+    expect(saved.error?.code).toBe('42501');
+    expect(saved.error?.message).toContain('church-level');
+    expect(ctx.read().chartAccounts).toEqual(before.chartAccounts);
+  });
+
+  test('branch finance managers cannot add a church-wide approval policy', async () => {
+    const ctx = fixture();
+    const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
+    expect(loaded.error).toBeNull();
+    const changed = structuredClone(loaded.data);
+    changed.approvalPolicies.push({
+      id: 'church-policy-new', name: 'Church-wide policy',
+      transaction_type: 'financial_document', branch_id: null,
+      version: 1, effective_from: '2026-11-19', is_active: true
+    });
+
+    const saved = await ctx.rpc.rpc('save_finance_configuration', {
+      p_branch_id: 'branch-a',
+      p_configuration: changed
+    });
+
+    expect(saved.error?.code).toBe('42501');
+    expect(saved.error?.message).toContain('Church-wide approval policies');
+    expect(ctx.read().approvalPolicies.some(policy => policy.id === 'church-policy-new')).toBe(false);
+  });
+});
+
 describe('finance configuration scope', () => {
   test('preserves other branch configuration when a branch manager saves their own scope', async () => {
     const ctx = fixture();
