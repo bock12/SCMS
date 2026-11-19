@@ -46,6 +46,7 @@ DECLARE
   v_policy5_id uuid := '96000000-0000-4000-8000-000000000023';
   v_band5_id uuid := '96000000-0000-4000-8000-000000000024';
   v_step5_id uuid := '96000000-0000-4000-8000-000000000025';
+  v_global_policy_id uuid := '96000000-0000-4000-8000-000000000026';
 BEGIN
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
@@ -455,6 +456,16 @@ BEGIN
     IF SQLERRM = 'FIN_INT_EXPECTED_PENDING_JOURNAL_POSTING_DENIAL' THEN RAISE; END IF;
     IF position('before approval' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
   END;
+
+  -- A branch Finance Officer may see church-wide fallback policies but must
+  -- not need church-wide manage_finances permission merely to retain them.
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_global_policy_id, 'FIN-INT Global Fallback Policy', 'financial_document',
+    NULL, 1, '2099-01-01', true, v_profile_id
+  );
 
   -- Branch-scoped finance configuration read and save APIs.
   v_configuration := public.get_finance_configuration(v_branch_id);
