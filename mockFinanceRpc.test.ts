@@ -5,17 +5,22 @@ function fixture(options: { churchFinance?: boolean; emptyApprovalPolicy?: boole
   const state: MockFinanceState = {
     ...createEmptyMockFinanceState(),
     profiles: [
-      { id: 'creator', auth_user_id: 'user-creator' },
-      { id: 'approver-1', auth_user_id: 'user-approver-1' },
-      { id: 'approver-2', auth_user_id: 'user-approver-2' }
+      { id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-a', first_name: 'Test', last_name: 'Submitter', membership_status: 'active', record_status: 'active' },
+      { id: 'approver-1', auth_user_id: 'user-approver-1', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' },
+      { id: 'approver-2', auth_user_id: 'user-approver-2', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' },
+      { id: 'member', auth_user_id: 'user-member', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' }
     ],
     permissions: [
       { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-a' },
+      { profile_id: 'creator', permission: 'submit_requisitions', branch_id: 'branch-a' },
+      { profile_id: 'approver-1', permission: 'approve_requisitions', branch_id: 'branch-a' },
+      { profile_id: 'approver-2', permission: 'approve_requisitions', branch_id: 'branch-a' },
       ...(options.churchFinance ? [{ profile_id: 'creator', permission: 'manage_finances', branch_id: null }] : []),
       { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-a' },
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
+    ministries: [{ id: 'ministry-a', branch_id: 'branch-a', name: 'Worship Ministry', entity_type: 'department', status: 'active' }],
     currencies: ['SLL', 'USD'],
     baseCurrencyCode: 'SLL',
     chartAccounts: [
@@ -714,5 +719,108 @@ describe('mock requisition approval configuration RPCs', () => {
 
     expect(result.error?.message).toContain('numbered consecutively');
     expect(ctx.read().approvalPolicies.some(policy => policy.transaction_type === 'requisition')).toBe(false);
+  });
+});
+
+
+describe('mock department requisition lifecycle RPCs', () => {
+  async function createRequisitionPolicy(ctx: ReturnType<typeof fixture>) {
+    const result = await ctx.rpc.rpc('save_requisition_approval_policy', {
+      p_branch_id: 'branch-a',
+      p_name: 'Department Requisition Policy',
+      p_min_amount_base: 0,
+      p_max_amount_base: null,
+      p_steps: [
+        { step_number: 1, required_approvals: 1 },
+        { step_number: 2, required_approvals: 1 }
+      ]
+    });
+    expect(result.error).toBeNull();
+    return result.data;
+  }
+
+  const requisitionArgs = {
+    p_branch_id: 'branch-a',
+    p_ministry_id: 'ministry-a',
+    p_title: 'Audio equipment for worship team',
+    p_description: 'Replacement equipment for weekly services',
+    p_requested_amount: 150,
+    p_currency_code: 'SLL',
+    p_exchange_rate_to_base: 1,
+    p_priority: 'high',
+    p_needed_by_date: '2026-12-15',
+    p_vendor_quote_reference: 'QUOTE-001',
+    p_items: [
+      { item_name: 'Microphone stand', quantity: 2, unit_price: 50 },
+      { item_name: 'Audio cable', quantity: 1, unit_price: 50 }
+    ]
+  };
+
+  test('submits a pending requisition with reconciled item lines and no payment journal', async () => {
+    const ctx = fixture();
+    await createRequisitionPolicy(ctx);
+    const result = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
+
+    expect(result.error).toBeNull();
+    expect(result.data.status).toBe('pending_approval');
+    const state = ctx.read();
+    expect(state.requisitions).toHaveLength(1);
+    expect(state.requisitionItems).toHaveLength(2);
+    expect(state.requisitionItems.reduce((sum, item) => sum + Number(item.line_total), 0)).toBe(150);
+    expect(state.approvalRequests.find(item => item.id === result.data.approval_request_id)?.transaction_type).toBe('requisition');
+    expect(state.documents).toHaveLength(0);
+    expect(state.journals).toHaveLength(0);
+  });
+
+  test('exposes the current approval step and advances through ordered decisions', async () => {
+    const ctx = fixture();
+    await createRequisitionPolicy(ctx);
+    const submitted = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
+    expect(submitted.error).toBeNull();
+
+    const submitterView = await ctx.rpc.rpc('get_department_requisitions', { p_branch_id: 'branch-a' });
+    expect(submitterView.error).toBeNull();
+    expect(submitterView.data).toHaveLength(1);
+    expect(submitterView.data[0].approval_steps[0].actor_can_decide).toBe(false);
+
+    const requestId = submitted.data.approval_request_id;
+    const steps = ctx.read().approvalSteps.filter(step => step.approval_request_id === requestId)
+      .sort((a, b) => a.step_order - b.step_order);
+    ctx.setUser('user-approver-1');
+    const firstApproverView = await ctx.rpc.rpc('get_department_requisitions', { p_branch_id: 'branch-a' });
+    expect(firstApproverView.data[0].approval_steps[0].actor_can_decide).toBe(true);
+    const firstDecision = await ctx.rpc.rpc('decide_department_requisition_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved', p_comments: 'Pastoral approval'
+    });
+    expect(firstDecision.error).toBeNull();
+    expect(firstDecision.data.status).toBe('pending_approval');
+
+    ctx.setUser('user-approver-2');
+    const secondApproverView = await ctx.rpc.rpc('get_department_requisitions', { p_branch_id: 'branch-a' });
+    expect(secondApproverView.data[0].approval_steps[0].actor_can_decide).toBe(false);
+    expect(secondApproverView.data[0].approval_steps[1].actor_can_decide).toBe(true);
+    const finalDecision = await ctx.rpc.rpc('decide_department_requisition_approval', {
+      p_request_step_id: steps[1].id, p_decision: 'approved', p_comments: 'Finance approval'
+    });
+    expect(finalDecision.error).toBeNull();
+    expect(finalDecision.data.status).toBe('approved');
+    expect(ctx.read().requisitions[0].approved_by_profile_id).toBe('approver-2');
+  });
+
+  test('fails closed for missing policy, invalid item totals and unauthorized submitters', async () => {
+    const ctx = fixture();
+    const noPolicy = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
+    expect(noPolicy.error?.message).toContain('No active requisition approval policy');
+
+    await createRequisitionPolicy(ctx);
+    const invalidTotal = await ctx.rpc.rpc('submit_department_requisition', {
+      ...requisitionArgs, p_requested_amount: 151
+    });
+    expect(invalidTotal.error?.message).toContain('sum of the requisition item lines');
+
+    ctx.setUser('user-member');
+    const unauthorized = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
+    expect(unauthorized.error?.message).toContain('Insufficient permission');
+    expect(ctx.read().requisitions).toHaveLength(0);
   });
 });
