@@ -205,7 +205,7 @@ revoke all on function public.save_requisition_approval_policy(uuid, text, numer
   from public, anon, authenticated, service_role;
 grant execute on function public.get_requisition_approval_configuration(uuid)
   to authenticated;
-grant execute on function public.save_requisition_approval_policy(uuid, text, numeric, numeric, integer)
+grant execute on function public.save_requisition_approval_policy(uuid, text, numeric, numeric, jsonb)
   to authenticated;
 
 commit;
