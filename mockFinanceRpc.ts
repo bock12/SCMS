@@ -923,6 +923,9 @@ export function createMockFinanceRpc(
       return fail('Chart account codes must be unique');
     }
     const chartIds = new Set(chartAccounts.map((a: any) => a.id));
+    if (config.financialAccounts.some((a: any) => (a.branch_id ?? null) !== branchId)) {
+      return fail('Financial accounts must match the requested branch scope');
+    }
     if (config.financialAccounts.some((a: any) => !a.id || !a.name?.trim() || !currencies.includes(a.currency_code) ||
       !chartIds.has(a.chart_account_id) || !['cash', 'bank', 'mobile_money', 'clearing'].includes(a.account_type))) {
       return fail('Financial accounts require a name, supported currency, valid chart account and account type');
