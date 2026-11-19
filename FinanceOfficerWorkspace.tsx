@@ -942,9 +942,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
               </span>
               <span className="text-xs text-slate-400 font-semibold">• Base currency: configured in Accounting Setup</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Church Financial Operations</h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{canViewFinance ? 'Church Financial Operations' : 'Requisition Approvals'}</h1>
             <p className="text-slate-500 text-xs sm:text-sm mt-0.5">
-              Create canonical receipts and payments, review approval workflows, explicitly post journals and monitor posted accounting balances.
+              {canViewFinance ? 'Create canonical receipts and payments, review approval workflows, explicitly post journals and monitor posted accounting balances.' : 'Review branch requisitions and record only the approval step assigned to your permissions.'}
             </p>
           </div>
 
