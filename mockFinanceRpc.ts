@@ -343,6 +343,8 @@ export function createMockFinanceRpc(
     const steps = approvers.map(item => ({
       id: id(state, 'step'), approval_request_id: requestId, step_order: item.stepOrder,
       approver_profile_id: item.profileId, required_permission_key: item.permission,
+      required_approvals: Number(policySteps.find(policyStep => Number(policyStep.step_number) === item.stepOrder)?.required_approvals || 1),
+      prohibit_submitter_approval: Boolean(policySteps.find(policyStep => Number(policyStep.step_number) === item.stepOrder)?.prohibit_submitter_approval),
       status: 'pending', decision: null, comments: null
     })).sort((a, b) => a.step_order - b.step_order);
     state.budgets.push(budget);
@@ -371,12 +373,16 @@ export function createMockFinanceRpc(
     if (step.approver_profile_id !== actor.id || !hasPermission(state, actor.id, requiredPermission, budget.branch_id)) {
       return fail('You are not authorized to decide this event budget approval step', '42501');
     }
-    if (request.submitted_by_profile_id === actor.id) return fail('The budget submitter cannot approve their own event budget', '42501');
-    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
-    if (state.approvalSteps.some(item => item.approval_request_id === request.id &&
-      item.step_order < step.step_order && item.status === 'pending')) {
-      return fail('Earlier approval steps must be completed first');
+    if (step.prohibit_submitter_approval && request.submitted_by_profile_id === actor.id) {
+      return fail('The budget submitter cannot approve their own event budget', '42501');
     }
+    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
+    const priorSteps = state.approvalSteps.filter(item => item.approval_request_id === request.id && item.step_order < step.step_order);
+    const priorGroups = [...new Set(priorSteps.map(item => item.step_order))];
+    if (priorGroups.some(order => {
+      const group = priorSteps.filter(item => item.step_order === order);
+      return group.filter(item => item.status === 'approved').length < Number(group[0]?.required_approvals || 1);
+    })) return fail('Earlier approval steps must be completed first');
     step.decision = args.p_decision;
     step.comments = String(args.p_comments || '').trim() || null;
     step.status = args.p_decision;
@@ -384,9 +390,11 @@ export function createMockFinanceRpc(
       request.status = 'rejected';
       budget.status = 'rejected';
     } else {
+      const currentGroup = state.approvalSteps.filter(item => item.approval_request_id === request.id && item.step_order === step.step_order);
+      const currentGroupComplete = currentGroup.filter(item => item.status === 'approved').length >= Number(step.required_approvals || 1);
       const nextPending = state.approvalSteps.some(item => item.approval_request_id === request.id &&
         item.step_order > step.step_order && item.status === 'pending');
-      if (!nextPending) {
+      if (currentGroupComplete && !nextPending) {
         request.status = 'approved';
         budget.status = 'approved';
         budget.approved_at = new Date().toISOString();
