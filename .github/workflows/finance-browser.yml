@@ -1,0 +1,43 @@
+name: SCMS Finance Browser Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scms-finance-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  finance-browser:
+    name: Finance mock browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install application dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install isolated Playwright runner
+        run: npm install --no-save --package-lock=false @playwright/test
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run finance browser smoke test
+        run: npx playwright test
+        env:
+          CI: 'true'
