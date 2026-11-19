@@ -540,7 +540,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
           </div>
 
-          <h3 style="font-size: 14px; margin-bottom: 10px;">Itemized Procurement Invoice Breakdown</h3>
+          <h3 style="font-size: 14px; margin-bottom: 10px;">Requisition Item Breakdown</h3>
           <table>
             <thead>
               <tr>
@@ -580,7 +580,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
             <div>
               <div class="sig-line"></div>
-              <strong>Finance Officer Approval</strong><br/>
+              <strong>Requisition Approval</strong><br/>
               ${profile ? `${profile.first_name} ${profile.last_name}` : 'Treasury Controller'}
             </div>
             <div>
@@ -901,7 +901,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
   return (
     <div className="space-y-6 pb-24 lg:pb-0">
-      {/* Finance Officer Notification Alert for Pending Ministry Proposals */}
+      {/* Requisition Approver Alert for Pending Ministry Requests */}
       {pendingReqsCount > 0 && (
         <div className="p-4 bg-gradient-to-r from-indigo-900 via-indigo-800 to-indigo-900 text-white rounded-3xl shadow-lg border border-indigo-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
           <div className="flex items-start gap-3">
@@ -923,7 +923,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             onClick={() => setWorkspaceTab('requisitions')}
             className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all shrink-0 cursor-pointer"
           >
-            Review Proposals & Issue Invoices &rarr;
+            Review Requisitions &rarr;
           </button>
         </div>
       )}
