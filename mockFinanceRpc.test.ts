@@ -429,6 +429,7 @@ describe('finance configuration scope', () => {
       { id: 'account-b', branch_id: 'branch-b', name: 'Other Branch Account', account_type: 'bank', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-a' }
     ];
     state.funds = [{ id: 'fund-a', code: 'GEN', name: 'General Fund', fund_type: 'general', is_default: true, is_active: true }];
+    state.approvalPolicies[0].name = 'Branch Financial Policy';
     state.periods = [];
     state.financialYears = [];
     const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) },
