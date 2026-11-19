@@ -13,8 +13,11 @@ export interface MockFinanceState {
   financialYears: Array<Record<string, any>>;
   approvalPolicyBands: Array<Record<string, any>>;
   approvalPolicySteps: Array<Record<string, any>>;
+  events: Array<{ id: string; branch_id: string; name?: string; title?: string; [key: string]: any }>;
+  budgets: Array<Record<string, any>>;
+  budgetLines: Array<Record<string, any>>;
   approvalPolicies: Array<{
-    id: string; is_active: boolean; transaction_type: 'financial_document';
+    id: string; is_active: boolean; transaction_type: 'financial_document' | 'budget';
     branch_id: string | null; min_amount: number; max_amount: number | null;
     approver_profile_ids: string[];
   }>;
@@ -59,6 +62,9 @@ export function createBrowserMockFinanceStorage(
           typeof parsed.nextId !== 'number' || !Number.isInteger(parsed.nextId) || parsed.nextId < 1) {
         throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
       }
+      parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
+      parsed.budgets = Array.isArray(parsed.budgets) ? parsed.budgets : [];
+      parsed.budgetLines = Array.isArray(parsed.budgetLines) ? parsed.budgetLines : [];
       return parsed;
     },
     save(state) { storage.setItem(key, JSON.stringify(state)); }
@@ -74,8 +80,8 @@ export function createEmptyMockFinanceState(): MockFinanceState {
   return {
     profiles: [], permissions: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
-    approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], documents: [], journals: [], journalLines: [],
-    approvalRequests: [], approvalSteps: [], nextId: 1
+    approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
+    documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], nextId: 1
   };
 }
 
@@ -94,8 +100,8 @@ export function createMockFinanceRpc(
     state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
       (p.branch_id === null || p.branch_id === branchId));
 
-  function createTransaction(args: Record<string, any>) {
-    const state = clone(storage.load());
+  function createTransaction(args: Record<string, any>, stateOverride?: MockFinanceState, persist = true) {
+    const state = stateOverride ?? clone(storage.load());
     const auth = getAuth();
     if (!auth.userId) return fail('Authentication required', '42501');
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
@@ -195,7 +201,7 @@ export function createMockFinanceRpc(
     }));
     state.documents.push(document); state.journals.push(journal); state.journalLines.push(...lines);
     state.approvalRequests.push(request); state.approvalSteps.push(...steps);
-    storage.save(state);
+    if (persist) storage.save(state);
     return success({ document_id: documentId, journal_entry_id: journalId, approval_request_id: requestId, status: docStatus });
   }
 
@@ -236,6 +242,242 @@ export function createMockFinanceRpc(
   function persistDecision(state: MockFinanceState, request: Record<string, any>, document: Record<string, any>, journalId: string | null) {
     storage.save(state);
     return success({ document_id: document.id, approval_request_id: request.id, journal_entry_id: journalId, approval_status: request.status });
+  }
+
+
+  function submitEventBudgetForApproval(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const event = state.events.find(item => item.id === args.p_event_id);
+    if (!event) return fail('Event does not exist in the local mock event store');
+    const branchId = event.branch_id;
+    if (!branchId || !hasPermission(state, actor.id, 'manage_finances', branchId)) {
+      return fail('Insufficient permission to submit an event budget for this branch', '42501');
+    }
+    const period = state.periods.find(item => item.id === args.p_period_id &&
+      item.status === 'open' && item.year_status === 'open');
+    if (!period) return fail('Selected financial period and year must be open');
+    const name = String(args.p_name || '').trim();
+    const currency = String(args.p_currency_code || '').trim().toUpperCase();
+    const rate = Number(args.p_exchange_rate_to_base);
+    const lines = args.p_lines;
+    if (!name || currency.length !== 3 || !Number.isFinite(rate) || rate <= 0 || !Array.isArray(lines)) {
+      return fail('Event, period, name, currency, exchange rate and budget lines are required');
+    }
+    if (!state.baseCurrencyCode || !state.currencies.includes(currency)) return fail('A valid event budget currency is required');
+    if (currency === state.baseCurrencyCode && rate !== 1) return fail('Exchange rate must be 1 for the base currency');
+    if (!lines.length) return fail('An event budget requires at least one positive budget line');
+    const normalizedLines = [];
+    let total = 0;
+    for (const line of lines) {
+      const amount = Number(line.allocated_amount);
+      const account = state.chartAccounts.find(item => item.id === line.account_id &&
+        item.is_active && !item.is_control_account && item.account_type === 'expense');
+      const fund = line.fund_id == null ? null : state.funds.find(item => item.id === line.fund_id && item.is_active);
+      if (!Number.isFinite(amount) || amount < 0 || !account || (line.fund_id != null && !fund)) {
+        return fail('Budget lines must use active expense accounts and active funds with non-negative amounts');
+      }
+      total += amount;
+      normalizedLines.push({
+        id: id(state, 'budget-line'), account_id: account.id, fund_id: line.fund_id ?? null,
+        description: String(line.description || '').trim() || null, allocated_amount: amount
+      });
+    }
+    total = round4(total);
+    if (total <= 0) return fail('An event budget requires a positive budget total');
+
+    const today = new Date().toISOString().slice(0, 10);
+    const policy = state.approvalPolicies
+      .filter(item => item.is_active && item.transaction_type === 'budget' &&
+        (item.branch_id == null || item.branch_id === branchId) &&
+        (!item.effective_from || item.effective_from <= today) &&
+        (!item.effective_to || item.effective_to >= today))
+      .sort((a, b) => Number(b.branch_id != null) - Number(a.branch_id != null))[0];
+    if (!policy) return fail('No active event budget approval policy is configured');
+    const baseAmount = round4(total * rate);
+    const band = state.approvalPolicyBands.find(item => item.policy_id === policy.id &&
+      baseAmount >= Number(item.min_amount_base) &&
+      (item.max_amount_base == null || baseAmount < Number(item.max_amount_base)));
+    if (!band) return fail('No event budget approval threshold band covers this amount');
+    const policySteps = state.approvalPolicySteps.filter(item => item.band_id === band.id)
+      .sort((a, b) => Number(a.step_number) - Number(b.step_number));
+    if (!policySteps.length) return fail('Event budget approval policy must contain at least one approval step');
+    const approvers = [];
+    for (const policyStep of policySteps) {
+      const permission = policyStep.required_permission_key || 'approve_finances';
+      const ids = policyStep.approver_profile_ids || [];
+      if (ids.length < Number(policyStep.required_approvals || 1)) {
+        return fail('Event budget approval step does not have enough configured approvers');
+      }
+      for (const profileId of ids) {
+        const profile = state.profiles.find(item => item.id === profileId && item.status !== 'suspended' && item.status !== 'archived');
+        if (!profile || !hasPermission(state, profileId, permission, branchId)) {
+          return fail('Every event budget approver must be active and hold the required branch permission', '42501');
+        }
+        approvers.push({ profileId, stepOrder: Number(policyStep.step_number), permission });
+      }
+    }
+    if (!approvers.length || new Set(approvers.map(item => item.profileId + ':' + item.stepOrder)).size !== approvers.length) {
+      return fail('Event budget approval policy has invalid or duplicate approvers');
+    }
+
+    const budgetId = id(state, 'budget');
+    const requestId = id(state, 'approval');
+    const budget = {
+      id: budgetId, name, budget_type: 'event', branch_id: branchId, event_id: event.id,
+      period_id: period.id, currency_code: currency, exchange_rate_to_base: rate,
+      base_currency_code: state.baseCurrencyCode, status: 'pending_approval',
+      submitted_by_profile_id: actor.id, approval_request_id: requestId, total_budget: total,
+      approved_at: null, payment_document_id: null, created_at: new Date().toISOString()
+    };
+    const request = {
+      id: requestId, transaction_type: 'budget', target_id: budgetId, branch_id: branchId,
+      status: 'pending', policy_id: policy.id, submitted_by_profile_id: actor.id,
+      amount_base: baseAmount, policy_version: policy.version ?? null,
+      policy_snapshot: { name: policy.name, version: policy.version, band_id: band.id }
+    };
+    const steps = approvers.map(item => ({
+      id: id(state, 'step'), approval_request_id: requestId, step_order: item.stepOrder,
+      approver_profile_id: item.profileId, required_permission_key: item.permission,
+      status: 'pending', decision: null, comments: null
+    })).sort((a, b) => a.step_order - b.step_order);
+    state.budgets.push(budget);
+    state.budgetLines.push(...normalizedLines.map(line => ({ ...line, budget_id: budgetId })));
+    state.approvalRequests.push(request);
+    state.approvalSteps.push(...steps);
+    storage.save(state);
+    return success({ budget_id: budgetId, approval_request_id: requestId, status: 'pending_approval',
+      total_budget: total, currency_code: currency });
+  }
+
+  function decideEventBudgetApproval(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const step = state.approvalSteps.find(item => item.id === args.p_request_step_id);
+    const request = step && state.approvalRequests.find(item => item.id === step.approval_request_id && item.transaction_type === 'budget');
+    const budget = request && state.budgets.find(item => item.id === request.target_id && item.budget_type === 'event');
+    if (!step || !request || !budget || budget.approval_request_id !== request.id) {
+      return fail('Approval step is not an event budget approval');
+    }
+    if (step.status !== 'pending' || request.status !== 'pending') return fail('Approval step is no longer pending');
+    const requiredPermission = step.required_permission_key || 'approve_finances';
+    if (step.approver_profile_id !== actor.id || !hasPermission(state, actor.id, requiredPermission, budget.branch_id)) {
+      return fail('You are not authorized to decide this event budget approval step', '42501');
+    }
+    if (request.submitted_by_profile_id === actor.id) return fail('The budget submitter cannot approve their own event budget', '42501');
+    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
+    if (state.approvalSteps.some(item => item.approval_request_id === request.id &&
+      item.step_order < step.step_order && item.status === 'pending')) {
+      return fail('Earlier approval steps must be completed first');
+    }
+    step.decision = args.p_decision;
+    step.comments = String(args.p_comments || '').trim() || null;
+    step.status = args.p_decision;
+    if (args.p_decision === 'rejected') {
+      request.status = 'rejected';
+      budget.status = 'rejected';
+    } else {
+      const nextPending = state.approvalSteps.some(item => item.approval_request_id === request.id &&
+        item.step_order > step.step_order && item.status === 'pending');
+      if (!nextPending) {
+        request.status = 'approved';
+        budget.status = 'approved';
+        budget.approved_at = new Date().toISOString();
+        budget.approved_by_profile_id = actor.id;
+      }
+    }
+    storage.save(state);
+    return success({ approval_status: request.status, budget_id: budget.id, status: budget.status });
+  }
+
+  function createEventBudgetPayment(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const budget = state.budgets.find(item => item.id === args.p_budget_id && item.budget_type === 'event');
+    if (!budget) return fail('Approved event budget not found');
+    if (!hasPermission(state, actor.id, 'manage_finances', budget.branch_id)) {
+      return fail('Insufficient permission to create a payment for this event budget', '42501');
+    }
+    const request = state.approvalRequests.find(item => item.id === budget.approval_request_id &&
+      item.transaction_type === 'budget' && item.target_id === budget.id && item.status === 'approved');
+    if (budget.status !== 'approved' || !budget.approved_at || !request) {
+      return fail('Only an approved event budget can be paid');
+    }
+    if (state.documents.some(item => item.source_budget_id === budget.id)) {
+      return fail('An event budget payment is already linked to this budget', '23505');
+    }
+    const lines = state.budgetLines.filter(item => item.budget_id === budget.id);
+    const total = round4(lines.reduce((sum, item) => sum + Number(item.allocated_amount || 0), 0));
+    const amount = Number(args.p_amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > total) {
+      return fail('Payment amount must be positive and cannot exceed the approved event budget');
+    }
+    const rate = Number(args.p_exchange_rate_to_base ?? 1);
+    if (!args.p_transaction_date || rate !== Number(budget.exchange_rate_to_base)) {
+      return fail('Payment date and the approved budget exchange rate are required');
+    }
+    if (String(args.p_currency_code || budget.currency_code).trim().toUpperCase() !== budget.currency_code) {
+      return fail('Payment currency must match the approved event budget currency');
+    }
+    if (!lines.some(item => item.account_id === args.p_category_account_id &&
+      (item.fund_id ?? null) === (args.p_fund_id ?? null))) {
+      return fail('Payment expense account and fund must match an approved event budget line');
+    }
+    const txArgs = {
+      ...args,
+      p_document_type: 'payment',
+      p_branch_id: budget.branch_id,
+      p_currency_code: budget.currency_code,
+      p_exchange_rate_to_base: rate
+    };
+    const created = createTransaction(txArgs, state, false);
+    if (created.error) return created;
+    const document = state.documents.find(item => item.id === created.data.document_id);
+    if (!document || document.document_type !== 'payment' || document.branch_id !== budget.branch_id) {
+      return fail('Canonical payment could not be linked to the approved event budget');
+    }
+    document.source_budget_id = budget.id;
+    budget.payment_document_id = document.id;
+    storage.save(state);
+    return success({ ...created.data, source_budget_id: budget.id });
+  }
+
+  function getEventBudgets(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = args.p_branch_id ?? null;
+    const visible = state.budgets.filter(budget =>
+      budget.budget_type === 'event' && (!branchId || budget.branch_id === branchId) &&
+      (hasPermission(state, actor.id, 'view_finances', budget.branch_id) ||
+       hasPermission(state, actor.id, 'manage_finances', budget.branch_id) ||
+       hasPermission(state, actor.id, 'approve_finances', budget.branch_id))
+    );
+    return success({ budgets: visible.map(budget => {
+      const lines = state.budgetLines.filter(line => line.budget_id === budget.id).map(clone);
+      const document = state.documents.find(item => item.source_budget_id === budget.id);
+      const journal = document?.journal_entry_id
+        ? state.journals.find(item => item.id === document.journal_entry_id && item.status === 'posted')
+        : null;
+      const actual = journal ? state.journalLines
+        .filter(line => line.journal_entry_id === journal.id && Number(line.debit_amount) > 0 &&
+          state.chartAccounts.some(account => account.id === line.account_id && account.account_type === 'expense'))
+        .reduce((sum, line) => sum + Number(line.debit_amount || 0), 0) : 0;
+      return { ...clone(budget), lines, payment_document: document ? clone(document) : null,
+        posted_journal_entry_id: journal?.id ?? null, total_actual: round4(actual) };
+    }) });
   }
 
   function getFinanceConfiguration() {
@@ -507,7 +749,7 @@ export function createMockFinanceRpc(
       }
     }
     if (config.approvalPolicies.some((policy: any) => !policy.id || !policy.name?.trim() ||
-      policy.transaction_type !== 'financial_document' || !Number.isInteger(Number(policy.version)) ||
+      !['financial_document', 'budget'].includes(policy.transaction_type) || !Number.isInteger(Number(policy.version)) ||
       !policy.effective_from || (policy.effective_to && policy.effective_to < policy.effective_from))) {
       return fail('Approval policies require a name, version, transaction type and valid effective dates');
     }
@@ -574,6 +816,10 @@ export function createMockFinanceRpc(
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration();
+        if (name === 'submit_event_budget_for_approval') return submitEventBudgetForApproval(args);
+        if (name === 'decide_event_budget_approval') return decideEventBudgetApproval(args);
+        if (name === 'create_event_budget_payment') return createEventBudgetPayment(args);
+        if (name === 'get_event_budgets') return getEventBudgets(args);
         if (name === 'get_finance_documents') return getFinanceDocuments(args);
         if (name === 'get_finance_journals') return getFinanceJournals(args);
         if (name === 'post_finance_journal_entry') return postJournalEntry(args);
