@@ -118,7 +118,10 @@ begin
      or (p_max_amount_base is not null and p_max_amount_base <= p_min_amount_base) then
     raise exception 'A policy name and valid amount band are required';
   end if;
-  if jsonb_typeof(p_steps) is distinct from 'array' or jsonb_array_length(p_steps) = 0 then
+  if jsonb_typeof(p_steps) is distinct from 'array' then
+    raise exception 'Requisition approval steps must be supplied as an array';
+  end if;
+  if jsonb_array_length(p_steps) = 0 then
     raise exception 'At least one ordered requisition approval step is required';
   end if;
   select count(*) into v_step_count
