@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { getRequisitions, saveRequisitions } from './requisitionService';
-import { getEventBudgetApproval, submitEventBudgetForApproval } from './eventBudgetService';
+import { getEventBudgetApproval } from './eventBudgetService';
+import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { getChurchResources, getEventResourceReservations, saveEventResourceReservations, ChurchResource, EventResourceReservation } from './resourceService';
 import { getSurveyResponses, saveSurveyResponse, calculateSentimentSummary, SurveyResponse, SentimentSummary } from './surveyService';
 import { getEventAccount, fundEventAccount, disburseFromEventAccount, getRecurrenceBadge, calculateNextRecurrenceDate, advanceRecurringEventDate } from './eventAccountService';
@@ -36,6 +37,7 @@ interface EventWorkspaceModalProps {
   onClose: () => void;
   onUpdateEvent: (updated: ChurchEvent) => void;
   onRefreshData: () => void;
+  profileId?: string | null;
 }
 
 export const EventWorkspaceModal: React.FC<EventWorkspaceModalProps> = ({
@@ -44,7 +46,8 @@ export const EventWorkspaceModal: React.FC<EventWorkspaceModalProps> = ({
   registrations,
   onClose,
   onUpdateEvent,
-  onRefreshData
+  onRefreshData,
+  profileId = null
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'account' | 'qrpass' | 'team' | 'schedule' | 'tasks' | 'budget' | 'resources' | 'survey' | 'report' | 'rsvps'>('overview');
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -919,42 +922,8 @@ Currency: SLE`;
   };
 
   const handleSaveAndSubmitProforma = () => {
-    const validItems = proformaItems.filter(i => i.description.trim() !== '');
-    const grandTotal = validItems.reduce((sum, item) => sum + (item.total_price || 0), 0);
-    
-    const result = submitEventBudgetForApproval(
-      event.id,
-      event.title,
-      grandTotal > 0 ? grandTotal : 1000,
-      event.organizer_name || 'Event Manager',
-      validItems,
-      proformaNotes,
-      proformaInvoiceNo
-    );
-
-    const syncedExpenses: EventExpense[] = validItems.map(i => ({
-      id: `exp_${i.id}`,
-      event_id: event.id,
-      item_name: i.description,
-      category: i.category || 'Event Expense',
-      estimated_cost: i.total_price,
-      actual_cost: i.total_price,
-      status: 'planned'
-    }));
-    setExpenses(syncedExpenses);
-
-    try {
-      const saved = localStorage.getItem(storageKey);
-      const parsed = saved ? JSON.parse(saved) : {};
-      localStorage.setItem(storageKey, JSON.stringify({ ...parsed, expenses: syncedExpenses }));
-    } catch (err) {
-      console.error("Failed saving synced expenses", err);
-    }
-
-    setBudgetApproval(result);
-    setFundingRequestSuccess(`🎉 Proforma Invoice #${result.invoice_number} with ${validItems.length} items submitted to Finance Officer for approval!`);
+    setFundingRequestSuccess('Legacy localStorage submission is disabled. Use the canonical event budget workflow below to submit this event budget for approval.');
     setShowProformaModal(false);
-    setTimeout(() => setFundingRequestSuccess(null), 5000);
   };
 
   const handleSubmitBudgetForFinanceApproval = () => {
@@ -3477,6 +3446,7 @@ Currency: SLE`;
         {/* TAB 6: BUDGET & EXPENSE TRACKER */}
         {activeTab === 'budget' && (
           <div className="space-y-4">
+            <EventBudgetFinanceWorkspace branchId={event.branch_id || null} profileId={profileId} fixedEvent={{ id: event.id, title: event.title, finance_event_id: event.finance_event_id, branch_id: event.branch_id }} submissionOnly />
             {/* Automated Budget Approval Governance Banner */}
             <div className="bg-slate-900 text-white p-5 rounded-3xl border border-slate-800 shadow-md space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
@@ -3486,7 +3456,7 @@ Currency: SLE`;
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-black uppercase text-slate-300">Finance Officer Budget Governance</span>
+                      <span className="text-xs font-black uppercase text-slate-300">Legacy proposal history · read-only</span>
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
                         budgetApproval?.status === 'disbursed' ? 'bg-emerald-500 text-slate-950 font-black border border-emerald-400' :
                         budgetApproval?.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
