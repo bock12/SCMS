@@ -5,13 +5,16 @@ import {
   createEventBudgetPayment,
   decideEventBudgetApproval,
   getEventBudgets,
-  submitEventBudgetForApproval
+  submitEventBudgetForApproval,
+  getEventBudgetSubmissionOptions,
+  getMyEventBudgets
 } from './eventBudgetFinanceService';
 import { getFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 import type { FinancialPaymentMethod } from './financeTransactionService';
 
 interface Props { branchId: string | null; profileId: string | null; fixedEvent?: { id: string; title: string; finance_event_id?: string; branch_id?: string }; submissionOnly?: boolean; }
 type BudgetRecord = Record<string, any>;
+type WorkspaceConfiguration = Pick<FinanceConfiguration, 'currencies' | 'baseCurrencyCode' | 'chartAccounts' | 'funds' | 'periods'> & { financialAccounts?: FinanceConfiguration['financialAccounts'] };
 const fieldClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800';
 const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -28,7 +31,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
   const [budgetFundId, setBudgetFundId] = useState('');
   const [lineAmount, setLineAmount] = useState('');
   const [lineDescription, setLineDescription] = useState('');
-  const [configuration, setConfiguration] = useState<FinanceConfiguration | null>(null);
+  const [configuration, setConfiguration] = useState<WorkspaceConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,10 +49,17 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
 
   const reload = async () => {
     setLoading(true); setError(null);
+    const budgetRequest = submissionOnly && fixedEvent
+      ? getMyEventBudgets(fixedEvent)
+      : getEventBudgets(branchId);
+    const configurationRequest = submissionOnly && fixedEvent
+      ? getEventBudgetSubmissionOptions(fixedEvent)
+      : getFinanceConfiguration();
+    const eventRequest = fixedEvent
+      ? Promise.resolve({ data: null, error: null })
+      : supabase.from('events').select('*').order('title', { ascending: true });
     const [budgetResult, configResult, eventResult] = await Promise.all([
-      getEventBudgets(branchId),
-      getFinanceConfiguration(),
-      supabase.from('events').select('*').order('title', { ascending: true })
+      budgetRequest, configurationRequest, eventRequest
     ]);
     if (budgetResult.error) setError(budgetResult.error.message);
     else setBudgets(budgetResult.data?.budgets || []);
@@ -59,11 +69,10 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
     else if (eventResult.error) setError(current => current || eventResult.error.message);
     else setEvents((eventResult.data || []).filter((event: any) => !branchId || event.branch_id === branchId)
       .map((event: any) => ({ id: event.id, title: event.title || event.name || 'Church event', finance_event_id: event.finance_event_id, branch_id: event.branch_id })));
-    
     setLoading(false);
   };
 
-  useEffect(() => { void reload(); }, [branchId, fixedEvent?.id, fixedEvent?.finance_event_id]);
+  useEffect(() => { void reload(); }, [branchId, fixedEvent?.id, fixedEvent?.finance_event_id, submissionOnly]);
 
   const expenseAccounts = useMemo(() => (configuration?.chartAccounts || []).filter(account =>
     account.is_active && account.account_type === 'expense' && !account.is_control_account), [configuration]);
@@ -99,7 +108,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
 
   const availableFinancialAccounts = useMemo(() => {
     if (!configuration || !paymentBudget) return [];
-    return configuration.financialAccounts.filter(account => account.is_active &&
+    return (configuration.financialAccounts || []).filter(account => account.is_active &&
       account.currency_code === paymentBudget.currency_code &&
       (!account.branch_id || account.branch_id === paymentBudget.branch_id));
   }, [configuration, paymentBudget]);
@@ -114,7 +123,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
     const firstLine = budget.lines?.[0];
     setCategoryAccountId(firstLine?.account_id || '');
     setFundId(firstLine?.fund_id || '');
-    const account = configuration?.financialAccounts.find(item => item.is_active &&
+    const account = configuration?.financialAccounts?.find(item => item.is_active &&
       item.currency_code === budget.currency_code &&
       (!item.branch_id || item.branch_id === budget.branch_id));
     setFinancialAccountId(account?.id || '');
@@ -171,8 +180,8 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
     <section className="space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-indigo-700" /><h3 className="text-lg font-black text-slate-900">Canonical event budget workflow</h3></div>
-          <p className="mt-1 max-w-3xl text-xs text-slate-600">These budgets, approvals and payments are stored in the canonical finance workflow. Legacy localStorage proposals below are retained for reference and are not treated as approved accounting budgets.</p>
+          <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-indigo-700" /><h3 className="text-lg font-black text-slate-900">{submissionOnly ? 'Your event budget submissions' : 'Canonical event budget workflow'}</h3></div>
+          <p className="mt-1 max-w-3xl text-xs text-slate-600">{submissionOnly ? 'Submit an event budget and track its approval progress. Finance configuration, approval decisions and payments remain restricted to authorized finance roles.' : 'These budgets, approvals and payments are stored in the canonical finance workflow. Legacy localStorage proposals below are retained for reference and are not treated as approved accounting budgets.'}</p>
         </div>
         <div className="flex gap-2"><button type="button" className={buttonClass} onClick={() => void reload()}><RefreshCw size={14} /> Refresh</button><button type="button" className={buttonClass} onClick={openSubmit} disabled={!events.length || !configuration}><Plus size={14} /> Submit budget</button></div>
       </div>
@@ -202,7 +211,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
 
       {budgets.length === 0 ? (
         <div className="rounded-xl border border-dashed border-indigo-200 bg-white p-5 text-center text-sm text-slate-500">
-          No canonical event budgets have been submitted for this branch yet. Legacy proposals are not automatically imported or approved.
+          {submissionOnly ? 'You have not submitted a canonical budget for this event yet.' : 'No canonical event budgets have been submitted for this branch yet. Legacy proposals are not automatically imported or approved.'}
         </div>
       ) : (
         <div className="grid gap-3">
@@ -221,14 +230,14 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
                 </div>
                 <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
                   <div><span className="text-slate-500">Budget</span><p className="font-black text-slate-900">{budget.currency_code} {Number(budget.total_budget).toLocaleString()}</p></div>
-                  <div><span className="text-slate-500">Actual posted</span><p className="font-black text-slate-900">{budget.currency_code} {Number(budget.total_actual || 0).toLocaleString()}</p></div>
-                  <div><span className="text-slate-500">Payment status</span><p className="font-bold text-slate-900">{budget.payment_document ? budget.payment_document.status : 'Not created'}</p></div>
+                  {!submissionOnly && <div><span className="text-slate-500">Actual posted</span><p className="font-black text-slate-900">{budget.currency_code} {Number(budget.total_actual || 0).toLocaleString()}</p></div>}
+                  {!submissionOnly && <div><span className="text-slate-500">Payment status</span><p className="font-bold text-slate-900">{budget.payment_document ? budget.payment_document.status : 'Not created'}</p></div>}
                   <div><span className="text-slate-500">Approval steps</span><p className="font-bold text-slate-900">{(budget.approval_steps || []).filter((step: any) => step.status === 'approved').length} / {(budget.approval_steps || []).length} approved</p></div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {!submissionOnly && myStep && <><button type="button" disabled={saving} className={buttonClass} onClick={() => void decide(budget, 'approved')}>Approve budget</button><button type="button" disabled={saving} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50" onClick={() => void decide(budget, 'rejected')}>Reject budget</button></>}
                   {!submissionOnly && canPay && <button type="button" disabled={saving} className={buttonClass} onClick={() => openPayment(budget)}><Wallet size={14} /> Create canonical payment</button>}
-                  {budget.payment_document && <span className="self-center text-xs text-slate-500">Payment {budget.payment_document.document_number || budget.payment_document.id} · journal {budget.payment_document.journal_entry_id || 'pending'}</span>}
+                  {!submissionOnly && budget.payment_document && <span className="self-center text-xs text-slate-500">Payment {budget.payment_document.document_number || budget.payment_document.id} · journal {budget.payment_document.journal_entry_id || 'pending'}</span>}
                 </div>
               </article>
             );
