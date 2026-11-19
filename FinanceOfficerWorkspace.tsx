@@ -524,8 +524,8 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
           </div>
 
-          <h2 style="font-size: 18px; margin-bottom: 5px;">CHURCH DISBURSEMENT INVOICE & RECEIPT VOUCHER</h2>
-          <p style="font-size: 12px; color: #475569; margin-top: 0;">Official procurement invoice for ministry equipment & operational funding.</p>
+          <h2 style="font-size: 18px; margin-bottom: 5px;">DEPARTMENT FUNDING REQUISITION</h2>
+          <p style="font-size: 12px; color: #475569; margin-top: 0;">Request for ministry or department funding. This document is not a payment voucher.</p>
 
           <div class="grid">
             <div>
@@ -535,8 +535,8 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
             <div>
               <strong>Priority Level:</strong> ${req.priority.toUpperCase()}<br/>
-              <strong>Disbursement Channel:</strong> ${req.disbursement_method?.toUpperCase()}<br/>
-              <strong>Payment Account:</strong> ${req.disbursement_account_info || `${cp.name} Treasury Disbursement`}
+              <strong>Approval Status:</strong> ${req.status.replace(/_/g, ' ')}<br/>
+              <strong>Payment Status:</strong> Not created — Finance handles payment after approval
             </div>
           </div>
 
@@ -546,8 +546,8 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
               <tr>
                 <th>Item Description</th>
                 <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Price (SLE)</th>
-                <th style="text-align: right;">Line Total (SLE)</th>
+                <th style="text-align: right;">Unit Price (${req.currency || 'SLE'})</th>
+                <th style="text-align: right;">Line Total (${req.currency || 'SLE'})</th>
               </tr>
             </thead>
             <tbody>
@@ -563,15 +563,12 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
           </table>
 
           <div class="total-box">
-            Total Authorized Disbursement: ${req.currency || 'SLE'} ${req.requested_amount.toLocaleString()}
+            Total Requested Amount: ${req.currency || 'SLE'} ${req.requested_amount.toLocaleString()}
           </div>
 
-          ${req.transaction_ref ? `
+          ${req.vendor_quote_reference || req.vendor_quote_url ? `
             <div style="background: #f1f5f9; padding: 12px; border-radius: 8px; font-size: 12px; margin-bottom: 30px;">
-              <strong>Bank / Voucher Transaction Ref:</strong> ${req.transaction_ref}<br/>
-              <strong>Vendor Receipt Ref:</strong> ${req.vendor_quote_url || 'Attached'}<br/>
-              <strong>Disbursed Date:</strong> ${req.disbursed_at ? new Date(req.disbursed_at).toLocaleString() : 'Executed'}<br/>
-              <strong>Authorized Treasury Officer:</strong> ${req.disbursed_by || 'Finance Officer'}
+              <strong>Vendor Quote Reference:</strong> ${req.vendor_quote_reference || req.vendor_quote_url}
             </div>
           ` : ''}
 
@@ -1474,6 +1471,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                         req.status === 'pending_pastor_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
                         req.status === 'pastor_approved' ? 'bg-purple-600 text-white font-black shadow-xs' :
                         req.status === 'pending_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
+                        req.status === 'rejected' ? 'bg-rose-100 text-rose-800 font-bold' :
                         req.status === 'submitted_to_board' ? 'bg-purple-100 text-purple-800 animate-bounce' :
                         req.status === 'approved' ? 'bg-indigo-100 text-indigo-800 font-bold' :
                         req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800 font-bold' :
@@ -1483,9 +1481,10 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                       }`}>
                         {req.status === 'pending_pastor_approval' ? 'Step 1: Awaiting Senior Pastor Approval' :
                          req.status === 'pastor_approved' ? 'Step 2: Approved by Senior Pastor — Disburse Now' :
-                         req.status === 'pending_approval' ? 'Under Finance Triage' : 
+                         req.status === 'pending_approval' ? 'Awaiting Configured Approval Steps' : 
                          req.status === 'submitted_to_board' ? 'Escalated to Senior Pastor & Board' :
-                         req.status === 'approved' ? 'Authorized by Pastor & Board — Disburse Now' :
+                         req.status === 'approved' ? 'Approved — Payment Not Created' :
+                          req.status === 'rejected' ? 'Rejected' :
                          req.status === 'disbursed' ? 'Disbursed (Awaiting Receipts)' :
                          req.status === 'reconciled' ? 'Receipts Submitted (Awaiting Settlement)' :
                          req.status === 'settled' ? 'Audited & Settled in Good Standing' :
@@ -1527,7 +1526,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                       {req.items.map(item => (
                         <div key={item.id} className="py-1.5 flex justify-between items-center text-slate-800">
                           <span>{item.item_name} <strong className="text-slate-400 font-normal">x{item.quantity}</strong></span>
-                          <strong className="font-mono text-slate-900">SLE {item.total_price.toLocaleString()}</strong>
+                          <strong className="font-mono text-slate-900">{req.currency || 'SLE'} {item.total_price.toLocaleString()}</strong>
                         </div>
                       ))}
                     </div>
