@@ -120,3 +120,14 @@ The PostgreSQL 17 workflow now applies the migration and checks function grants,
 **Important UI boundary:** this slice adds and tests the database RPC contract only. `eventBudgetService.ts` and the Finance Officer event-budget screens still use the legacy localStorage model. They are not yet connected to these RPCs, and their historical seeded records are not automatically imported. Keep the old UI disbursement path fail-closed until the mock adapter, service and UI are migrated to the same source-linked workflow.
 
 **Requisition boundary:** department requisitions still have no durable requisition domain tables. They remain out of scope for this event-budget database slice.
+
+
+### Slice 2 validation result
+
+The disposable PostgreSQL 17 fresh-install workflow passed after isolating the event-budget fixture UUIDs from the existing finance-document listing fixture and running the event-budget integration test after the listing test:
+
+- Commit under test: `1d42ffffd8aafcb67f30ebde9e0f446b998e882c`
+- PostgreSQL 17 fresh-install/security workflow: [run 44500256248](https://github.com/bock12/SCMS/actions/runs/44500256248) — success.
+- SCMS Build Validation: [run 44500254952](https://github.com/bock12/SCMS/actions/runs/44500254952) — success.
+
+The successful SQL test verifies the complete event-budget submit → approve → canonical payment → controlled journal posting path. The UI and mock adapter are still not wired to these RPCs; no claim of end-to-end browser workflow is made.
