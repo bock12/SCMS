@@ -346,6 +346,26 @@ export async function getDatabaseRequisitions(
   return client.rpc('get_department_requisitions', { p_branch_id: branchId });
 }
 
+export interface DepartmentRequisitionSubmissionOptions {
+  branch_id: string;
+  ministry_id: string;
+  ministry_name: string;
+  base_currency_code: string;
+  currencies: string[];
+}
+
+/** Returns the active ministry and currency options available to a branch submitter. */
+export async function getDepartmentRequisitionSubmissionOptions(
+  branchId: string,
+  ministryId: string,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<DepartmentRequisitionSubmissionOptions>> {
+  return client.rpc('get_department_requisition_submission_options', {
+    p_branch_id: branchId,
+    p_ministry_id: ministryId
+  });
+}
+
 /** Submits a durable requisition and its approval snapshot atomically. */
 export async function submitDatabaseRequisition(
   input: SubmitDepartmentRequisitionInput,
