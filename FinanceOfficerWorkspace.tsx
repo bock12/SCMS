@@ -7,9 +7,10 @@ import { usePermissionResolution } from './usePermissionResolution';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
-import { getEventBudgetApprovals, approveEventBudget, rejectEventBudget, disburseEventBudget as executeDisburseEventBudget } from './eventBudgetService';
+import { getEventBudgetApprovals } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
+import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
 import { 
@@ -380,6 +381,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   const handleConfirmEventBudgetDisbursement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!disburseEventBudget) return;
+    setDisburseEventBudget(null);
+    alert('Legacy event-budget disbursement is disabled. Use the canonical event budget workflow to create an approved payment and journal.');
+    return;
 
     const txnRef = evtDisburseTxnRef.trim() || ('DISB-EVT-' + Math.floor(100000 + Math.random() * 900000));
     const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
@@ -1661,8 +1665,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {/* --- WORKSPACE TAB 3: EVENT BUDGET APPROVALS --- */}
       {workspaceTab === 'event_budgets' && (
         <div className="space-y-6">
+          <EventBudgetFinanceWorkspace branchId={profile?.branch_id || null} profileId={profile?.id || null} />
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Budget approval is not a posted expense.</strong> Approved budgets and disbursement workflow records remain planning/operational data until a corresponding canonical payment journal is created and posted. Automatic event-budget-to-journal source linking is not yet implemented.
+            <strong>Legacy proposals are informational only.</strong> Use the canonical event budget workflow above for approval and payment creation. Only posted journals count as actual expenditure.
           </div>
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
@@ -1788,7 +1793,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                             <button
                               onClick={() => {
                                 const note = prompt("Enter approval note or budget authorization code (optional):", "Budget authorized by Finance Officer.");
-                                approveEventBudget(b.event_id, profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer', note || undefined);
+                                alert('This is a legacy proposal only. Approve canonical budgets in the workflow above.');
                               }}
                               className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer min-h-[42px] shadow-2xs"
                             >
@@ -1797,7 +1802,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                             <button
                               onClick={() => {
                                 const reason = prompt("Enter reason for rejecting or requesting budget revision:");
-                                if (reason) rejectEventBudget(b.event_id, profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer', reason);
+                                if (reason) alert('This is a legacy proposal only. Reject canonical budgets in the workflow above.');
                               }}
                               className="py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold border border-rose-200 rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer min-h-[42px]"
                             >
@@ -1878,7 +1883,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                               <button
                                 onClick={() => {
                                   const note = prompt("Enter approval note or budget authorization code (optional):", "Budget authorized by Finance Officer.");
-                                  approveEventBudget(b.event_id, profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer', note || undefined);
+                                  alert('This is a legacy proposal only. Approve canonical budgets in the workflow above.');
                                 }}
                                 className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold rounded-lg text-xs transition-colors cursor-pointer shrink-0"
                               >
@@ -1887,7 +1892,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                               <button
                                 onClick={() => {
                                   const reason = prompt("Enter reason for rejecting or requesting budget revision:");
-                                  if (reason) rejectEventBudget(b.event_id, profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer', reason);
+                                  if (reason) alert('This is a legacy proposal only. Reject canonical budgets in the workflow above.');
                                 }}
                                 className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold cursor-pointer shrink-0"
                               >
