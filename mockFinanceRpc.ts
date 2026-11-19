@@ -889,6 +889,9 @@ export function createMockFinanceRpc(
             (band.max_amount_base == null ? null : Number(band.max_amount_base)))) {
         return fail('Existing approval amount bands are immutable');
       }
+      if (!existing && existingPolicies.has(band.policy_id)) {
+        return fail('New approval amount bands must belong to a policy created in this save');
+      }
     }
     const existingSteps = new Map(state.approvalPolicySteps.map(step => [step.id, step]));
     for (const step of config.approvalPolicySteps) {
