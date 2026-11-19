@@ -894,6 +894,25 @@ function migrateUnifiedDirectoryData(parsed: any): { db: any; changed: boolean }
   remapTableMemberIds('event_registrations');
   remapTableMemberIds('event_survey_responses');
 
+  // Existing demo event IDs (evt-1, etc.) are application identifiers, not
+  // PostgreSQL UUIDs. Persist a separate UUID bridge for canonical finance
+  // workflows; never cast or reinterpret the application ID.
+  if (Array.isArray(parsed.events)) {
+    parsed.events = parsed.events.map((event: any) => {
+      if (typeof event.finance_event_id === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.finance_event_id)) {
+        return event;
+      }
+      changed = true;
+      return {
+        ...event,
+        finance_event_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)
+          ? event.id
+          : createMockUuid()
+      };
+    });
+  }
+
   return { db: parsed, changed };
 }
 
@@ -1054,7 +1073,10 @@ function loadLocalDatabase() {
     event_survey_answers: [],
     financial_records: initialFinancials,
     prayer_requests: initialPrayers,
-    events: initialEvents,
+    events: initialEvents.map(event => ({
+      ...event,
+      finance_event_id: event.finance_event_id || createMockUuid()
+    })),
     event_registrations: initialEventRegistrations,
     stream_credentials: [
       { id: 'cred-1', branch_id: 'branch-1', rtmp_server: 'rtmp://live.faithconnect.church/live', stream_key: 'sk_live_faithconnect_grace_883' }
@@ -1343,7 +1365,12 @@ class LocalQueryBuilder {
         const record = {
           id: item.id || `${this.tableName === 'profiles' ? 'per' : 'item'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           created_at: item.created_at || new Date().toISOString(),
-          ...item
+          ...item,
+          ...(this.tableName === 'events' ? {
+            finance_event_id: item.finance_event_id ||
+              (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id || '')
+                ? item.id : createMockUuid())
+          } : {})
         };
         return this.tableName === 'profiles' ? sanitizeProfileRecord(record) : record;
       });

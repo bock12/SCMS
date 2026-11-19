@@ -79,6 +79,8 @@ export interface ChurchProfile {
 
 export interface ChurchEvent {
   id: string;
+  /** Stable UUID bridge for canonical finance in the local mock event store. */
+  finance_event_id?: string;
   branch_id?: string;
   title: string;
   description: string;

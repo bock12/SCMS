@@ -131,3 +131,12 @@ The disposable PostgreSQL 17 fresh-install workflow passed after isolating the e
 - SCMS Build Validation: [run 44500254952](https://github.com/bock12/SCMS/actions/runs/44500254952) — success.
 
 The successful SQL test verifies the complete event-budget submit → approve → canonical payment → controlled journal posting path. The UI and mock adapter are still not wired to these RPCs; no claim of end-to-end browser workflow is made.
+
+
+## Slice 3 progress — explicit event finance identity
+
+The local event model now carries an optional `finance_event_id` UUID bridge. Existing friendly IDs such as `evt-1` remain unchanged for event registrations, recurrence and other UI relationships. During local mock database initialization, existing events receive a stable UUID bridge once; new mock event inserts receive one as well. If an event's own ID is already a UUID, that UUID is reused.
+
+The helper in `eventFinanceIdentity.ts` accepts only a UUID event identity or an explicit UUID bridge. It deliberately rejects friendly IDs and malformed values rather than casting them to UUIDs. This is a local mock identity bridge only; a live database integration must resolve the actual persisted `public.events.id`, not reuse a browser-generated UUID as if it existed in Supabase.
+
+Validation added for direct UUID IDs, explicit bridge resolution, and rejection of friendly IDs without a bridge. This slice does not yet enable event-budget submission, approval or payment in the UI.
