@@ -46,9 +46,10 @@ type RpcClient = { rpc: (name: string, args?: Record<string, unknown>) => Promis
 const defaultRpcClient = supabase as unknown as RpcClient;
 
 export async function getFinanceConfiguration(
+  branchId: string | null = null,
   client: RpcClient = defaultRpcClient
 ): Promise<RpcResponse<FinanceConfiguration>> {
-  return client.rpc('get_finance_configuration');
+  return client.rpc('get_finance_configuration', { p_branch_id: branchId });
 }
 
 export async function saveFinanceConfiguration(

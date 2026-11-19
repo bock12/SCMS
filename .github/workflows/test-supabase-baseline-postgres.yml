@@ -20,6 +20,7 @@ on:
       - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
       - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
       - "supabase/migrations/20261119000200_least_privilege_event_budget_submission.sql"
+      - "supabase/migrations/20261119000300_add_database_backed_finance_configuration_api.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
       - "scripts/build-supabase-baseline.mjs"
@@ -1103,6 +1104,9 @@ jobs:
 
       - name: Apply least-privilege event budget submission APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000200_least_privilege_event_budget_submission.sql
+
+      - name: Apply database-backed finance configuration APIs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000300_add_database_backed_finance_configuration_api.sql
 
       - name: Verify event budget finance RPC grants and hardening
         run: |

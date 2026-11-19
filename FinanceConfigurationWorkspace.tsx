@@ -15,7 +15,7 @@ const emptyConfiguration = (): FinanceConfiguration => ({
   financialYears: [], periods: [], approvalPolicies: [], approvalPolicyBands: [], approvalPolicySteps: []
 });
 
-const makeId = (prefix: string) => `${prefix}-${globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2)}`;
+const makeId = (_prefix: string) => globalThis.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
 
 const fieldClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800';
 const labelClass = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500';
@@ -61,7 +61,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setLoading(true);
     setError(null);
     const [configResult, profileResult] = await Promise.all([
-      getFinanceConfiguration(),
+      getFinanceConfiguration(branchId),
       supabase.from('profiles').select('id,first_name,last_name,status').order('first_name', { ascending: true })
     ]);
     if (configResult.error) setError(configResult.error.message);
@@ -76,7 +76,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setLoading(false);
   };
 
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => { void reload(); }, [branchId]);
 
   const update = (patch: Partial<FinanceConfiguration>) =>
     setConfiguration(current => ({ ...current, ...patch }));
@@ -299,7 +299,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         </div>
       </section>
 
-      <p className="text-xs text-slate-500">Configuration is stored in the development mock finance store. It is not a live Supabase write. Live database configuration still requires separately reviewed database routines and deployment approval.</p>
+      <p className="text-xs text-slate-500">In development, finance configuration is persisted by the mock RPC adapter. The authenticated PostgreSQL configuration RPCs are covered by disposable CI tests; this migration has not been applied to a live Supabase project.</p>
 
       <FinanceTransactionEntryWorkspace branchId={branchId} />
     </div>

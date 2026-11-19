@@ -601,22 +601,29 @@ export function createMockFinanceRpc(
     }) });
   }
 
-  function getFinanceConfiguration() {
+  function getFinanceConfiguration(args: Record<string, any> = {}) {
     const state = storage.load();
     const auth = getAuth();
     if (!auth.userId) return fail('Authentication required', '42501');
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
     if (!actor) return fail('No active member profile is linked to this account', '42501');
-    if (!state.permissions.some(p => p.profile_id === actor.id &&
-      ['view_finances', 'manage_finances', 'manage_chart_of_accounts', 'manage_financial_periods', 'approve_finances'].includes(p.permission))) {
-      return fail('Insufficient permission to view finance configuration', '42501');
-    }
+    const branchId = args.p_branch_id ?? null;
+    const canView = hasPermission(state, actor.id, 'view_finances', branchId) ||
+      hasPermission(state, actor.id, 'manage_finances', branchId) ||
+      hasPermission(state, actor.id, 'approve_finances', branchId);
+    if (!canView) return fail('Insufficient permission to view finance configuration in this scope', '42501');
+    const policies = state.approvalPolicies.filter(policy =>
+      (policy.branch_id ?? null) === branchId || (branchId !== null && policy.branch_id == null));
+    const policyIds = new Set(policies.map(policy => policy.id));
+    const bandIds = new Set(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id)).map(band => band.id));
     return success({
       currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
-      chartAccounts: clone(state.chartAccounts), financialAccounts: clone(state.financialAccounts),
+      chartAccounts: clone(state.chartAccounts),
+      financialAccounts: clone(state.financialAccounts.filter(account => (account.branch_id ?? null) === branchId)),
       funds: clone(state.funds), financialYears: clone(state.financialYears), periods: clone(state.periods),
-      approvalPolicies: clone(state.approvalPolicies), approvalPolicyBands: clone(state.approvalPolicyBands),
-      approvalPolicySteps: clone(state.approvalPolicySteps)
+      approvalPolicies: clone(policies),
+      approvalPolicyBands: clone(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id))),
+      approvalPolicySteps: clone(state.approvalPolicySteps.filter(step => bandIds.has(step.band_id)))
     });
   }
 
@@ -947,7 +954,7 @@ export function createMockFinanceRpc(
   return {
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
-        if (name === 'get_finance_configuration') return getFinanceConfiguration();
+        if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'submit_event_budget_for_approval') return submitEventBudgetForApproval(args);
         if (name === 'get_event_budget_submission_options') return getEventBudgetSubmissionOptions(args);
         if (name === 'get_my_event_budgets') return getMyEventBudgets(args);

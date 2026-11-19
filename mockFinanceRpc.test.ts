@@ -415,6 +415,29 @@ describe('canonical finance configuration RPCs', () => {
 });
 
 
+describe('finance configuration scope', () => {
+  test('returns only requested branch accounts and branch or church-wide approval policies', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.permissions.push({ profile_id: 'creator', permission: 'view_finances', branch_id: 'branch-a' });
+    state.financialAccounts.push(
+      { id: 'account-a', branch_id: 'branch-a', name: 'A', currency_code: 'SLE', is_active: true, chart_account_id: 'cash-a' },
+      { id: 'account-b', branch_id: 'branch-b', name: 'B', currency_code: 'SLE', is_active: true, chart_account_id: 'cash-a' }
+    );
+    state.approvalPolicies.push(
+      { id: 'policy-global', branch_id: null, transaction_type: 'financial_document', is_active: true },
+      { id: 'policy-other', branch_id: 'branch-b', transaction_type: 'financial_document', is_active: true }
+    );
+    const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: () => { throw new Error('unexpected save'); } },
+      () => ({ userId: 'user-creator' }));
+    const result = await rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
+    expect(result.error).toBeNull();
+    expect(result.data.financialAccounts.map((item: any) => item.id)).toEqual(['account-a']);
+    expect(result.data.approvalPolicies.map((item: any) => item.id)).toContain('policy-global');
+    expect(result.data.approvalPolicies.map((item: any) => item.id)).not.toContain('policy-other');
+  });
+});
+
 describe('canonical finance transaction setup guards', () => {
   test('rejects an inactive financial account', async () => {
     const base = fixture();
