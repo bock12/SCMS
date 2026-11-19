@@ -1246,7 +1246,19 @@ const mockFinanceRpc = createMockFinanceRpc({
     state.profiles = (localDb.profiles || []).map((profile: any) => ({
       id: profile.id,
       auth_user_id: profile.auth_user_id || null,
-      status: profile.status
+      status: profile.status,
+      branch_id: profile.branch_id ?? null,
+      first_name: profile.first_name || '',
+      last_name: profile.last_name || '',
+      membership_status: profile.membership_status || 'active',
+      record_status: profile.record_status || 'active'
+    }));
+    state.ministries = (localDb.ministries || []).map((ministry: any) => ({
+      id: ministry.id,
+      branch_id: ministry.branch_id ?? null,
+      name: ministry.name || ministry.title || 'Ministry',
+      entity_type: ministry.entity_type || 'ministry',
+      status: ministry.status || 'active'
     }));
     const branches = localDb.church_branches || [];
     const now = Date.now();
@@ -1277,7 +1289,7 @@ const mockFinanceRpc = createMockFinanceRpc({
   save(state) {
     // Profiles and permissions are authoritative in the shared mock directory;
     // only finance configuration and transaction state belong in this store.
-    persistedMockFinanceStorage.save({ ...state, profiles: [], permissions: [] });
+    persistedMockFinanceStorage.save({ ...state, profiles: [], permissions: [], ministries: [] });
   }
 }, () => ({ userId: getCurrentSession()?.user?.id || null }));
 
