@@ -5328,7 +5328,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setReqItems(prev => prev.map((item, idx) => idx === index ? { ...item, [field]: val } : item));
   };
 
-  const handleSaveFundingProposal = (isDraft: boolean) => {
+  const handleSaveFundingProposal = async (isDraft: boolean) => {
     if (!reqTitle.trim()) return;
 
     const formattedItems: RequisitionItem[] = reqItems.map((item, idx) => ({
@@ -5338,71 +5338,68 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       unit_price: Number(item.unit_price) || 0,
       total_price: (Number(item.quantity) || 1) * (Number(item.unit_price) || 0)
     }));
-
     const totalReqAmount = formattedItems.reduce((sum, item) => sum + item.total_price, 0);
-
     const targetReq: DepartmentRequisition = {
       id: editingReqId || `req-${Date.now()}`,
-      requisition_number: editingReqNum || `REQ-2026-00${requisitions.length + 1}`,
-      department_name: reqDept,
+      requisition_number: editingReqNum || 'New requisition',
+      department_name: activeMinistryObj?.name || reqDept,
       applicant_name: reqApplicantName.trim() || `${profile?.first_name} ${profile?.last_name}`,
       applicant_role: reqApplicantRole.trim() || 'Ministry Leader',
       title: reqTitle.trim(),
       description: reqDesc.trim(),
-      requested_amount: totalReqAmount > 0 ? totalReqAmount : 5000,
+      requested_amount: totalReqAmount,
       currency: 'SLE',
       priority: reqPriority,
-      status: isDraft ? 'draft' : 'pending_pastor_approval',
+      status: isDraft ? 'draft' : 'pending_approval',
       created_at: new Date().toISOString(),
       needed_by_date: reqNeededDate || new Date(Date.now() + 86400000 * 14).toISOString().slice(0, 10),
       vendor_quote_url: reqVendorQuote.trim() || undefined,
-      disbursement_method: reqDisbMethod,
-      disbursement_account_info: reqDisbInfo.trim() || undefined,
       items: formattedItems
     };
 
-    const exists = requisitions.some(r => r.id === targetReq.id);
-    const updated = exists 
-      ? requisitions.map(r => r.id === targetReq.id ? targetReq : r)
-      : [targetReq, ...requisitions];
-
-    saveRequisitions(updated);
-    setRequisitions(updated);
     setShowProposalModal(false);
     setEditingReqId(null);
     setEditingReqNum(null);
-
-    if (isDraft) {
-      setProposalSuccessToast(`Proposal saved as Draft (${targetReq.requisition_number}). You can edit or submit it whenever you're ready!`);
-    } else {
-      setProposalSuccessToast(`Funding proposal ${targetReq.requisition_number} submitted! Sent to Senior Pastor Rev. Sarah Johnson for initial approval before reaching the Finance Officer.`);
-    }
-    setTimeout(() => setProposalSuccessToast(null), 6000);
-
     setReqTitle('');
     setReqDesc('');
     setReqVendorQuote('');
     setReqDisbInfo('');
+
+    if (isDraft) {
+      const updatedDrafts = [targetReq, ...localRequisitionDrafts.filter(item => item.id !== targetReq.id)];
+      setLocalRequisitionDrafts(updatedDrafts);
+      saveRequisitions(updatedDrafts);
+      setRequisitions(current => [targetReq, ...current.filter(item => item.id !== targetReq.id)]);
+      setProposalSuccessToast(`Proposal saved locally as draft (${targetReq.requisition_number}). It has not been submitted for approval.`);
+    } else {
+      try {
+        const submitted = await submitRequisitionToDatabase(targetReq);
+        setProposalSuccessToast(`Requisition ${submitted.requisition_number} submitted for the configured approval workflow.`);
+      } catch (error: any) {
+        setProposalSuccessToast(error?.message || 'Unable to submit the requisition.');
+      }
+    }
+    setTimeout(() => setProposalSuccessToast(null), 6000);
   };
 
-  const handlePromoteDraftToSubmit = (reqId: string) => {
-    const updated = requisitions.map(r => r.id === reqId ? {
-      ...r,
-      status: 'pending_pastor_approval' as const
-    } : r);
-
-    saveRequisitions(updated);
-    setRequisitions(updated);
-    const target = requisitions.find(r => r.id === reqId);
-    setProposalSuccessToast(`Draft proposal ${target?.requisition_number || ''} submitted to Senior Pastor Rev. Sarah Johnson & Finance Board!`);
+  const handlePromoteDraftToSubmit = async (reqId: string) => {
+    const target = localRequisitionDrafts.find(item => item.id === reqId);
+    if (!target) return;
+    try {
+      const submitted = await submitRequisitionToDatabase(target);
+      setProposalSuccessToast(`Draft ${submitted.requisition_number} submitted for the configured approval workflow.`);
+    } catch (error: any) {
+      setProposalSuccessToast(error?.message || 'Unable to submit the draft requisition.');
+    }
     setTimeout(() => setProposalSuccessToast(null), 6000);
   };
 
   const handleDeleteProposal = (reqId: string) => {
-    const updated = requisitions.filter(r => r.id !== reqId);
-    saveRequisitions(updated);
-    setRequisitions(updated);
-    setProposalSuccessToast(`Proposal removed.`);
+    const updatedDrafts = localRequisitionDrafts.filter(item => item.id !== reqId);
+    setLocalRequisitionDrafts(updatedDrafts);
+    saveRequisitions(updatedDrafts);
+    setRequisitions(current => current.filter(item => item.id !== reqId));
+    setProposalSuccessToast('Draft proposal removed.');
     setTimeout(() => setProposalSuccessToast(null), 4000);
   };
 
