@@ -21,6 +21,8 @@ on:
       - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
       - "supabase/migrations/20261119000200_least_privilege_event_budget_submission.sql"
       - "supabase/migrations/20261119000300_add_database_backed_finance_configuration_api.sql"
+      - "supabase/migrations/20261119000400_add_department_requisition_approval_workflow.sql"
+      - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
       - "scripts/build-supabase-baseline.mjs"
@@ -1108,6 +1110,9 @@ jobs:
       - name: Apply database-backed finance configuration APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000300_add_database_backed_finance_configuration_api.sql
 
+      - name: Apply secure department requisition approval workflow
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000400_add_department_requisition_approval_workflow.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1154,6 +1159,54 @@ jobs:
           $event_budget_rpc_grants$;
           SQL
 
+      - name: Verify department requisition RPC grants and hardening
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $department_requisition_rpc_grants$
+          DECLARE
+            v_signature text;
+          BEGIN
+            FOREACH v_signature IN ARRAY ARRAY[
+              'public.submit_department_requisition(uuid,uuid,text,text,numeric,character,numeric,text,date,text,jsonb)',
+              'public.decide_department_requisition_approval(uuid,text,text)'
+            ] LOOP
+              IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
+                RAISE EXCEPTION 'Authenticated role is missing requisition RPC grant: %', v_signature;
+              END IF;
+              IF has_function_privilege('anon', v_signature, 'EXECUTE')
+                OR has_function_privilege('service_role', v_signature, 'EXECUTE') THEN
+                RAISE EXCEPTION 'Untrusted role can execute requisition RPC: %', v_signature;
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                WHERE p.oid = to_regprocedure(v_signature)
+                  AND p.prosecdef
+                  AND EXISTS (
+                    SELECT 1 FROM unnest(p.proconfig) setting
+                    WHERE setting = 'search_path=""'
+                  )
+              ) THEN
+                RAISE EXCEPTION 'Requisition RPC is not SECURITY DEFINER with an empty search_path: %', v_signature;
+              END IF;
+            END LOOP;
+
+            IF has_table_privilege('authenticated', 'public.department_requisitions', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.department_requisitions', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.department_requisitions', 'DELETE')
+              OR has_table_privilege('authenticated', 'public.department_requisition_items', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.department_requisition_items', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.department_requisition_items', 'DELETE') THEN
+              RAISE EXCEPTION 'Requisition workflow must not grant direct table DML';
+            END IF;
+
+            IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.department_requisitions'::regclass)
+              OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.department_requisition_items'::regclass) THEN
+              RAISE EXCEPTION 'Requisition tables must have RLS enabled';
+            END IF;
+          END
+          $department_requisition_rpc_grants$;
+          SQL
+
       - name: Verify receipt and payment transaction lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
 
@@ -1165,6 +1218,9 @@ jobs:
 
       - name: Verify least-privilege Event Manager budget submission
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_submission_permissions.sql
+
+      - name: Verify department requisition approval lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/department_requisition_approval_lifecycle.sql
 
       - name: Verify journal API grants and hardening
         run: |
