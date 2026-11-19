@@ -416,7 +416,7 @@ describe('canonical finance configuration RPCs', () => {
     const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
     expect(loaded.error).toBeNull();
     expect(loaded.data.baseCurrencyCode).toBe('SLL');
-    expect(loaded.data.chartAccounts).toHaveLength(2);
+    expect(loaded.data.chartAccounts).toHaveLength(3);
     expect(loaded.data.approvalPolicyBands[0].max_amount_base).toBe(1000000);
     expect(ctx.read().financialYears).toHaveLength(1);
   });
