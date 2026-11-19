@@ -420,10 +420,17 @@ describe('finance configuration scope', () => {
     const ctx = fixture();
     const state = ctx.read();
     state.permissions.push({ profile_id: 'creator', permission: 'view_finances', branch_id: 'branch-a' });
-    state.financialAccounts.push({
-      id: 'account-b', branch_id: 'branch-b', name: 'Other Branch Account',
-      currency_code: 'SLE', is_active: true, chart_account_id: 'cash-a'
-    });
+    state.chartAccounts = [
+      { id: 'cash-a', code: '1000', name: 'Cash', account_type: 'asset', normal_balance: 'debit', is_active: true },
+      { id: 'income-a', code: '4000', name: 'Income', account_type: 'income', normal_balance: 'credit', is_active: true }
+    ];
+    state.financialAccounts = [
+      { id: 'cash-account', branch_id: 'branch-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-a' },
+      { id: 'account-b', branch_id: 'branch-b', name: 'Other Branch Account', account_type: 'bank', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-a' }
+    ];
+    state.funds = [{ id: 'fund-a', code: 'GEN', name: 'General Fund', fund_type: 'general', is_default: true, is_active: true }];
+    state.periods = [];
+    state.financialYears = [];
     const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) },
       () => ({ userId: 'user-creator' }));
     const loaded = await rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
