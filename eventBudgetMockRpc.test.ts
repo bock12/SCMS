@@ -9,11 +9,16 @@ function fixture() {
     profiles: [
       { id: 'creator', auth_user_id: 'user-creator', status: 'active' },
       { id: 'approver-1', auth_user_id: 'user-approver-1', status: 'active' },
-      { id: 'approver-2', auth_user_id: 'user-approver-2', status: 'active' }
+      { id: 'approver-2', auth_user_id: 'user-approver-2', status: 'active' },
+      { id: 'event-manager', auth_user_id: 'user-event-manager', status: 'active' }
     ],
     permissions: [
       { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-a' },
       { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-a' },
+      { profile_id: 'creator', permission: 'manage_events', branch_id: 'branch-a' },
+      { profile_id: 'creator', permission: 'submit_event_budgets', branch_id: 'branch-a' },
+      { profile_id: 'event-manager', permission: 'manage_events', branch_id: 'branch-a' },
+      { profile_id: 'event-manager', permission: 'submit_event_budgets', branch_id: 'branch-a' },
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
@@ -153,6 +158,40 @@ describe('event budget mock finance RPC lifecycle', () => {
     const noPolicy = await isolated.rpc('submit_event_budget_for_approval', submitArgs);
     expect(noPolicy.error?.message).toContain('No active event budget approval policy');
     expect(state.budgets).toHaveLength(0);
+  });
+
+  test('event managers can prepare budgets and read only their own submissions without finance access', async () => {
+    const ctx = fixture();
+    ctx.setUser('user-event-manager');
+    const permissions = await ctx.rpc.rpc('get_event_budget_submission_options', { p_event_id: eventUuid });
+    expect(permissions.error).toBeNull();
+    expect(permissions.data.baseCurrencyCode).toBe('SLL');
+    expect(permissions.data.chartAccounts.map((item: any) => item.id)).toContain('expense-chart');
+    expect(permissions.data.chartAccounts.some((item: any) => item.account_type !== 'expense')).toBe(false);
+    expect(permissions.data.periods).toHaveLength(1);
+
+    const submitted = await ctx.rpc.rpc('submit_event_budget_for_approval', submitArgs);
+    expect(submitted.error).toBeNull();
+    let own = await ctx.rpc.rpc('get_my_event_budgets', { p_event_id: eventUuid });
+    expect(own.error).toBeNull();
+    expect(own.data.budgets).toHaveLength(1);
+    expect(own.data.budgets[0].submitted_by_profile_id).toBe('event-manager');
+    expect(own.data.budgets[0].approval_steps).toHaveLength(1);
+
+    const broadListing = await ctx.rpc.rpc('get_event_budgets', { p_branch_id: 'branch-a' });
+    expect(broadListing.error?.code).toBe('42501');
+    const financeConfiguration = await ctx.rpc.rpc('get_finance_configuration');
+    expect(financeConfiguration.error?.code).toBe('42501');
+
+    ctx.setUser('user-creator');
+    const other = await ctx.rpc.rpc('submit_event_budget_for_approval', {
+      ...submitArgs, p_name: 'Finance-managed second budget'
+    });
+    expect(other.error).toBeNull();
+    ctx.setUser('user-event-manager');
+    own = await ctx.rpc.rpc('get_my_event_budgets', { p_event_id: eventUuid });
+    expect(own.data.budgets).toHaveLength(1);
+    expect(own.data.budgets[0].id).toBe(submitted.data.budget_id);
   });
 
   test('rejects payment for a rejected or unapproved budget', async () => {
