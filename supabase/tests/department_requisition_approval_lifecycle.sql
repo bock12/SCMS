@@ -23,6 +23,8 @@ DECLARE
   v_request_id uuid;
   v_rejected_requisition_id uuid;
   v_rejected_request_id uuid;
+  v_config jsonb;
+  v_config_read jsonb;
 BEGIN
   INSERT INTO auth.users (id, email) VALUES
     (v_submitter_auth, 'fin-int-002-requisition-submitter@example.invalid'),
@@ -91,23 +93,24 @@ BEGIN
     IF position('approval policy' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
   END;
 
-  INSERT INTO public.approval_policies (
-    id, name, transaction_type, branch_id, version, effective_from,
-    is_active, created_by_profile_id
-  ) VALUES (
-    v_policy_id, 'FIN-INT-002 Department Requisition Policy',
-    'requisition', v_branch_id, 1, '2020-01-01', true, v_submitter_profile
+  -- Finance Officers configure the ordered requisition policy through its
+  -- narrow API; no direct approval-policy table DML is granted to clients.
+  PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
+  v_config := public.save_requisition_approval_policy(
+    v_branch_id, 'FIN-INT-002 Department Requisition Policy',
+    0, NULL,
+    '[{"step_number":1,"required_approvals":1},{"step_number":2,"required_approvals":1}]'::jsonb
   );
-
-  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
-  VALUES (v_band_id, v_policy_id, 0, NULL);
-
-  INSERT INTO public.approval_policy_steps (
-    band_id, step_number, required_permission_key, required_approvals,
-    prohibit_submitter_approval
-  ) VALUES
-    (v_band_id, 1, 'approve_requisitions', 1, true),
-    (v_band_id, 2, 'approve_requisitions', 1, true);
+  v_policy_id := (v_config->>'policy_id')::uuid;
+  v_band_id := (v_config->>'band_id')::uuid;
+  v_config_read := public.get_requisition_approval_configuration(v_branch_id);
+  IF v_policy_id IS NULL OR v_band_id IS NULL
+     OR jsonb_array_length(v_config_read->'policies') <> 1
+     OR jsonb_array_length(v_config_read->'bands') <> 1
+     OR jsonb_array_length(v_config_read->'steps') <> 2 THEN
+    RAISE EXCEPTION 'Requisition approval configuration API did not save and return the policy hierarchy';
+  END IF;
+  PERFORM set_config('request.jwt.claim.sub', v_submitter_auth::text, true);
 
   v_result := public.submit_department_requisition(
     v_branch_id, v_ministry_id, 'Department equipment request',
