@@ -4379,7 +4379,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${cp.name} - Official Proforma Invoice & Proposal ${req.requisition_number}</title>
+          <title>${cp.name} - Requisition Summary ${req.requisition_number}</title>
           <style>
             body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #0f172a; }
             .header { border-bottom: 3px solid #4338ca; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; }
@@ -4399,7 +4399,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           <div class="header">
             <div>
               <div class="logo">${cp.name.toUpperCase()}</div>
-              <div class="sub">${req.department_name} • Internal Procurement Proposal & Proforma Invoice</div>
+              <div class="sub">${req.department_name} • Department Funding Requisition</div>
               <div style="margin-top: 6px;"><span class="badge">Status: ${req.status.replace(/_/g, ' ').toUpperCase()} | Priority: ${req.priority.toUpperCase()}</span></div>
             </div>
             <div style="text-align: right;">
@@ -4448,7 +4448,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           </table>
 
           <div class="total-box">
-            TOTAL INVOICE AMOUNT: ${req.currency || 'SLE'} ${totalAmount.toLocaleString()}
+            TOTAL REQUESTED AMOUNT: ${req.currency || 'SLE'} ${totalAmount.toLocaleString()}
           </div>
 
           <div class="signatures">
@@ -5928,7 +5928,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                   <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
                     <ShoppingCart size={16} className="text-indigo-600" />
-                    Internal Funding Proposals & Proforma Invoices ({requisitions.length})
+                    Department Funding Requisitions ({requisitions.length})
                   </h4>
                   <button
                     type="button"
@@ -6076,7 +6076,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                               }}
                               className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
                             >
-                              <FileText size={14} /> View Proforma Invoice
+                              <FileText size={14} /> View Requisition
                             </button>
                           )}
 
@@ -7683,7 +7683,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   }}
                   className="w-full sm:w-auto px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-200"
                 >
-                  <Eye size={15} /> Preview Invoice
+                  <Eye size={15} /> Preview Requisition
                 </button>
 
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
@@ -8190,7 +8190,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   Official Church Financial Document
                 </span>
                 <h3 className="text-xl font-black text-slate-900 tracking-tight mt-0.5">
-                  Proforma Invoice & Funding Requisition
+                  Funding Requisition Preview
                 </h3>
               </div>
 
@@ -8259,7 +8259,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     </div>
                     <div className="mt-3">
                       <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-slate-950">
-                        Proforma Invoice & Purchase Requisition
+                        Funding Requisition
                       </h1>
                       <p className="text-xs text-slate-500 font-medium mt-0.5">
                         Official document for ministry equipment acquisition & budget allocation.
@@ -8304,7 +8304,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 space-y-1">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
-                      BILLED TO (TREASURY & APPROVAL BODY):
+                      SUBMITTED FOR APPROVAL:
                     </span>
                     <h3 className="font-black text-slate-900 text-sm">Configured Requisition Approvers</h3>
                     <p className="text-slate-600 font-semibold">
@@ -8359,7 +8359,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   </div>
                 </div>
 
-                {/* Invoice Totals & Summary Block */}
+                {/* Requisition Totals & Summary Block */}
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pt-2">
                   <div className="w-full sm:w-1/2 p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
                     <span className="font-extrabold text-slate-700 block">Vendor Quote & Payment Workflow</span>
