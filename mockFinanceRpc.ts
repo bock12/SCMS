@@ -718,6 +718,294 @@ export function createMockFinanceRpc(
     return success({ policy_id: policyId, band_id: bandId, step_count: stepIds.length, version });
   }
 
+  function getDepartmentRequisitions(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = args.p_branch_id ?? actor.branch_id ?? null;
+    if (!branchId) return fail('A branch is required to view requisitions');
+    const canSubmit = hasPermission(state, actor.id, 'submit_requisitions', branchId);
+    const canApprove = hasPermission(state, actor.id, 'approve_requisitions', branchId);
+    const canManage = hasPermission(state, actor.id, 'manage_finances', branchId);
+    if (!canSubmit && !canApprove && !canManage) {
+      return fail('Insufficient permission to view requisitions in this branch', '42501');
+    }
+
+    const requisitions = state.requisitions
+      .filter(requisition => requisition.branch_id === branchId &&
+        (requisition.applicant_profile_id === actor.id || canApprove || canManage))
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+      .map(requisition => {
+        const request = state.approvalRequests.find(item =>
+          item.id === requisition.approval_request_id && item.transaction_type === 'requisition');
+        const steps = request ? state.approvalSteps
+          .filter(item => item.approval_request_id === request.id)
+          .sort((a, b) => Number(a.step_order) - Number(b.step_order)) : [];
+        return {
+          ...clone(requisition),
+          items: clone(state.requisitionItems.filter(item => item.requisition_id === requisition.id)
+            .sort((a, b) => Number(a.line_number) - Number(b.line_number))
+            .map(item => ({ ...item, total_price: item.line_total }))),
+          approval_request: request ? clone(request) : null,
+          approval_steps: steps.map(step => {
+            const decisions = state.approvalDecisions.filter(item => item.approval_request_step_id === step.id);
+            const approvalsReceived = decisions.filter(item => item.decision === 'approved').length;
+            const actorCanDecide = step.status === 'pending' && request?.status === 'pending' &&
+              hasPermission(state, actor.id, step.required_permission_key || 'approve_requisitions', branchId) &&
+              (!step.prohibit_submitter_approval || request?.submitted_by_profile_id !== actor.id) &&
+              !decisions.some(item => item.approver_profile_id === actor.id) &&
+              !steps.some(prior => prior.step_order < step.step_order && prior.status !== 'approved');
+            return {
+              id: step.id,
+              step_number: step.step_order,
+              required_permission_key: step.required_permission_key,
+              required_approvals: Number(step.required_approvals || 1),
+              prohibit_submitter_approval: Boolean(step.prohibit_submitter_approval),
+              status: step.status,
+              approvals_received: approvalsReceived,
+              actor_can_decide: actorCanDecide,
+              decisions: clone(decisions)
+            };
+          })
+        };
+      });
+    return success(requisitions);
+  }
+
+  function submitDepartmentRequisition(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const branchId = args.p_branch_id;
+    if (!branchId || !hasPermission(state, actor.id, 'submit_requisitions', branchId)) {
+      return fail('Insufficient permission to submit a requisition in this branch', '42501');
+    }
+    if (actor.branch_id !== branchId || actor.membership_status !== 'active' || actor.record_status !== 'active') {
+      return fail('The submitting profile must be an active member of the selected branch', '42501');
+    }
+    const ministry = state.ministries.find(item => item.id === args.p_ministry_id &&
+      item.status === 'active' && ['ministry', 'department'].includes(item.entity_type) &&
+      (item.branch_id == null || item.branch_id === branchId));
+    if (!ministry) return fail('Select an active ministry or department in the same branch');
+
+    const title = String(args.p_title || '').trim();
+    const amount = Number(args.p_requested_amount);
+    const currency = String(args.p_currency_code || '').trim().toUpperCase();
+    const rate = Number(args.p_exchange_rate_to_base);
+    const priority = args.p_priority;
+    const items = args.p_items;
+    if (!title || !Number.isFinite(amount) || amount <= 0 || !currency ||
+        !Number.isFinite(rate) || rate <= 0 ||
+        !['low', 'medium', 'high', 'urgent'].includes(priority)) {
+      return fail('A title, positive amount, currency, exchange rate and priority are required');
+    }
+    if (!Array.isArray(items) || items.length === 0) return fail('A requisition requires at least one item');
+    if (!state.currencies.includes(currency)) return fail('Select an active requisition currency');
+    if (!state.baseCurrencyCode) return fail('Church base currency must be configured before requisitions can be submitted');
+    if (currency === state.baseCurrencyCode && rate !== 1) return fail('Exchange rate must be 1 for the church base currency');
+    const normalizedItems = items.map((item: any) => ({
+      item_name: String(item.item_name || '').trim(),
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unit_price)
+    }));
+    if (normalizedItems.some((item: any) => !item.item_name ||
+      !Number.isFinite(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.unit_price) || item.unit_price < 0)) {
+      return fail('Requisition items require a name, positive quantity and non-negative unit price');
+    }
+    const itemsTotal = round4(normalizedItems.reduce((sum: number, item: any) =>
+      sum + round4(item.quantity * item.unit_price), 0));
+    if (itemsTotal <= 0 || round4(amount) !== itemsTotal) {
+      return fail('The requested amount must equal the sum of the requisition item lines');
+    }
+
+    const baseAmount = round4(amount * rate);
+    const today = new Date().toISOString().slice(0, 10);
+    const policy = state.approvalPolicies
+      .filter(item => item.is_active && item.transaction_type === 'requisition' &&
+        (item.branch_id == null || item.branch_id === branchId) &&
+        (!item.effective_from || item.effective_from <= today) &&
+        (!item.effective_to || item.effective_to >= today))
+      .sort((a, b) => Number(b.branch_id != null) - Number(a.branch_id != null) ||
+        Number(b.version || 0) - Number(a.version || 0))[0];
+    if (!policy) return fail('No active requisition approval policy is configured for this branch');
+    const band = state.approvalPolicyBands.find(item => item.policy_id === policy.id &&
+      baseAmount >= Number(item.min_amount_base) &&
+      (item.max_amount_base == null || baseAmount < Number(item.max_amount_base)));
+    if (!band) return fail('No requisition approval threshold band covers this amount');
+    const policySteps = state.approvalPolicySteps.filter(item => item.band_id === band.id)
+      .sort((a, b) => Number(a.step_number) - Number(b.step_number));
+    if (!policySteps.length || policySteps.some((step, index) =>
+      Number(step.step_number) !== index + 1 ||
+      step.required_permission_key !== 'approve_requisitions' ||
+      step.prohibit_submitter_approval !== true)) {
+      return fail('Requisition approval policy must have ordered approval_requisitions steps that prohibit submitter approval');
+    }
+
+    let sequence = state.requisitions.length + 1;
+    let requisitionNumber = `REQ-${today.slice(0, 4)}-${String(sequence).padStart(6, '0')}`;
+    while (state.requisitions.some(item => item.requisition_number === requisitionNumber)) {
+      sequence += 1;
+      requisitionNumber = `REQ-${today.slice(0, 4)}-${String(sequence).padStart(6, '0')}`;
+    }
+    const requisitionId = id(state, 'requisition');
+    const requestId = id(state, 'requisition-approval');
+    const applicantName = [actor.first_name, actor.last_name].filter(Boolean).join(' ').trim() || actor.id;
+    const requisition = {
+      id: requisitionId,
+      requisition_number: requisitionNumber,
+      branch_id: branchId,
+      ministry_id: ministry.id,
+      department_name: ministry.name,
+      applicant_profile_id: actor.id,
+      applicant_name: applicantName,
+      title,
+      description: String(args.p_description || '').trim() || null,
+      requested_amount: amount,
+      currency,
+      exchange_rate_to_base: rate,
+      base_currency_code: state.baseCurrencyCode,
+      priority,
+      status: 'pending_approval',
+      needed_by_date: args.p_needed_by_date || null,
+      vendor_quote_reference: String(args.p_vendor_quote_reference || '').trim() || null,
+      approval_request_id: requestId,
+      created_at: new Date().toISOString(),
+      submitted_at: new Date().toISOString(),
+      approved_at: null,
+      approved_by_profile_id: null
+    };
+    const steps = policySteps.map(policyStep => ({
+      id: id(state, 'requisition-step'),
+      approval_request_id: requestId,
+      step_order: Number(policyStep.step_number),
+      required_permission_key: policyStep.required_permission_key,
+      required_approvals: Number(policyStep.required_approvals),
+      prohibit_submitter_approval: true,
+      status: 'pending'
+    }));
+    state.requisitions.push(requisition);
+    state.requisitionItems.push(...normalizedItems.map((item: any, index: number) => ({
+      id: id(state, 'requisition-item'),
+      requisition_id: requisitionId,
+      line_number: index + 1,
+      item_name: item.item_name,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      line_total: round4(item.quantity * item.unit_price)
+    })));
+    state.approvalRequests.push({
+      id: requestId,
+      transaction_type: 'requisition',
+      target_id: requisitionId,
+      branch_id: branchId,
+      status: 'pending',
+      policy_id: policy.id,
+      policy_version: policy.version,
+      band_id: band.id,
+      amount_base: baseAmount,
+      submitted_by_profile_id: actor.id,
+      submitted_at: new Date().toISOString(),
+      policy_snapshot: {
+        policy_name: policy.name,
+        policy_version: policy.version,
+        min_amount_base: band.min_amount_base,
+        max_amount_base: band.max_amount_base,
+        steps: policySteps.map(step => ({
+          step_number: step.step_number,
+          required_permission_key: step.required_permission_key,
+          required_approvals: step.required_approvals,
+          prohibit_submitter_approval: true
+        }))
+      }
+    });
+    state.approvalSteps.push(...steps);
+    storage.save(state);
+    return success({
+      requisition_id: requisitionId,
+      requisition_number: requisitionNumber,
+      approval_request_id: requestId,
+      status: 'pending_approval',
+      requested_amount: amount,
+      currency_code: currency
+    });
+  }
+
+  function decideDepartmentRequisitionApproval(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const step = state.approvalSteps.find(item => item.id === args.p_request_step_id);
+    const request = step && state.approvalRequests.find(item =>
+      item.id === step.approval_request_id && item.transaction_type === 'requisition');
+    const requisition = request && state.requisitions.find(item =>
+      item.id === request.target_id && item.approval_request_id === request.id);
+    if (!step || !request || !requisition) return fail('Approval step is not a department requisition approval');
+    if (step.status !== 'pending' || request.status !== 'pending' || requisition.status !== 'pending_approval') {
+      return fail('Requisition approval step is no longer pending');
+    }
+    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Decision must be approved or rejected');
+    if (step.prohibit_submitter_approval && request.submitted_by_profile_id === actor.id) {
+      return fail('The submitter cannot approve this request', '42501');
+    }
+    if (!hasPermission(state, actor.id, step.required_permission_key || 'approve_requisitions', requisition.branch_id)) {
+      return fail('Approver does not have the required requisition permission', '42501');
+    }
+    const steps = state.approvalSteps.filter(item => item.approval_request_id === request.id)
+      .sort((a, b) => Number(a.step_order) - Number(b.step_order));
+    if (steps.some(item => item.step_order < step.step_order && item.status !== 'approved')) {
+      return fail('Earlier approval steps must be completed first');
+    }
+    if (state.approvalDecisions.some(item =>
+      item.approval_request_step_id === step.id && item.approver_profile_id === actor.id)) {
+      return fail('This profile has already decided this approval step');
+    }
+
+    state.approvalDecisions.push({
+      id: id(state, 'requisition-decision'),
+      approval_request_step_id: step.id,
+      approver_profile_id: actor.id,
+      decision: args.p_decision,
+      comments: String(args.p_comments || '').trim() || null,
+      decided_at: new Date().toISOString()
+    });
+
+    let approvalStatus = 'pending';
+    if (args.p_decision === 'rejected') {
+      step.status = 'rejected';
+      request.status = 'rejected';
+      request.completed_at = new Date().toISOString();
+      requisition.status = 'rejected';
+    } else {
+      const approvalsReceived = state.approvalDecisions.filter(item =>
+        item.approval_request_step_id === step.id && item.decision === 'approved').length;
+      if (approvalsReceived >= Number(step.required_approvals || 1)) step.status = 'approved';
+      const allStepsApproved = steps.every(item => item.status === 'approved');
+      if (allStepsApproved) {
+        request.status = 'approved';
+        request.completed_at = new Date().toISOString();
+        requisition.status = 'approved';
+        requisition.approved_at = new Date().toISOString();
+        requisition.approved_by_profile_id = actor.id;
+        approvalStatus = 'approved';
+      }
+    }
+    storage.save(state);
+    return success({
+      requisition_id: requisition.id,
+      approval_request_id: request.id,
+      approval_status: approvalStatus,
+      status: requisition.status
+    });
+  }
+
   function getFinanceDocuments(args: Record<string, any> = {}) {
     const state = storage.load();
     const auth = getAuth();
@@ -1127,6 +1415,9 @@ export function createMockFinanceRpc(
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
+        if (name === 'get_department_requisitions') return getDepartmentRequisitions(args);
+        if (name === 'submit_department_requisition') return submitDepartmentRequisition(args);
+        if (name === 'decide_department_requisition_approval') return decideDepartmentRequisitionApproval(args);
         if (name === 'save_requisition_approval_policy') return saveRequisitionApprovalPolicy(args);
         if (name === 'submit_event_budget_for_approval') return submitEventBudgetForApproval(args);
         if (name === 'get_event_budget_submission_options') return getEventBudgetSubmissionOptions(args);
