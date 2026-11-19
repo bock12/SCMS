@@ -1,6 +1,14 @@
 import type { Ministry, MinistryJoinRequest, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
-import { addMinistryMember, getMinistryRoster, removeMinistryMember, updateMinistryMember } from './ministryMemberService';
+import {
+  addMinistryMember,
+  doesDepartmentMatchMinistry,
+  getMinistryRoster,
+  normalizePersonName,
+  removeMinistryMember,
+  resolveMemberMinistryStatus,
+  updateMinistryMember
+} from './ministryMemberService';
 import { sendInAppNotification } from './inAppNotificationService';
 import { SYSTEM_NOTIFICATIONS_UPDATED_EVENT } from './systemNotificationService';
 
@@ -111,13 +119,12 @@ export async function submitMinistryJoinRequest(
     throw new Error('Please provide a contact phone number so the ministry leader can reach you.');
   }
 
-  // Check if user is already an active/training/on_leave member in this ministry
+  // Check if user is already an active member or appointed leader in this ministry
   const [{ data: existingMembership, error: membershipErr }, { data: existingRequests, error: reqErr }] = await Promise.all([
     supabase
       .from('ministry_members')
       .select('*')
-      .eq('ministry_id', ministry.id)
-      .eq('member_id', profile.id),
+      .eq('ministry_id', ministry.id),
     supabase
       .from('ministry_join_requests')
       .select('*')
@@ -128,11 +135,16 @@ export async function submitMinistryJoinRequest(
   if (membershipErr) throw membershipErr;
   if (reqErr) throw reqErr;
 
-  const activeEntry = (existingMembership || []).find(
-    (m: MinistryMember) => m.status !== 'inactive'
-  );
-  if (activeEntry) {
-    throw new Error(`You are already on the ${ministry.name} team (${activeEntry.role_title}).`);
+  const existingStatus = resolveMemberMinistryStatus({
+    ministry,
+    profile,
+    activeMemberships: (existingMembership || []) as MinistryMember[]
+  });
+  if (existingStatus) {
+    if (existingStatus.isLeader) {
+      throw new Error(`You are already the leader of ${ministry.name}.`);
+    }
+    throw new Error(`You are already on the ${ministry.name} team (${existingStatus.membership.role_title}).`);
   }
 
   const existingPending = (existingRequests || []).find(
@@ -442,11 +454,74 @@ export async function leaveMinistryTeam(input: {
   reason?: string;
 }): Promise<void> {
   const { ministry, profile, membershipId, reason } = input;
-  if (!membershipId) {
-    throw new Error('Active ministry assignment was not found.');
+  const isSyntheticId =
+    !membershipId ||
+    membershipId.startsWith('leader-') ||
+    membershipId.startsWith('dept-') ||
+    membershipId.startsWith('local-');
+
+  if (!isSyntheticId) {
+    await removeMinistryMember(membershipId);
+  } else if (profile?.id) {
+    // Clean up any persisted roster entry matching member_id just in case
+    const { data: persisted } = await supabase
+      .from('ministry_members')
+      .select('*')
+      .eq('ministry_id', ministry.id)
+      .eq('member_id', profile.id);
+    if (Array.isArray(persisted)) {
+      for (const row of persisted) {
+        await removeMinistryMember(row.id);
+      }
+    }
   }
 
-  await removeMinistryMember(membershipId);
+  // Remove from local leader/admin roster caches if present
+  try {
+    const profileName = normalizePersonName(`${profile.first_name || ''} ${profile.last_name || ''}`);
+    const profileEmail = (profile.email || '').trim().toLowerCase();
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || (!key.startsWith('fc_roster_') && !key.startsWith('fc_dept_roster_'))) continue;
+      const deptLabel = key.replace(/^fc_dept_roster_/, '').replace(/^fc_roster_/, '');
+      if (!doesDepartmentMatchMinistry(deptLabel, ministry)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) continue;
+      const filtered = list.filter((entry: any) => {
+        if (!entry) return false;
+        if (entry.member_id === profile.id || entry.id === profile.id) return false;
+        if (profile.auth_user_id && (entry.member_id === profile.auth_user_id || entry.id === profile.auth_user_id)) return false;
+        if (profileEmail && entry.email && String(entry.email).trim().toLowerCase() === profileEmail) return false;
+        if (profileName && entry.name && normalizePersonName(String(entry.name)) === profileName) return false;
+        return true;
+      });
+      if (filtered.length !== list.length) {
+        localStorage.setItem(key, JSON.stringify(filtered));
+      }
+    }
+  } catch (err) {
+    console.warn('Could not clean local roster cache on step-down:', err);
+  }
+
+  // Clear matching assigned_department / department_name on profile if present
+  const assignedDept = profile.assigned_department || profile.department_name;
+  if (assignedDept && doesDepartmentMatchMinistry(assignedDept, ministry)) {
+    try {
+      const { data: updatedProfile } = await supabase
+        .from('profiles')
+        .update({ assigned_department: '', department_name: '' })
+        .eq('id', profile.id)
+        .select('*')
+        .maybeSingle();
+      if (updatedProfile) {
+        window.dispatchEvent(new CustomEvent('profile-updated', { detail: updatedProfile }));
+      }
+    } catch (err) {
+      console.warn('Could not clear profile department assignment on step-down:', err);
+    }
+  }
 
   try {
     const refreshedRoster = await getMinistryRoster(ministry.id);

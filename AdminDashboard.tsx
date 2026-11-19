@@ -16,7 +16,7 @@ import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { getProfileRoleData, assignProfileRole, deactivateProfileRoleAssignment, type SystemRole, type ProfileRoleAssignment } from './profileRoleAssignmentService';
-import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember } from './ministryMemberService';
+import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember, ensureMinistryLeaderInRoster } from './ministryMemberService';
 import {
   getAllJoinRequests,
   approveMinistryJoinRequest,
@@ -2458,6 +2458,9 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     };
 
     await supabase.from('ministries').insert(createdItem);
+    if (createdItem.leader_id) {
+      await ensureMinistryLeaderInRoster(createdItem, profile?.id);
+    }
     setShowAddMinistryModal(false);
     setNewMinistry({
       name: '',
@@ -2494,6 +2497,9 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     };
 
     await supabase.from('ministries').update(updatedData).eq('id', editingMinistry.id);
+    if (updatedData.leader_id) {
+      await ensureMinistryLeaderInRoster({ id: editingMinistry.id, name: updatedData.name, leader_id: updatedData.leader_id }, profile?.id);
+    }
     setMinistries(prev => prev.map(m => m.id === editingMinistry.id ? { ...m, ...updatedData } as Ministry : m));
     setEditingMinistry(null);
   };

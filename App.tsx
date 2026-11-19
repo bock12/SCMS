@@ -69,7 +69,9 @@ import {
   getMinistryRoster,
   addMinistryMember,
   updateMinistryMember,
-  removeMinistryMember
+  removeMinistryMember,
+  resolveMemberMinistryStatus,
+  type ResolvedMinistryMembership
 } from './ministryMemberService';
 import {
   approveMinistryJoinRequest,
@@ -2742,7 +2744,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedType, setSelectedType] = useState<'All' | 'social_fellowship' | 'service_department'>('All');
-  const [viewScope, setViewScope] = useState<'all' | 'my_teams' | 'pending'>('all');
+  const [viewScope, setViewScope] = useState<'all' | 'available' | 'my_teams' | 'pending'>('all');
 
   const [selectedMinistry, setSelectedMinistry] = useState<Ministry | null>(null);
   const [preferredRoles, setPreferredRoles] = useState<string[]>([]);
@@ -2755,10 +2757,18 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const [interestSubmitted, setInterestSubmitted] = useState(false);
   const [pageBanner, setPageBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showAllApplications, setShowAllApplications] = useState(false);
-  const [activeTeamModal, setActiveTeamModal] = useState<{ ministry: Ministry; membership: MinistryMember } | null>(null);
+  const [freshProfile, setFreshProfile] = useState<Profile | null>(profile);
+  const [activeTeamModal, setActiveTeamModal] = useState<{
+    ministry: Ministry;
+    membership: MinistryMember;
+    isLeader: boolean;
+    source: ResolvedMinistryMembership['source'];
+  } | null>(null);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [leaveReason, setLeaveReason] = useState('');
   const [leavingTeam, setLeavingTeam] = useState(false);
+
+  const effectiveProfile = freshProfile || profile;
 
   const closeTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
@@ -2793,13 +2803,31 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   useEffect(() => {
+    setFreshProfile(profile);
+  }, [profile]);
+
+  const syncFreshProfile = async (memberId?: string) => {
+    if (!memberId) return;
+    try {
+      const { data } = await supabase.from('profiles').select('*').eq('id', memberId).maybeSingle();
+      if (data) setFreshProfile(data as Profile);
+    } catch {
+      // Keep current profile snapshot
+    }
+  };
+
+  useEffect(() => {
     loadMinistriesAndStatus();
+    if (profile?.id) {
+      syncFreshProfile(profile.id);
+    }
   }, [profile?.id]);
 
   useEffect(() => {
     const handleSync = () => {
       if (profile?.id) {
         setMyJoinRequests(getJoinRequestsForMember(profile.id));
+        syncFreshProfile(profile.id);
       }
       supabase
         .from('ministry_members')
@@ -2817,9 +2845,11 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
         });
     };
     window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleSync);
+    window.addEventListener('profile-updated', handleSync);
     window.addEventListener('storage', handleSync);
     return () => {
       window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleSync);
+      window.removeEventListener('profile-updated', handleSync);
       window.removeEventListener('storage', handleSync);
     };
   }, [profile?.id]);
@@ -2871,7 +2901,75 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     };
   }, []);
 
+  const myResolvedStatusByMinistryId = new Map<string, ResolvedMinistryMembership>();
+  if (effectiveProfile) {
+    ministries.forEach(min => {
+      const resolved = resolveMemberMinistryStatus({
+        ministry: min,
+        profile: effectiveProfile,
+        activeMemberships: allActiveMemberships
+      });
+      if (resolved) {
+        myResolvedStatusByMinistryId.set(min.id, resolved);
+      }
+    });
+  }
+
+  // Client-side filter excluding ministries the user is already a member or leader of
+  const availableMinistriesToJoin = ministries.filter(min => {
+    if (myResolvedStatusByMinistryId.has(min.id)) return false;
+    if (effectiveProfile?.id) {
+      const existsInTable = allActiveMemberships.some(
+        entry =>
+          entry.ministry_id === min.id &&
+          entry.status !== 'inactive' &&
+          (entry.member_id === effectiveProfile.id ||
+            (Boolean(effectiveProfile.auth_user_id) && entry.member_id === effectiveProfile.auth_user_id))
+      );
+      if (existsInTable) return false;
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    if (!selectedMinistry) return;
+    const isStillJoinable = availableMinistriesToJoin.some(m => m.id === selectedMinistry.id);
+    if (!isStillJoinable) {
+      const resolved = myResolvedStatusByMinistryId.get(selectedMinistry.id);
+      const blockedName = selectedMinistry.name;
+      closeInterestModal();
+      setPageBanner({
+        type: 'error',
+        text: resolved?.isLeader
+          ? `You are already the leader of ${blockedName}.`
+          : `You are already a member of ${blockedName}. Use Manage on the ministry card to view your team details.`
+      });
+    }
+  }, [selectedMinistry, allActiveMemberships, ministries, effectiveProfile?.id]);
+
   const openInterestModal = (ministry: Ministry) => {
+    // Client-side guard: filter out already-joined ministries before opening Express Interest modal
+    const isEligibleToJoin = availableMinistriesToJoin.some(m => m.id === ministry.id);
+    const existingStatus =
+      myResolvedStatusByMinistryId.get(ministry.id) ||
+      (effectiveProfile
+        ? resolveMemberMinistryStatus({
+            ministry,
+            profile: effectiveProfile,
+            activeMemberships: allActiveMemberships
+          })
+        : null);
+
+    if (!isEligibleToJoin || existingStatus) {
+      setPageBanner({
+        type: 'error',
+        text: existingStatus?.isLeader
+          ? `You are already leading ${ministry.name} (${existingStatus.membership.role_title}).`
+          : `You are already a member of ${ministry.name} (${existingStatus?.membership.role_title || 'Active Member'}).`
+      });
+      return;
+    }
+
     if (closeTimerRef.current) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
@@ -2880,7 +2978,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     setPreferredRoles([]);
     setSelectedAvailabilityChips([]);
     setCustomAvailability('');
-    setApplicantPhone(profile?.phone || '');
+    setApplicantPhone(effectiveProfile?.phone || '');
     setInterestNote('');
     setSubmitError(null);
     setInterestSubmitted(false);
@@ -2901,8 +2999,14 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMinistry) return;
-    if (!profile) {
+    if (!effectiveProfile) {
       setSubmitError('Please sign in with your church member account to express interest.');
+      return;
+    }
+
+    // Double-check against client-side joinable filter before submitting
+    if (!availableMinistriesToJoin.some(m => m.id === selectedMinistry.id) || myResolvedStatusByMinistryId.has(selectedMinistry.id)) {
+      setSubmitError(`You are already a member of ${selectedMinistry.name}. Duplicate join requests are not permitted.`);
       return;
     }
 
@@ -2923,13 +3027,13 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     try {
       await submitMinistryJoinRequest({
         ministry: selectedMinistry,
-        profile,
+        profile: effectiveProfile,
         preferredRoles,
         availability: combinedAvailability,
         note: interestNote,
         phoneOverride: applicantPhone
       });
-      setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      setMyJoinRequests(getJoinRequestsForMember(effectiveProfile.id));
       setInterestSubmitted(true);
       setPageBanner({
         type: 'success',
@@ -2961,12 +3065,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 
   const handleLeaveTeam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeTeamModal || !profile) return;
+    if (!activeTeamModal || !effectiveProfile) return;
     setLeavingTeam(true);
     try {
       await leaveMinistryTeam({
         ministry: activeTeamModal.ministry,
-        profile,
+        profile: effectiveProfile,
         membershipId: activeTeamModal.membership.id,
         reason: leaveReason
       });
@@ -2994,13 +3098,6 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const defaultCategories: string[] = ['Worship', 'Youth', 'Children', 'Men', 'Women', 'Hospitality', 'Prayer', 'Production', 'Outreach'];
   const categoriesList: string[] = Array.from(new Set([...defaultCategories, ...categoriesInDb])) as string[];
 
-  const myMembershipsByMinistryId = new Map<string, MinistryMember>();
-  if (profile?.id) {
-    allActiveMemberships
-      .filter(m => m.member_id === profile.id)
-      .forEach(m => myMembershipsByMinistryId.set(m.ministry_id, m));
-  }
-
   const latestRequestByMinistryId = new Map<string, MinistryJoinRequest>();
   myJoinRequests.forEach(req => {
     if (!latestRequestByMinistryId.has(req.ministry_id)) {
@@ -3008,8 +3105,10 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     }
   });
 
-  const pendingMyRequests = myJoinRequests.filter(r => r.status === 'pending');
-  const myTeamsCount = myMembershipsByMinistryId.size;
+  const pendingMyRequests = myJoinRequests.filter(
+    r => r.status === 'pending' && !myResolvedStatusByMinistryId.has(r.ministry_id)
+  );
+  const myTeamsCount = myResolvedStatusByMinistryId.size;
 
   const socialCount = ministries.filter(m => m.type === 'social_fellowship').length;
   const serviceCount = ministries.filter(m => (m.type || 'service_department') === 'service_department').length;
@@ -3027,10 +3126,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
       (m.leader_name || '').toLowerCase().includes(q) ||
       (m.roles_and_responsibilities || []).some(r => r.toLowerCase().includes(q));
 
-    const isMyTeam = myMembershipsByMinistryId.has(m.id);
-    const hasPending = latestRequestByMinistryId.get(m.id)?.status === 'pending';
+    const isMyTeam = myResolvedStatusByMinistryId.has(m.id);
+    const isAvailable = availableMinistriesToJoin.some(item => item.id === m.id);
+    const hasPending = !isMyTeam && latestRequestByMinistryId.get(m.id)?.status === 'pending';
     const matchesScope =
       viewScope === 'all' ||
+      (viewScope === 'available' && isAvailable) ||
       (viewScope === 'my_teams' && isMyTeam) ||
       (viewScope === 'pending' && hasPending);
 
@@ -3118,9 +3219,10 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
                 Track ministries you serve in and review the status of your interest submissions.
               </p>
             </div>
-            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto">
               {[
                 { id: 'all', label: `All (${ministries.length})` },
+                { id: 'available', label: `Open to Join (${availableMinistriesToJoin.length})` },
                 { id: 'my_teams', label: `My Teams (${myTeamsCount})` },
                 { id: 'pending', label: `Pending (${pendingMyRequests.length})` }
               ].map(tab => (
@@ -3143,23 +3245,32 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
           {myTeamsCount > 0 && (
             <div className="space-y-2">
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800 block">
-                Active Ministry Teams ({myTeamsCount})
+                Active Ministry Teams &amp; Leadership ({myTeamsCount})
               </span>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {Array.from(myMembershipsByMinistryId.entries()).map(([minId, mem]) => {
+                {Array.from(myResolvedStatusByMinistryId.entries()).map(([minId, resolved]) => {
                   const minObj = ministries.find(m => m.id === minId);
                   if (!minObj) return null;
+                  const mem = resolved.membership;
                   return (
                     <div
                       key={mem.id}
-                      className="p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-200 flex items-center justify-between gap-3 text-xs"
+                      className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 text-xs ${
+                        resolved.isLeader
+                          ? 'bg-amber-50/70 border-amber-200'
+                          : 'bg-emerald-50/70 border-emerald-200'
+                      }`}
                     >
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-1.5">
-                          <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                          {resolved.isLeader ? (
+                            <Award size={14} className="text-amber-600 shrink-0" />
+                          ) : (
+                            <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                          )}
                           <span className="font-extrabold text-slate-900 truncate">{minObj.name}</span>
                         </div>
-                        <p className="text-[11px] font-bold text-emerald-900 truncate">
+                        <p className={`text-[11px] font-bold truncate ${resolved.isLeader ? 'text-amber-900' : 'text-emerald-900'}`}>
                           {mem.role_title} · <span className="capitalize font-semibold">{mem.status.replace('_', ' ')}</span>
                         </p>
                         <p className="text-[10px] text-slate-500 truncate">{mem.duty || minObj.meeting_time}</p>
@@ -3169,9 +3280,18 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
                         onClick={() => {
                           setLeaveConfirmOpen(false);
                           setLeaveReason('');
-                          setActiveTeamModal({ ministry: minObj, membership: mem });
+                          setActiveTeamModal({
+                            ministry: minObj,
+                            membership: mem,
+                            isLeader: resolved.isLeader,
+                            source: resolved.source
+                          });
                         }}
-                        className="px-2.5 py-1.5 bg-white hover:bg-emerald-600 hover:text-white border border-emerald-200 text-emerald-800 font-bold rounded-lg text-[11px] cursor-pointer shrink-0 transition-colors"
+                        className={`px-2.5 py-1.5 bg-white border font-bold rounded-lg text-[11px] cursor-pointer shrink-0 transition-colors ${
+                          resolved.isLeader
+                            ? 'hover:bg-amber-600 hover:text-white border-amber-200 text-amber-800'
+                            : 'hover:bg-emerald-600 hover:text-white border-emerald-200 text-emerald-800'
+                        }`}
                       >
                         Team Details
                       </button>
@@ -3387,14 +3507,34 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
             const isSocial = m.type === 'social_fellowship';
             const rosterCount = allActiveMemberships.filter(entry => entry.ministry_id === m.id).length;
             const displayedServantCount = rosterCount > 0 ? Math.max(rosterCount, m.member_count || 0) : m.member_count;
-            const myMembership = myMembershipsByMinistryId.get(m.id);
+            const resolvedMembership = myResolvedStatusByMinistryId.get(m.id);
+            const isInMinistryMembersTable = Boolean(
+              effectiveProfile &&
+                allActiveMemberships.some(
+                  entry =>
+                    entry.ministry_id === m.id &&
+                    entry.status !== 'inactive' &&
+                    (entry.member_id === effectiveProfile.id ||
+                      (Boolean(effectiveProfile.auth_user_id) && entry.member_id === effectiveProfile.auth_user_id))
+                )
+            );
+            const isAlreadyMember = Boolean(resolvedMembership || isInMinistryMembersTable);
             const myRequest = latestRequestByMinistryId.get(m.id);
-            const isPending = myRequest?.status === 'pending';
+            const isPending = !isAlreadyMember && myRequest?.status === 'pending';
 
             return (
-              <div key={m.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4">
+              <div
+                key={m.id}
+                className={`bg-white rounded-3xl border p-6 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4 ${
+                  resolvedMembership?.isLeader
+                    ? 'border-amber-200 ring-1 ring-amber-100/80'
+                    : isAlreadyMember
+                    ? 'border-emerald-200 ring-1 ring-emerald-100/80'
+                    : 'border-slate-200'
+                }`}
+              >
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-2 text-[11px] font-semibold text-slate-500">
+                  <div className="flex items-center justify-between gap-2 mb-2 text-[11px] font-semibold text-slate-500 flex-wrap">
                     <span className={isSocial ? 'text-amber-700 font-bold' : 'text-indigo-700 font-bold'}>
                       {isSocial ? 'Social Fellowship' : 'Service Department'}
                     </span>
@@ -3404,6 +3544,32 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
                       {displayedServantCount} Servants
                     </span>
                   </div>
+
+                  {isAlreadyMember && (
+                    <div
+                      className={`flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl text-[11px] font-extrabold mb-2.5 border ${
+                        resolvedMembership?.isLeader
+                          ? 'bg-amber-50 text-amber-900 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        {resolvedMembership?.isLeader ? (
+                          <Award size={13} className="text-amber-600 shrink-0" />
+                        ) : (
+                          <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                        )}
+                        <span>{resolvedMembership?.isLeader ? 'Joined · Team Leader' : 'Joined'}</span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold ${
+                          resolvedMembership?.isLeader ? 'text-amber-700' : 'text-emerald-700'
+                        }`}
+                      >
+                        Already a Member
+                      </span>
+                    </div>
+                  )}
 
                   <h3 className="text-xl font-bold text-slate-900 mb-2">{m.name}</h3>
                   <p className="text-xs text-slate-600 leading-relaxed mb-4">{m.description}</p>
@@ -3433,20 +3599,47 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
                     <span className="font-bold text-indigo-600">{m.meeting_time}</span>
                   </div>
 
-                  {myMembership ? (
-                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-1.5 text-emerald-900 font-bold min-w-0">
-                        <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
-                        <span className="truncate">Active Member · {myMembership.role_title}</span>
+                  {resolvedMembership ? (
+                    <div
+                      className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs ${
+                        resolvedMembership.isLeader
+                          ? 'bg-amber-50 border-amber-200'
+                          : 'bg-emerald-50 border-emerald-200'
+                      }`}
+                    >
+                      <div
+                        className={`flex items-center gap-1.5 font-bold min-w-0 ${
+                          resolvedMembership.isLeader ? 'text-amber-900' : 'text-emerald-900'
+                        }`}
+                      >
+                        {resolvedMembership.isLeader ? (
+                          <Award size={15} className="text-amber-600 shrink-0" />
+                        ) : (
+                          <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                        )}
+                        <span className="truncate">
+                          {resolvedMembership.isLeader
+                            ? `Leading Team · ${resolvedMembership.membership.role_title}`
+                            : `Joined · ${resolvedMembership.membership.role_title}`}
+                        </span>
                       </div>
                       <button
                         type="button"
                         onClick={() => {
                           setLeaveConfirmOpen(false);
                           setLeaveReason('');
-                          setActiveTeamModal({ ministry: m, membership: myMembership });
+                          setActiveTeamModal({
+                            ministry: m,
+                            membership: resolvedMembership.membership,
+                            isLeader: resolvedMembership.isLeader,
+                            source: resolvedMembership.source
+                          });
                         }}
-                        className="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white border border-emerald-200 text-emerald-800 rounded-lg text-[10px] font-extrabold cursor-pointer shrink-0 transition-colors"
+                        className={`px-2.5 py-1 bg-white border rounded-lg text-[10px] font-extrabold cursor-pointer shrink-0 transition-colors ${
+                          resolvedMembership.isLeader
+                            ? 'hover:bg-amber-600 hover:text-white border-amber-200 text-amber-800'
+                            : 'hover:bg-emerald-600 hover:text-white border-emerald-200 text-emerald-800'
+                        }`}
                       >
                         Manage
                       </button>
@@ -3703,8 +3896,12 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
           >
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
-                <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">
-                  Active Ministry Team
+                <span
+                  className={`text-[11px] font-extrabold uppercase tracking-wider ${
+                    activeTeamModal.isLeader ? 'text-amber-700' : 'text-emerald-700'
+                  }`}
+                >
+                  {activeTeamModal.isLeader ? 'Department Leadership Role' : 'Active Ministry Team'}
                 </span>
                 <h3 id="my-team-modal-title" className="text-lg font-black text-slate-900 mt-0.5">
                   {activeTeamModal.ministry.name}
@@ -3775,7 +3972,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
               </ul>
             </div>
 
-            {leaveConfirmOpen ? (
+            {leaveConfirmOpen && !activeTeamModal.isLeader ? (
               <form onSubmit={handleLeaveTeam} className="p-4 bg-rose-50/70 border border-rose-200 rounded-2xl space-y-3">
                 <div className="space-y-1">
                   <h4 className="font-extrabold text-rose-900">Step Down From {activeTeamModal.ministry.name}?</h4>
@@ -3810,13 +4007,26 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
               </form>
             ) : (
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLeaveConfirmOpen(true)}
-                  className="px-3.5 py-2 text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold rounded-xl cursor-pointer transition-colors"
-                >
-                  Step Down / Leave Team
-                </button>
+                {activeTeamModal.isLeader ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTeamModal(null);
+                      navigate('/portal/leader?tab=roster');
+                    }}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl cursor-pointer transition-colors flex items-center gap-1.5"
+                  >
+                    <Award size={14} /> Open Leader Console
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLeaveConfirmOpen(true)}
+                    className="px-3.5 py-2 text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold rounded-xl cursor-pointer transition-colors"
+                  >
+                    Step Down / Leave Team
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -4705,6 +4915,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const updateDeptRoster = (newRoster: any[]) => {
     setDeptRoster(newRoster);
     localStorage.setItem(`fc_roster_${activeDept}`, JSON.stringify(newRoster));
+    window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
   };
 
   // View Member Modal state
@@ -4840,13 +5051,18 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
     const roleTitle = addRosterRole.trim() || 'Team Member';
     const dutyText = addRosterDuty.trim() || 'General Ministry Duty';
+    const cleanEmail = addRosterEmail.trim().toLowerCase();
+    const matchedProfile = selectedCongregationMemberId
+      ? congregationMembers.find(p => p.id === selectedCongregationMemberId)
+      : congregationMembers.find(p => cleanEmail && p.email?.trim().toLowerCase() === cleanEmail);
+    const resolvedMemberId = selectedCongregationMemberId || matchedProfile?.id || '';
     let assignmentId: string | undefined;
 
-    if (selectedCongregationMemberId && activeMinistryObj?.id) {
+    if (resolvedMemberId && activeMinistryObj?.id) {
       try {
         const saved = await addMinistryMember({
           ministry_id: activeMinistryObj.id,
-          member_id: selectedCongregationMemberId,
+          member_id: resolvedMemberId,
           role_title: roleTitle,
           duty: dutyText,
           status: mapUiStatusToDb(addRosterStatus),
@@ -4859,9 +5075,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     }
 
     const newMember = {
-      id: selectedCongregationMemberId || `r_${Date.now()}`,
+      id: resolvedMemberId || `r_${Date.now()}`,
       assignment_id: assignmentId,
-      member_id: selectedCongregationMemberId || undefined,
+      member_id: resolvedMemberId || undefined,
       name: addRosterName.trim(),
       role: roleTitle,
       duty: dutyText,

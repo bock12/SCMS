@@ -1,4 +1,4 @@
-import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
+import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
 import { createBrowserMockFinanceStorage, createMockFinanceRpc, expandMockFinancePermissions } from './mockFinanceRpc';
 
 // Storage keys
@@ -509,6 +509,99 @@ const initialMinistries: Ministry[] = [
   }
 ];
 
+const initialMinistryMembers: MinistryMember[] = [
+  {
+    id: 'mm-seed-men-leader',
+    ministry_id: 'min-men-1',
+    member_id: 'usr-admin-1',
+    role_title: 'Department Leader',
+    duty: 'Men of Honor Fellowship Leadership & Discipleship Oversight',
+    status: 'active',
+    joined_at: new Date(Date.now() - 300 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-women-leader',
+    ministry_id: 'min-women-1',
+    member_id: 'usr-pastor-1',
+    role_title: 'Department Leader',
+    duty: 'Women of Grace Guild Leadership & Pastoral Oversight',
+    status: 'active',
+    joined_at: new Date(Date.now() - 280 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-choir-leader',
+    ministry_id: 'min-1',
+    member_id: 'usr-leader-1',
+    role_title: 'Department Leader',
+    duty: 'Choir Director & Worship Vocals Oversight',
+    status: 'active',
+    joined_at: new Date(Date.now() - 240 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-choir-member-1',
+    ministry_id: 'min-1',
+    member_id: 'usr-member-1',
+    role_title: 'Soprano Lead',
+    duty: 'Sunday Celebration Worship & Thursday Rehearsal Vocals',
+    status: 'active',
+    joined_at: new Date(Date.now() - 120 * 86400000).toISOString(),
+    created_by: 'usr-leader-1'
+  },
+  {
+    id: 'mm-seed-youth-leader',
+    ministry_id: 'min-2',
+    member_id: 'mem-8',
+    role_title: 'Department Leader',
+    duty: 'Kingdom Youth Fellowship Leadership',
+    status: 'active',
+    joined_at: new Date(Date.now() - 220 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-ushers-leader',
+    ministry_id: 'min-3',
+    member_id: 'mem-6',
+    role_title: 'Department Leader',
+    duty: 'Head Usher & Sanctuary Protocol Oversight',
+    status: 'active',
+    joined_at: new Date(Date.now() - 210 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-prayer-leader',
+    ministry_id: 'min-4',
+    member_id: 'mem-7',
+    role_title: 'Department Leader',
+    duty: 'Intercessory Prayer Coordination',
+    status: 'active',
+    joined_at: new Date(Date.now() - 200 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-media-leader',
+    ministry_id: 'min-5',
+    member_id: 'usr-admin-1',
+    role_title: 'Department Leader',
+    duty: 'Media & Livestream Studio Technical Direction',
+    status: 'active',
+    joined_at: new Date(Date.now() - 250 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  },
+  {
+    id: 'mm-seed-kids-leader',
+    ministry_id: 'min-6',
+    member_id: 'mem-9',
+    role_title: 'Department Leader',
+    duty: 'FaithKids Children Ministry Oversight',
+    status: 'active',
+    joined_at: new Date(Date.now() - 190 * 86400000).toISOString(),
+    created_by: 'usr-admin-1'
+  }
+];
+
 const initialJoinRequests: MinistryJoinRequest[] = [
   {
     id: 'mjr-seed-1',
@@ -972,6 +1065,20 @@ function loadLocalDatabase() {
       if (!parsed.events || parsed.events.length === 0) parsed.events = initialEvents;
       if (!parsed.event_registrations || parsed.event_registrations.length === 0) parsed.event_registrations = initialEventRegistrations;
       if (!Array.isArray(parsed.ministry_members)) parsed.ministry_members = [];
+      let seededMinistryMembers = false;
+      if (!parsed.ministry_members_seeded_v1) {
+        const existingPairs = new Set(
+          parsed.ministry_members.map((entry: any) => `${entry.ministry_id}:${entry.member_id}`)
+        );
+        const missingSeeds = initialMinistryMembers.filter(
+          seed => !existingPairs.has(`${seed.ministry_id}:${seed.member_id}`)
+        );
+        if (missingSeeds.length > 0) {
+          parsed.ministry_members = [...parsed.ministry_members, ...missingSeeds];
+        }
+        parsed.ministry_members_seeded_v1 = true;
+        seededMinistryMembers = true;
+      }
       if (!Array.isArray(parsed.ministry_join_requests)) {
         let legacyJoinRequests: MinistryJoinRequest[] | null = null;
         try {
@@ -1037,7 +1144,7 @@ function loadLocalDatabase() {
       }
 
       const migrated = migrateUnifiedDirectoryData(parsed);
-      if (migrated.changed || migratedLegacyRoleAssignments) {
+      if (migrated.changed || migratedLegacyRoleAssignments || seededMinistryMembers) {
         saveLocalDatabase(migrated.db);
       }
       return migrated.db;
@@ -1069,7 +1176,8 @@ function loadLocalDatabase() {
     streams: initialStreams,
     stream_chat_messages: initialMessages,
     ministries: initialMinistries,
-    ministry_members: [],
+    ministry_members: initialMinistryMembers,
+    ministry_members_seeded_v1: true,
     ministry_join_requests: initialJoinRequests,
     church_resources: [],
     event_surveys: [],
@@ -1309,6 +1417,9 @@ class LocalQueryBuilder {
       if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
         window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'delete' } }));
       }
+      if (typeof window !== 'undefined' && ['ministry_members', 'ministries', 'ministry_join_requests', 'profiles'].includes(this.tableName)) {
+        window.dispatchEvent(new CustomEvent('ministry_join_requests_updated', { detail: { table: this.tableName, action: 'delete' } }));
+      }
       resolve({ data: null, error: null });
       return;
     }
@@ -1344,6 +1455,9 @@ class LocalQueryBuilder {
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
         window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'update' } }));
+      }
+      if (typeof window !== 'undefined' && ['ministry_members', 'ministries', 'ministry_join_requests', 'profiles'].includes(this.tableName)) {
+        window.dispatchEvent(new CustomEvent('ministry_join_requests_updated', { detail: { table: this.tableName, action: 'update' } }));
       }
       const returnedRows = updatedRows.filter(row => this.filters.every(f => f(row)));
       if (this.isSingle) {
@@ -1390,6 +1504,9 @@ class LocalQueryBuilder {
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined' && (this.tableName === 'events' || this.tableName === 'event_registrations')) {
         window.dispatchEvent(new CustomEvent('church_events_updated', { detail: { table: this.tableName, action: 'insert' } }));
+      }
+      if (typeof window !== 'undefined' && ['ministry_members', 'ministries', 'ministry_join_requests', 'profiles'].includes(this.tableName)) {
+        window.dispatchEvent(new CustomEvent('ministry_join_requests_updated', { detail: { table: this.tableName, action: 'insert' } }));
       }
 
       // Trigger realtime handlers if stream chat message
