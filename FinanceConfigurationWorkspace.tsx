@@ -1,14 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
-import { supabase } from './supabaseClient';
 import { getFinanceConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 
 interface FinanceConfigurationWorkspaceProps {
   branchId: string | null;
 }
-
-interface ApproverOption { id: string; label: string; }
 
 const emptyConfiguration = (): FinanceConfiguration => ({
   currencies: [], baseCurrencyCode: null, chartAccounts: [], financialAccounts: [], funds: [],
@@ -23,7 +20,6 @@ const buttonClass = 'inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3
 
 export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspaceProps> = ({ branchId }) => {
   const [configuration, setConfiguration] = useState<FinanceConfiguration>(emptyConfiguration);
-  const [approvers, setApprovers] = useState<ApproverOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +45,6 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [policyName, setPolicyName] = useState('Financial Document Approval');
   const [policyMin, setPolicyMin] = useState('0');
   const [policyMax, setPolicyMax] = useState('');
-  const [selectedApprovers, setSelectedApprovers] = useState<string[]>([]);
   const [requiredApprovals, setRequiredApprovals] = useState('1');
 
   const assetAccounts = useMemo(
@@ -60,19 +55,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const reload = async () => {
     setLoading(true);
     setError(null);
-    const [configResult, profileResult] = await Promise.all([
-      getFinanceConfiguration(branchId),
-      supabase.from('profiles').select('id,first_name,last_name,status').order('first_name', { ascending: true })
-    ]);
+    const configResult = await getFinanceConfiguration(branchId);
     if (configResult.error) setError(configResult.error.message);
     else setConfiguration({ ...emptyConfiguration(), ...(configResult.data || {}) });
-    if (profileResult.error) {
-      setApprovers([]);
-    } else {
-      setApprovers((profileResult.data || [])
-        .filter((p: any) => p.status !== 'suspended' && p.status !== 'archived')
-        .map((p: any) => ({ id: p.id, label: [p.first_name, p.last_name].filter(Boolean).join(' ') || p.id })));
-    }
     setLoading(false);
   };
 
@@ -147,8 +132,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     const approvalCount = Number(requiredApprovals);
     if (!policyName.trim() || !Number.isFinite(min) || min < 0 ||
       (max !== null && (!Number.isFinite(max) || max <= min)) ||
-      (policyType === 'budget' && selectedApprovers.length === 0) ||
-      (policyType === 'financial_document' && (!Number.isInteger(approvalCount) || approvalCount < 1))) return;
+      (!Number.isInteger(approvalCount) || approvalCount < 1)) return;
     const policyId = makeId('policy');
     const bandId = makeId('band');
     update({
@@ -162,13 +146,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       approvalPolicySteps: [...configuration.approvalPolicySteps, {
         id: makeId('approval-step'), band_id: bandId, step_number: 1,
         required_permission_key: 'approve_finances',
-        required_approvals: policyType === 'financial_document' ? approvalCount : 1,
-        prohibit_submitter_approval: true,
-        approver_profile_ids: policyType === 'budget' ? selectedApprovers : []
+        required_approvals: approvalCount,
+        prohibit_submitter_approval: true
       }]
     });
     setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
-    setSelectedApprovers([]);
     setRequiredApprovals('1');
   };
 
@@ -283,16 +265,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
             </select>
             <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={policyMin} onChange={e => setPolicyMin(e.target.value)} /><input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={policyMax} onChange={e => setPolicyMax(e.target.value)} /></div>
-            {policyType === 'budget' ? <>
-              <label className={labelClass}>Assigned budget approver</label>
-              <select className={fieldClass} value={selectedApprovers[0] || ''} onChange={e => setSelectedApprovers(e.target.value ? [e.target.value] : [])}>
-                {approvers.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}
-              </select>
-            </> : <>
-              <label className={labelClass}>Required distinct approvals</label>
-              <input className={fieldClass} type="number" min="1" step="1" value={requiredApprovals} onChange={e => setRequiredApprovals(e.target.value)} />
-              <p className="mt-1 text-xs text-slate-500">Any active profile with the branch-scoped approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
-            </>}
+            <label className={labelClass}>Required distinct approvals</label>
+            <input className={fieldClass} type="number" min="1" step="1" value={requiredApprovals} onChange={e => setRequiredApprovals(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">Any active profile with the applicable branch-scoped approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
             <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
           </div>
           <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>

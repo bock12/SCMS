@@ -141,7 +141,7 @@ describe('event budget mock finance RPC lifecycle', () => {
     expect(ctx.read().budgets).toHaveLength(1);
     expect(ctx.read().budgetLines).toHaveLength(1);
     expect(ctx.read().approvalRequests[0].transaction_type).toBe('budget');
-    expect(ctx.read().approvalSteps[0].approver_profile_id).toBe('approver-1');
+    expect(ctx.read().approvalSteps[0].required_permission_key).toBe('approve_finances');
     expect(ctx.read().budgets[0].total_budget).toBe(500);
   });
 

@@ -357,23 +357,12 @@ export function createMockFinanceRpc(
     const policySteps = state.approvalPolicySteps.filter(item => item.band_id === band.id)
       .sort((a, b) => Number(a.step_number) - Number(b.step_number));
     if (!policySteps.length) return fail('Event budget approval policy must contain at least one approval step');
-    const approvers = [];
-    for (const policyStep of policySteps) {
-      const permission = policyStep.required_permission_key || 'approve_finances';
-      const ids = policyStep.approver_profile_ids || [];
-      if (ids.length < Number(policyStep.required_approvals || 1)) {
-        return fail('Event budget approval step does not have enough configured approvers');
-      }
-      for (const profileId of ids) {
-        const profile = state.profiles.find(item => item.id === profileId && item.status !== 'suspended' && item.status !== 'archived');
-        if (!profile || !hasPermission(state, profileId, permission, branchId)) {
-          return fail('Every event budget approver must be active and hold the required branch permission', '42501');
-        }
-        approvers.push({ profileId, stepOrder: Number(policyStep.step_number), permission });
-      }
-    }
-    if (!approvers.length || new Set(approvers.map(item => item.profileId + ':' + item.stepOrder)).size !== approvers.length) {
-      return fail('Event budget approval policy has invalid or duplicate approvers');
+    if (policySteps.some((step, index) =>
+      Number(step.step_number) !== index + 1 ||
+      !step.required_permission_key ||
+      !Number.isInteger(Number(step.required_approvals)) ||
+      Number(step.required_approvals) < 1)) {
+      return fail('Event budget approval policy steps must be ordered and permission-scoped');
     }
 
     const budgetId = id(state, 'budget');
@@ -391,11 +380,12 @@ export function createMockFinanceRpc(
       amount_base: baseAmount, policy_version: policy.version ?? null,
       policy_snapshot: { name: policy.name, version: policy.version, band_id: band.id }
     };
-    const steps = approvers.map(item => ({
-      id: id(state, 'step'), approval_request_id: requestId, step_order: item.stepOrder,
-      approver_profile_id: item.profileId, required_permission_key: item.permission,
-      required_approvals: Number(policySteps.find(policyStep => Number(policyStep.step_number) === item.stepOrder)?.required_approvals || 1),
-      prohibit_submitter_approval: Boolean(policySteps.find(policyStep => Number(policyStep.step_number) === item.stepOrder)?.prohibit_submitter_approval),
+    const steps = policySteps.map(policyStep => ({
+      id: id(state, 'step'), approval_request_id: requestId,
+      step_order: Number(policyStep.step_number),
+      required_permission_key: policyStep.required_permission_key || 'approve_finances',
+      required_approvals: Number(policyStep.required_approvals || 1),
+      prohibit_submitter_approval: Boolean(policyStep.prohibit_submitter_approval),
       status: 'pending', decision: null, comments: null
     })).sort((a, b) => a.step_order - b.step_order);
     state.budgets.push(budget);
@@ -476,32 +466,41 @@ export function createMockFinanceRpc(
       return fail('Approval step is not an event budget approval');
     }
     if (step.status !== 'pending' || request.status !== 'pending') return fail('Approval step is no longer pending');
-    const requiredPermission = step.required_permission_key || 'approve_finances';
-    if (step.approver_profile_id !== actor.id || !hasPermission(state, actor.id, requiredPermission, budget.branch_id)) {
-      return fail('You are not authorized to decide this event budget approval step', '42501');
-    }
+    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
     if (step.prohibit_submitter_approval && request.submitted_by_profile_id === actor.id) {
       return fail('The budget submitter cannot approve their own event budget', '42501');
     }
-    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
-    const priorSteps = state.approvalSteps.filter(item => item.approval_request_id === request.id && item.step_order < step.step_order);
-    const priorGroups = [...new Set(priorSteps.map(item => item.step_order))];
-    if (priorGroups.some(order => {
-      const group = priorSteps.filter(item => item.step_order === order);
-      return group.filter(item => item.status === 'approved').length < Number(group[0]?.required_approvals || 1);
-    })) return fail('Earlier approval steps must be completed first');
-    step.decision = args.p_decision;
-    step.comments = String(args.p_comments || '').trim() || null;
-    step.status = args.p_decision;
+    const requiredPermission = step.required_permission_key || 'approve_finances';
+    if (!hasPermission(state, actor.id, requiredPermission, budget.branch_id)) {
+      return fail('You do not have the required permission to decide this event budget step', '42501');
+    }
+    if (state.approvalSteps.some(item =>
+      item.approval_request_id === request.id &&
+      item.step_order < step.step_order && item.status !== 'approved')) {
+      return fail('Earlier approval steps must be completed first');
+    }
+    if (state.approvalDecisions.some(item =>
+      item.approval_request_step_id === step.id && item.approver_profile_id === actor.id)) {
+      return fail('This profile has already decided this approval step');
+    }
+    state.approvalDecisions.push({
+      id: id(state, 'decision'), approval_request_step_id: step.id,
+      approver_profile_id: actor.id, decision: args.p_decision,
+      comments: String(args.p_comments || '').trim() || null,
+      decided_at: new Date().toISOString()
+    });
     if (args.p_decision === 'rejected') {
+      step.status = 'rejected';
       request.status = 'rejected';
       budget.status = 'rejected';
     } else {
-      const currentGroup = state.approvalSteps.filter(item => item.approval_request_id === request.id && item.step_order === step.step_order);
-      const currentGroupComplete = currentGroup.filter(item => item.status === 'approved').length >= Number(step.required_approvals || 1);
-      const nextPending = state.approvalSteps.some(item => item.approval_request_id === request.id &&
-        item.step_order > step.step_order && item.status === 'pending');
-      if (currentGroupComplete && !nextPending) {
+      const approvalsReceived = state.approvalDecisions.filter(item =>
+        item.approval_request_step_id === step.id && item.decision === 'approved').length;
+      if (approvalsReceived >= Number(step.required_approvals || 1)) step.status = 'approved';
+      const allStepsApproved = state.approvalSteps
+        .filter(item => item.approval_request_id === request.id)
+        .every(item => item.status === 'approved');
+      if (allStepsApproved) {
         request.status = 'approved';
         budget.status = 'approved';
         budget.approved_at = new Date().toISOString();
@@ -918,14 +917,9 @@ export function createMockFinanceRpc(
         Boolean(step.required_permission_key) && Number.isInteger(Number(step.required_approvals)) &&
         Number(step.required_approvals) > 0;
       if (!validCore) return true;
-      if (policy?.transaction_type === 'financial_document') return false;
-      const ids = Array.isArray(step.approver_profile_ids) ? step.approver_profile_ids : [];
-      return Number(step.required_approvals) > ids.length || new Set(ids).size !== ids.length ||
-        ids.some((profileId: string) =>
-          !state.profiles.some(profile => profile.id === profileId && profile.status !== 'suspended' && profile.status !== 'archived') ||
-          !hasPermission(state, profileId, step.required_permission_key, policy?.branch_id ?? branchId));
+      return false;
     })) {
-      return fail('Approval steps require valid scope, order, permission and approval counts; budget steps also require eligible assigned approvers');
+      return fail('Approval steps require valid scope, order, permission and approval counts');
     }
     state.currencies = currencies;
     state.baseCurrencyCode = baseCurrency;
