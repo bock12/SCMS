@@ -445,7 +445,8 @@ export type RequisitionStatus =
   | 'rejected'                 // Rejected with feedback
   | 'disbursed'                // Disbursed into department account by Finance Officer
   | 'reconciled'               // Department submitted spending report & receipts
-  | 'settled';                // Finance Officer audited receipts and settled in Good Standing
+  | 'settled'                  // Finance Officer audited receipts and settled in Good Standing
+  | 'cancelled';
 
 export interface RequisitionItem {
   id: string;
@@ -458,6 +459,22 @@ export interface RequisitionItem {
 export interface DepartmentRequisition {
   id: string;
   requisition_number: string; // e.g. REQ-2026-004
+  branch_id?: string;
+  ministry_id?: string;
+  applicant_profile_id?: string;
+  approval_request_id?: string;
+  exchange_rate_to_base?: number;
+  base_currency_code?: string;
+  approved_at?: string | null;
+  approved_by_profile_id?: string | null;
+  vendor_quote_reference?: string | null;
+  approval_request?: Record<string, any> | null;
+  approval_steps?: Array<{
+    id: string; step_number: number; required_permission_key: string;
+    required_approvals: number; prohibit_submitter_approval: boolean;
+    status: string; approvals_received: number; actor_can_decide: boolean;
+    decisions?: Array<Record<string, any>>;
+  }>;
   department_name: string; // e.g. 'Media & IT', 'Worship Team', 'Youth Ministry'
   applicant_id?: string;
   applicant_name: string;
