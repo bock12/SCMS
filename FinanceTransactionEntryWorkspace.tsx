@@ -48,7 +48,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
     setLoading(true);
     setError(null);
     const [configResult, memberResult] = await Promise.all([
-      getFinanceConfiguration(),
+      getFinanceConfiguration(branchId),
       supabase.from('profiles').select('id,first_name,last_name,status,branch_id').order('first_name', { ascending: true })
     ]);
     if (configResult.error) {
