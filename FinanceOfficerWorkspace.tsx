@@ -319,6 +319,10 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   const handleConfirmInvoiceAndDisbursement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!disburseReq) return;
+    if (disburseReq.status !== 'approved') {
+      alert('Only fully approved requisitions can proceed to payment creation. Requisition approval does not itself record a payment.');
+      return;
+    }
 
     const txnRef = disbursementTxnRef.trim() || ('DISB-SLCB-' + Math.floor(100000 + Math.random() * 900000));
     const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
@@ -1562,7 +1566,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                         </button>
                       )}
 
-                      {(req.status === 'pastor_approved' || req.status === 'approved' || req.status === 'pending_approval') && (
+                      {req.status === 'approved' && (
                         <button
                           onClick={() => openDisbursementModal(req)}
                           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-1.5"
