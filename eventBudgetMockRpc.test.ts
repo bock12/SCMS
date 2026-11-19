@@ -42,7 +42,7 @@ function fixture() {
       {
         id: 'document-policy', is_active: true, transaction_type: 'financial_document',
         branch_id: 'branch-a', min_amount: 0.01, max_amount: 1000000,
-        approver_profile_ids: ['approver-1', 'approver-2']
+        approver_profile_ids: ['approver-1', 'approver-2'], version: 1, effective_from: '2026-01-01'
       },
       {
         id: 'budget-policy', is_active: true, transaction_type: 'budget',
@@ -51,14 +51,17 @@ function fixture() {
       }
     ],
     approvalPolicyBands: [
-      { id: 'budget-band', policy_id: 'budget-policy', min_amount_base: 0, max_amount_base: null }
+      { id: 'budget-band', policy_id: 'budget-policy', min_amount_base: 0, max_amount_base: null },
+      { id: 'document-band', policy_id: 'document-policy', min_amount_base: 0, max_amount_base: null }
     ],
     approvalPolicySteps: [
       {
         id: 'budget-step-config', band_id: 'budget-band', step_number: 1,
         required_permission_key: 'approve_finances', required_approvals: 1,
         prohibit_submitter_approval: true, approver_profile_ids: ['approver-1']
-      }
+      },
+      { id: 'document-step-1', band_id: 'document-band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'document-step-2', band_id: 'document-band', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
     ]
   };
   let current = structuredClone(state);

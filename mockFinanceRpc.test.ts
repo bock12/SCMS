@@ -122,7 +122,7 @@ describe('deterministic mock financial-document RPC', () => {
       save: () => { throw new Error('unexpected persistence'); }
     }, () => ({ userId: 'user-creator' }));
     const result = await isolated.rpc('create_financial_document_transaction', args);
-    expect(result.error?.message).toContain('No active approval policy');
+    expect(result.error?.message).toContain('No active financial-document approval policy');
     expect(state.documents).toHaveLength(0);
   });
 
@@ -357,7 +357,7 @@ describe('canonical finance configuration RPCs', () => {
     const saved = await ctx.rpc.rpc('save_finance_configuration', { p_branch_id: 'branch-a', p_configuration: configuration });
     expect(saved.error).toBeNull();
     const uncovered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 150 });
-    expect(uncovered.error?.message).toContain('No active approval policy');
+    expect(uncovered.error?.message).toContain('No approval threshold band covers');
     expect(ctx.read().documents).toHaveLength(0);
     const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 50 });
     expect(covered.error).toBeNull();
