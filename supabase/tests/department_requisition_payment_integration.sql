@@ -87,9 +87,12 @@ BEGIN
   -- Approval alone is not payment: no paid amount until the journal is posted.
   PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
   v_summary := public.get_department_requisition_payment_summary(v_branch_id);
-  IF v_summary->0->>'payment_status' <> 'payment_pending'
-     OR (v_summary->0->>'paid_amount')::numeric <> 0
-     OR (v_summary->0->>'reserved_amount')::numeric <> 80 THEN
+  SELECT item.value INTO v_summary
+  FROM jsonb_array_elements(v_summary) item(value)
+  WHERE item.value->>'requisition_id' = v_requisition_id::text;
+  IF v_summary->>'payment_status' <> 'payment_pending'
+     OR (v_summary->>'paid_amount')::numeric <> 0
+     OR (v_summary->>'reserved_amount')::numeric <> 80 THEN
     RAISE EXCEPTION 'Approved but unposted requisition payment was incorrectly counted as paid';
   END IF;
 
@@ -98,9 +101,12 @@ BEGIN
     RAISE EXCEPTION 'First requisition payment journal did not post';
   END IF;
   v_summary := public.get_department_requisition_payment_summary(v_branch_id);
-  IF v_summary->0->>'payment_status' <> 'partially_paid'
-     OR (v_summary->0->>'paid_amount')::numeric <> 80
-     OR (v_summary->0->>'remaining_amount')::numeric <> 70 THEN
+  SELECT item.value INTO v_summary
+  FROM jsonb_array_elements(v_summary) item(value)
+  WHERE item.value->>'requisition_id' = v_requisition_id::text;
+  IF v_summary->>'payment_status' <> 'partially_paid'
+     OR (v_summary->>'paid_amount')::numeric <> 80
+     OR (v_summary->>'remaining_amount')::numeric <> 70 THEN
     RAISE EXCEPTION 'Posted partial payment was not reflected in requisition paid totals';
   END IF;
 
@@ -139,9 +145,12 @@ BEGIN
   PERFORM public.post_finance_journal_entry(v_journal_id);
 
   v_summary := public.get_department_requisition_payment_summary(v_branch_id);
-  IF v_summary->0->>'payment_status' <> 'paid'
-     OR (v_summary->0->>'paid_amount')::numeric <> 150
-     OR (v_summary->0->>'remaining_amount')::numeric <> 0 THEN
+  SELECT item.value INTO v_summary
+  FROM jsonb_array_elements(v_summary) item(value)
+  WHERE item.value->>'requisition_id' = v_requisition_id::text;
+  IF v_summary->>'payment_status' <> 'paid'
+     OR (v_summary->>'paid_amount')::numeric <> 150
+     OR (v_summary->>'remaining_amount')::numeric <> 0 THEN
     RAISE EXCEPTION 'Fully posted requisition payments did not settle the approved amount';
   END IF;
 
