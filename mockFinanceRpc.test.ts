@@ -87,6 +87,66 @@ describe('deterministic mock financial-document RPC', () => {
     expect(state.documents[0].payee_or_payer_name).toBe('Sunday Service');
   });
 
+  test('creates a balanced pending payment with expense debit and cash credit', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('create_financial_document_transaction', {
+      ...args, p_document_type: 'payment', p_category_account_id: 'expense-chart',
+      p_party_name: 'Utility provider', p_external_reference: 'PAY-1'
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.data.status).toBe('pending_approval');
+    const state = ctx.read();
+    expect(state.documents[0].document_type).toBe('payment');
+    expect(state.journalLines).toHaveLength(2);
+    const expense = state.journalLines.find(line => line.account_id === 'expense-chart');
+    const cash = state.journalLines.find(line => line.account_id === 'cash-chart');
+    expect(expense?.debit_amount).toBe(250);
+    expect(expense?.credit_amount).toBe(0);
+    expect(expense?.fund_id).toBe('fund-a');
+    expect(cash?.debit_amount).toBe(0);
+    expect(cash?.credit_amount).toBe(250);
+    expect(cash?.fund_id).toBeNull();
+    expect(state.journalLines.reduce((sum, line) => sum + line.base_debit_amount, 0)).toBe(250);
+    expect(state.journalLines.reduce((sum, line) => sum + line.base_credit_amount, 0)).toBe(250);
+  });
+
+  test('approves and posts a payment into expense and cash ledger balances', async () => {
+    const ctx = fixture();
+    const created = await ctx.rpc.rpc('create_financial_document_transaction', {
+      ...args, p_document_type: 'payment', p_category_account_id: 'expense-chart'
+    });
+    expect(created.error).toBeNull();
+    const steps = ctx.read().approvalSteps;
+
+    ctx.setUser('user-approver-1');
+    const first = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved'
+    });
+    expect(first.data.approval_status).toBe('pending');
+
+    ctx.setUser('user-approver-2');
+    const final = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[1].id, p_decision: 'approved'
+    });
+    expect(final.data.approval_status).toBe('approved');
+
+    ctx.setUser('user-creator');
+    const posted = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+
+    const ledger = await ctx.rpc.rpc('get_finance_journals', { p_branch_id: 'branch-a' });
+    expect(ledger.error).toBeNull();
+    const expense = ledger.data.account_balances.find((item: any) => item.account_id === 'expense-chart');
+    const cash = ledger.data.account_balances.find((item: any) => item.account_id === 'cash-chart');
+    expect(expense.debit_total).toBe(250);
+    expect(expense.credit_total).toBe(0);
+    expect(cash.debit_total).toBe(0);
+    expect(cash.credit_total).toBe(250);
+  });
+
   test('lists canonical documents with approval progress and only the signed-in approver action', async () => {
     const ctx = fixture();
     const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
