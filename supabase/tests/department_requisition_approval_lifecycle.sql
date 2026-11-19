@@ -26,6 +26,7 @@ DECLARE
   v_config jsonb;
   v_config_read jsonb;
   v_read jsonb;
+  v_options jsonb;
 BEGIN
   INSERT INTO auth.users (id, email) VALUES
     (v_submitter_auth, 'fin-int-002-requisition-submitter@example.invalid'),
@@ -80,6 +81,14 @@ BEGIN
   END IF;
 
   PERFORM set_config('request.jwt.claim.sub', v_submitter_auth::text, true);
+  v_options := public.get_department_requisition_submission_options(v_branch_id, v_ministry_id);
+  IF v_options->>'base_currency_code' <> 'SLE'
+     OR NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements_text(v_options->'currencies') currency
+       WHERE currency = 'SLE'
+     ) THEN
+    RAISE EXCEPTION 'Requisition submission options did not return the configured base currency and active currencies';
+  END IF;
 
   -- Missing policy on a branch must fail closed without leaving a draft.
   BEGIN
@@ -206,6 +215,13 @@ BEGIN
 
   -- A member role without the submit permission cannot create a requisition.
   PERFORM set_config('request.jwt.claim.sub', v_member_auth::text, true);
+  BEGIN
+    PERFORM public.get_department_requisition_submission_options(v_branch_id, v_ministry_id);
+    RAISE EXCEPTION 'FIN_INT_002_EXPECTED_OPTIONS_PERMISSION_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_002_EXPECTED_OPTIONS_PERMISSION_DENIAL' THEN RAISE; END IF;
+    IF position('insufficient permission' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
   BEGIN
     PERFORM public.submit_department_requisition(
       v_branch_id, v_ministry_id, 'Unauthorized request', 'Must be denied',
