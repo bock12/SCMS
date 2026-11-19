@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
 import {
   createFinancialDocumentTransaction,
   decideFinancialDocumentApproval,
@@ -104,5 +105,102 @@ describe('finance transaction RPC service', () => {
       p_decision: 'approved',
       p_comments: 'Checked and verified'
     });
+  });
+});
+
+
+describe('finance transaction service end-to-end adapter integration', () => {
+  test('creates, approves, posts and reports a payment through the typed service boundary', async () => {
+    const initial: MockFinanceState = {
+      ...createEmptyMockFinanceState(),
+      profiles: [
+        { id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' },
+        { id: 'approver-1', auth_user_id: 'user-approver-1', branch_id: 'branch-1' },
+        { id: 'approver-2', auth_user_id: 'user-approver-2', branch_id: 'branch-1' }
+      ],
+      permissions: [
+        { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' },
+        { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-1' },
+        { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-1' },
+        { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-1' }
+      ],
+      currencies: ['SLL'],
+      baseCurrencyCode: 'SLL',
+      chartAccounts: [
+        { id: 'cash-chart', code: '1000', name: 'Cash', account_type: 'asset', normal_balance: 'debit', is_active: true },
+        { id: 'expense-chart', code: '5000', name: 'Operating Expense', account_type: 'expense', normal_balance: 'debit', is_active: true }
+      ],
+      financialAccounts: [{
+        id: 'cash-account-1', branch_id: 'branch-1', name: 'Main Cash',
+        account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart'
+      }],
+      financialYears: [{ id: 'year-1', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      periods: [{ id: 'period-1', financial_year_id: 'year-1', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
+      approvalPolicies: [{
+        id: 'policy-1', name: 'Two-step payment policy', transaction_type: 'financial_document',
+        branch_id: 'branch-1', is_active: true, min_amount: 0, max_amount: null,
+        approver_profile_ids: ['approver-1', 'approver-2']
+      }],
+      approvalPolicyBands: [{ id: 'band-1', policy_id: 'policy-1', min_amount_base: 0, max_amount_base: 100000 }],
+      approvalPolicySteps: [
+        { id: 'policy-step-1', band_id: 'band-1', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 'policy-step-2', band_id: 'band-1', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    };
+    let current = structuredClone(initial);
+    let authUserId: string | null = 'user-creator';
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: authUserId }));
+
+    const created = await createFinancialDocumentTransaction({
+      ...baseInput,
+      documentType: 'payment',
+      branchId: 'branch-1',
+      financialAccountId: 'cash-account-1',
+      categoryAccountId: 'expense-chart',
+      currencyCode: 'SLL',
+      amount: 125,
+      partyName: 'Utility provider',
+      description: 'Electricity bill'
+    }, client);
+
+    expect(created.error).toBeNull();
+    expect(created.data?.status).toBe('pending_approval');
+    expect(current.documents).toHaveLength(1);
+    expect(current.journals).toHaveLength(1);
+    expect(current.journalLines).toHaveLength(2);
+
+    const steps = [...current.approvalSteps];
+    authUserId = 'user-approver-1';
+    const first = await decideFinancialDocumentApproval({
+      requestStepId: steps[0].id, decision: 'approved'
+    }, client);
+    expect(first.error).toBeNull();
+    expect(first.data?.approval_status).toBe('pending');
+
+    authUserId = 'user-approver-2';
+    const second = await decideFinancialDocumentApproval({
+      requestStepId: steps[1].id, decision: 'approved'
+    }, client);
+    expect(second.error).toBeNull();
+    expect(second.data?.approval_status).toBe('approved');
+
+    authUserId = 'user-creator';
+    const posted = await client.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data!.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+    expect(posted.data.status).toBe('posted');
+
+    const ledger = await client.rpc('get_finance_journals', { p_branch_id: 'branch-1' });
+    expect(ledger.error).toBeNull();
+    expect(ledger.data.journals[0].status).toBe('posted');
+    expect(ledger.data.journals[0].total_debits).toBe(125);
+    expect(ledger.data.journals[0].total_credits).toBe(125);
+    expect(ledger.data.account_balances.find((row: any) => row.account_id === 'expense-chart')?.debit_total).toBe(125);
+    expect(ledger.data.account_balances.find((row: any) => row.account_id === 'cash-chart')?.credit_total).toBe(125);
+    expect(current.documents[0].status).toBe('posted');
   });
 });
