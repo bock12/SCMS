@@ -107,7 +107,18 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
                 {!document.journal_entry_id && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Journal not yet linked</span>}
               </div>
               {document.approval_steps.length > 0 && <div className="mt-2 flex flex-wrap gap-2">
-                {document.approval_steps.map(step => <span key={step.id} className={`rounded-full px-2 py-1 text-[10px] ${statusClass(step.status)}`}>Step {step.step_order}: {step.status}</span>)}
+                {document.approval_steps.map(step => (
+                  <div key={step.id} className="space-y-1">
+                    <span className={`inline-block rounded-full px-2 py-1 text-[10px] ${statusClass(step.status)}`}>
+                      Step {step.step_order}: {step.status}{step.decision ? ` · Decision: ${step.decision}` : ''}
+                    </span>
+                    {step.comments && (
+                      <p className="max-w-2xl rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        <strong>{step.decision === 'rejected' ? 'Rejection reason:' : 'Decision comment:'}</strong> {step.comments}
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>}
               {canDecide && <div className="mt-3 space-y-2 rounded-lg bg-indigo-50 p-3">
                 <label className="block text-xs font-bold text-indigo-900" htmlFor={`approval-comment-${document.id}`}>Decision comments (optional)</label>
