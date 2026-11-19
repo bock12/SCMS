@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, RefreshCw, Wallet, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RefreshCw, Wallet, ShieldCheck, Plus } from 'lucide-react';
+import { supabase } from './supabaseClient';
 import {
   createEventBudgetPayment,
   decideEventBudgetApproval,
-  getEventBudgets
+  getEventBudgets,
+  submitEventBudgetForApproval
 } from './eventBudgetFinanceService';
 import { getFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 import type { FinancialPaymentMethod } from './financeTransactionService';
@@ -15,6 +17,17 @@ const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg bg
 
 export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profileId }) => {
   const [budgets, setBudgets] = useState<BudgetRecord[]>([]);
+  const [events, setEvents] = useState<Array<{ id: string; title: string; finance_event_id?: string; branch_id?: string }>>([]);
+  const [showSubmit, setShowSubmit] = useState(false);
+  const [eventId, setEventId] = useState('');
+  const [budgetName, setBudgetName] = useState('');
+  const [periodId, setPeriodId] = useState('');
+  const [currencyCode, setCurrencyCode] = useState('');
+  const [exchangeRate, setExchangeRate] = useState('1');
+  const [expenseAccountId, setExpenseAccountId] = useState('');
+  const [budgetFundId, setBudgetFundId] = useState('');
+  const [lineAmount, setLineAmount] = useState('');
+  const [lineDescription, setLineDescription] = useState('');
   const [configuration, setConfiguration] = useState<FinanceConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -33,18 +46,54 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
 
   const reload = async () => {
     setLoading(true); setError(null);
-    const [budgetResult, configResult] = await Promise.all([
+    const [budgetResult, configResult, eventResult] = await Promise.all([
       getEventBudgets(branchId),
-      getFinanceConfiguration()
+      getFinanceConfiguration(),
+      supabase.from('events').select('id,title,name,finance_event_id,branch_id').order('title', { ascending: true })
     ]);
     if (budgetResult.error) setError(budgetResult.error.message);
     else setBudgets(budgetResult.data?.budgets || []);
     if (configResult.error) setError(current => current || configResult.error!.message);
     else setConfiguration(configResult.data);
+    if (eventResult.error) setError(current => current || eventResult.error.message);
+    else setEvents((eventResult.data || []).filter((event: any) => !branchId || event.branch_id === branchId)
+      .map((event: any) => ({ id: event.id, title: event.title || event.name || 'Church event', finance_event_id: event.finance_event_id, branch_id: event.branch_id })));
+    
     setLoading(false);
   };
 
   useEffect(() => { void reload(); }, [branchId]);
+
+  const expenseAccounts = useMemo(() => (configuration?.chartAccounts || []).filter(account =>
+    account.is_active && account.account_type === 'expense' && !account.is_control_account), [configuration]);
+
+  const openSubmit = () => {
+    setEventId(events[0]?.id || '');
+    setPeriodId(configuration?.periods.find(period => period.status === 'open')?.id || '');
+    setCurrencyCode(configuration?.baseCurrencyCode || configuration?.currencies[0] || '');
+    setExpenseAccountId(expenseAccounts[0]?.id || '');
+    setBudgetFundId(configuration?.funds.find(fund => fund.is_active)?.id || '');
+    setBudgetName(events[0]?.title ? `${events[0].title} Budget` : 'Event Budget');
+    setShowSubmit(true);
+  };
+
+  const submitBudget = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const selectedEvent = events.find(item => item.id === eventId);
+    if (!selectedEvent) { setError('Select an event with a saved finance identity.'); return; }
+    setSaving(true); setError(null); setNotice(null);
+    const result = await submitEventBudgetForApproval({
+      event: selectedEvent,
+      periodId,
+      name: budgetName,
+      currencyCode,
+      exchangeRateToBase: Number(exchangeRate),
+      lines: [{ accountId: expenseAccountId, fundId: budgetFundId || null, description: lineDescription, allocatedAmount: Number(lineAmount) }]
+    });
+    if (result.error) setError(result.error.message);
+    else { setNotice('Event budget submitted into the canonical approval workflow.'); setShowSubmit(false); await reload(); }
+    setSaving(false);
+  };
 
   const availableFinancialAccounts = useMemo(() => {
     if (!configuration || !paymentBudget) return [];
@@ -123,11 +172,31 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
           <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-indigo-700" /><h3 className="text-lg font-black text-slate-900">Canonical event budget workflow</h3></div>
           <p className="mt-1 max-w-3xl text-xs text-slate-600">These budgets, approvals and payments are stored in the canonical finance workflow. Legacy localStorage proposals below are retained for reference and are not treated as approved accounting budgets.</p>
         </div>
-        <button type="button" className={buttonClass} onClick={() => void reload()}><RefreshCw size={14} /> Refresh</button>
+        <div className="flex gap-2"><button type="button" className={buttonClass} onClick={() => void reload()}><RefreshCw size={14} /> Refresh</button><button type="button" className={buttonClass} onClick={openSubmit} disabled={!events.length || !configuration}><Plus size={14} /> Submit budget</button></div>
       </div>
 
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertCircle size={16} />{error}</div>}
       {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><CheckCircle2 size={16} />{notice}</div>}
+
+      {showSubmit && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
+          <form onSubmit={submitBudget} className="max-h-[90vh] w-full max-w-xl space-y-3 overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+            <div><h4 className="text-lg font-black text-slate-900">Submit canonical event budget</h4><p className="text-xs text-slate-500">Submission creates a persisted budget and approval request. It does not create an expense or payment.</p></div>
+            <label className="block text-xs font-bold text-slate-600">Church event<select required className={fieldClass + ' mt-1'} value={eventId} onChange={e => { setEventId(e.target.value); const item = events.find(event => event.id === e.target.value); if (item) setBudgetName(item.title + ' Budget'); }}><option value="">Select event</option>{events.map(event => <option key={event.id} value={event.id}>{event.title}</option>)}</select></label>
+            <label className="block text-xs font-bold text-slate-600">Budget name<input required className={fieldClass + ' mt-1'} value={budgetName} onChange={e => setBudgetName(e.target.value)} /></label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-bold text-slate-600">Financial period<select required className={fieldClass + ' mt-1'} value={periodId} onChange={e => setPeriodId(e.target.value)}><option value="">Select open period</option>{(configuration?.periods || []).filter(period => period.status === 'open').map(period => <option key={period.id} value={period.id}>{period.name} ({period.start_date}–{period.end_date})</option>)}</select></label>
+              <label className="text-xs font-bold text-slate-600">Currency<select required className={fieldClass + ' mt-1'} value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}>{(configuration?.currencies || []).map(code => <option key={code} value={code}>{code}</option>)}</select></label>
+              <label className="text-xs font-bold text-slate-600">Exchange rate to base<input required type="number" min="0.000001" step="0.000001" className={fieldClass + ' mt-1'} value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} /></label>
+              <label className="text-xs font-bold text-slate-600">Budget amount<input required type="number" min="0.01" step="0.01" className={fieldClass + ' mt-1'} value={lineAmount} onChange={e => setLineAmount(e.target.value)} /></label>
+              <label className="text-xs font-bold text-slate-600">Expense account<select required className={fieldClass + ' mt-1'} value={expenseAccountId} onChange={e => setExpenseAccountId(e.target.value)}><option value="">Select expense account</option>{expenseAccounts.map(account => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}</select></label>
+              <label className="text-xs font-bold text-slate-600">Fund<select className={fieldClass + ' mt-1'} value={budgetFundId} onChange={e => setBudgetFundId(e.target.value)}><option value="">No fund</option>{(configuration?.funds || []).filter(fund => fund.is_active).map(fund => <option key={fund.id} value={fund.id}>{fund.code} · {fund.name}</option>)}</select></label>
+            </div>
+            <label className="block text-xs font-bold text-slate-600">Budget line description<input required className={fieldClass + ' mt-1'} value={lineDescription} onChange={e => setLineDescription(e.target.value)} /></label>
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3"><button type="button" className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold" onClick={() => setShowSubmit(false)}>Cancel</button><button type="submit" className={buttonClass} disabled={saving || !periodId || !expenseAccountId || !lineAmount}>{saving ? 'Submitting…' : 'Submit for approval'}</button></div>
+          </form>
+        </div>
+      )}
 
       {budgets.length === 0 ? (
         <div className="rounded-xl border border-dashed border-indigo-200 bg-white p-5 text-center text-sm text-slate-500">
