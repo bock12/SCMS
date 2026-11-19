@@ -25,6 +25,7 @@ DECLARE
   v_rejected_request_id uuid;
   v_config jsonb;
   v_config_read jsonb;
+  v_read jsonb;
 BEGIN
   INSERT INTO auth.users (id, email) VALUES
     (v_submitter_auth, 'fin-int-002-requisition-submitter@example.invalid'),
@@ -121,6 +122,13 @@ BEGIN
 
   v_requisition_id := (v_result->>'requisition_id')::uuid;
   v_request_id := (v_result->>'approval_request_id')::uuid;
+  v_read := public.get_department_requisitions(v_branch_id);
+  IF jsonb_array_length(v_read) <> 1
+     OR v_read->0->>'id' <> v_requisition_id::text
+     OR jsonb_array_length(v_read->0->'approval_steps') <> 2
+     OR (v_read->0->'approval_steps'->0->>'actor_can_decide')::boolean THEN
+    RAISE EXCEPTION 'Submitter requisition read scope or decision eligibility is incorrect';
+  END IF;
   IF v_requisition_id IS NULL OR v_request_id IS NULL
      OR v_result->>'status' <> 'pending_approval'
      OR v_result->>'requisition_number' NOT LIKE 'REQ-%' THEN
@@ -154,6 +162,10 @@ BEGIN
   END;
 
   PERFORM set_config('request.jwt.claim.sub', v_pastor_auth::text, true);
+  v_read := public.get_department_requisitions(v_branch_id);
+  IF (v_read->0->'approval_steps'->0->>'actor_can_decide')::boolean IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Current requisition approver was not identified as eligible';
+  END IF;
   v_decision := public.decide_department_requisition_approval(v_step1_id, 'approved', 'Pastoral review complete');
   IF v_decision->>'approval_status' <> 'pending'
      OR (SELECT status FROM public.department_requisitions WHERE id = v_requisition_id) <> 'pending_approval' THEN
@@ -161,6 +173,11 @@ BEGIN
   END IF;
 
   PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
+  v_read := public.get_department_requisitions(v_branch_id);
+  IF (v_read->0->'approval_steps'->1->>'actor_can_decide')::boolean IS DISTINCT FROM true
+     OR (v_read->0->'approval_steps'->0->>'actor_can_decide')::boolean THEN
+    RAISE EXCEPTION 'Approval read API did not advance eligibility to the next ordered step';
+  END IF;
   v_decision := public.decide_department_requisition_approval(v_step2_id, 'approved', 'Finance review complete');
   IF v_decision->>'approval_status' <> 'approved'
      OR (SELECT status FROM public.department_requisitions WHERE id = v_requisition_id) <> 'approved'
