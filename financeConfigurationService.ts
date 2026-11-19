@@ -29,7 +29,7 @@ export interface FinanceConfiguration {
     end_date: string; status: 'open' | 'closed'; year_status?: string;
   }>;
   approvalPolicies: Array<{
-    id: string; name: string; transaction_type: 'financial_document'; branch_id: string | null;
+    id: string; name: string; transaction_type: 'financial_document' | 'budget'; branch_id: string | null;
     version: number; effective_from: string; effective_to?: string | null; is_active: boolean;
   }>;
   approvalPolicyBands: Array<{
