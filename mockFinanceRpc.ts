@@ -829,17 +829,81 @@ export function createMockFinanceRpc(
     if (!config || typeof config !== 'object' || arrays.some(key => !Array.isArray(config[key]))) {
       return fail('Finance configuration payload is incomplete');
     }
-    const canManageFinance = hasPermission(state, actor.id, 'manage_finances', branchId);
-    const chartChanged = JSON.stringify([state.currencies, state.baseCurrencyCode, state.chartAccounts, state.financialAccounts, state.funds]) !==
-      JSON.stringify([config.currencies, config.baseCurrencyCode, config.chartAccounts, config.financialAccounts, config.funds]);
+    // Shared church configuration must be authorized at church scope. A
+    // branch Finance Officer must not gain permission to change currencies,
+    // the chart of accounts, funds, financial years or periods merely because
+    // the branch-scoped configuration payload contains those records.
+    const globalChartChanged = JSON.stringify([state.currencies, state.baseCurrencyCode, state.chartAccounts, state.funds]) !==
+      JSON.stringify([config.currencies, config.baseCurrencyCode, config.chartAccounts, config.funds]);
     const periodsChanged = JSON.stringify([state.financialYears, state.periods]) !==
       JSON.stringify([config.financialYears, config.periods]);
-    const approvalsChanged = JSON.stringify([state.approvalPolicies, state.approvalPolicyBands, state.approvalPolicySteps]) !==
-      JSON.stringify([config.approvalPolicies, config.approvalPolicyBands, config.approvalPolicySteps]);
-    if ((chartChanged && !canManageFinance && !hasPermission(state, actor.id, 'manage_chart_of_accounts', branchId)) ||
-        (periodsChanged && !canManageFinance && !hasPermission(state, actor.id, 'manage_financial_periods', branchId)) ||
-        (approvalsChanged && !canManageFinance && !hasPermission(state, actor.id, 'approve_finances', branchId))) {
-      return fail('Insufficient permission for one or more changed finance configuration areas', '42501');
+    const branchAccountsBefore = state.financialAccounts.filter(account => (account.branch_id ?? null) === branchId);
+    const branchAccountsChanged = JSON.stringify(branchAccountsBefore) !== JSON.stringify(config.financialAccounts);
+    const canManageGlobalFinance = hasPermission(state, actor.id, 'manage_finances', null);
+    const canManageGlobalChart = canManageGlobalFinance ||
+      hasPermission(state, actor.id, 'manage_chart_of_accounts', null);
+    const canManageGlobalPeriods = canManageGlobalFinance ||
+      hasPermission(state, actor.id, 'manage_financial_periods', null);
+
+    if (globalChartChanged && !canManageGlobalChart) {
+      return fail('Church-wide currency, chart-of-accounts and fund changes require church-level finance configuration permission', '42501');
+    }
+    if (periodsChanged && !canManageGlobalPeriods) {
+      return fail('Financial years and periods require church-level financial-period management permission', '42501');
+    }
+    if (branchAccountsChanged && !hasPermission(state, actor.id, 'manage_finances', branchId)) {
+      return fail('Insufficient permission to manage financial accounts in this branch', '42501');
+    }
+
+    // Approval policy versions are immutable. Only new policies may be added,
+    // and their scope determines whether church- or branch-level management is
+    // required, matching the database configuration RPC.
+    const existingPolicies = new Map(state.approvalPolicies.map(policy => [policy.id, policy]));
+    for (const policy of config.approvalPolicies) {
+      const existing = existingPolicies.get(policy.id);
+      if (existing) {
+        const immutableFields = ['name', 'transaction_type', 'branch_id', 'version', 'effective_from', 'effective_to', 'is_active'];
+        if (immutableFields.some(field => (existing as any)[field] !== policy[field])) {
+          return fail('Approval policy versions are immutable; create a new version instead');
+        }
+        continue;
+      }
+      if ((policy.branch_id ?? null) !== null && policy.branch_id !== branchId) {
+        return fail('New approval policies must match the requested branch scope');
+      }
+      const authorized = policy.branch_id == null
+        ? canManageGlobalFinance
+        : hasPermission(state, actor.id, 'manage_finances', policy.branch_id);
+      if (!authorized) {
+        return fail(policy.branch_id == null
+          ? 'Church-wide approval policies require church-level finance management permission'
+          : 'Insufficient permission to manage approval policies in this branch', '42501');
+      }
+    }
+    const existingBands = new Map(state.approvalPolicyBands.map(band => [band.id, band]));
+    for (const band of config.approvalPolicyBands) {
+      const existing = existingBands.get(band.id);
+      if (existing && (existing.policy_id !== band.policy_id ||
+          Number(existing.min_amount_base) !== Number(band.min_amount_base) ||
+          (existing.max_amount_base == null ? null : Number(existing.max_amount_base)) !==
+            (band.max_amount_base == null ? null : Number(band.max_amount_base)))) {
+        return fail('Existing approval amount bands are immutable');
+      }
+    }
+    const existingSteps = new Map(state.approvalPolicySteps.map(step => [step.id, step]));
+    for (const step of config.approvalPolicySteps) {
+      const existing = existingSteps.get(step.id);
+      if (existing && (existing.band_id !== step.band_id ||
+          Number(existing.step_number) !== Number(step.step_number) ||
+          existing.required_permission_key !== step.required_permission_key ||
+          Number(existing.required_approvals) !== Number(step.required_approvals) ||
+          (existing.prohibit_submitter_approval !== false) !== (step.prohibit_submitter_approval !== false))) {
+        return fail('Existing approval policy steps are immutable');
+      }
+      if (!existing && !config.approvalPolicyBands.some((band: any) =>
+        band.id === step.band_id && !existingBands.has(band.id))) {
+        return fail('New approval steps must belong to a new amount band created in this save');
+      }
     }
     const currencies = config.currencies.map((code: unknown) => String(code).trim().toUpperCase());
     if (currencies.some((code: string) => !/^[A-Z]{3}$/.test(code)) || new Set(currencies).size !== currencies.length) {
