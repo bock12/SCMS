@@ -3,7 +3,7 @@
 **Reviewed:** 2026-11-19  
 **Repository:** `bock12/SCMS`  
 **Branch:** `main`  
-**Reviewed head:** `6a745e89f318970b540514de5bf65e6b7eec359e`
+**Reviewed head:** `7b4a28f3694c4899cc34b82cc477410e37d42bd5`
 
 ## Objective
 
@@ -202,3 +202,21 @@ Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, bra
 **Remaining boundary:** The Finance Officer's broad event-budget listing (`get_event_budgets`) is still mock-only, so full Finance Officer live Supabase parity remains incomplete. The Event Manager's own-submission list now has a database RPC. Department requisitions still lack durable requisition domain tables and canonical payment/journal links.
 
 **Next:** begin department requisition database and payment integration, reusing the canonical approval and financial-document lifecycle without treating approved/disbursed UI flags as posted expenses.
+
+
+## Slice 6 progress — requisition persistence and approval configuration
+
+- Added `department_requisitions` and `department_requisition_items` to the forward migration chain. Requisitions use UUID identities and link to the canonical `profiles`, `ministries` and `church_branches` tables; departments are represented by `ministries.entity_type = 'department'`, not a separate departments table.
+- Requisition submission is a SECURITY DEFINER RPC with an empty search path. It validates the active branch, applicant membership and branch, active ministry/department, currency and base exchange rate, positive item lines, exact item-total reconciliation, active requisition approval policy, amount-band coverage and ordered approval steps.
+- Added `submit_requisitions` and `approve_requisitions` permissions with role mappings. Leaders and pastors can submit; pastor, finance officer and church administrator roles can approve through the policy's ordered steps. Submitter self-approval is prohibited.
+- Added `decide_department_requisition_approval`, which delegates each decision to the shared immutable approval engine and updates the requisition status only when the full policy is approved or rejected. Submission and decisions write audit events.
+- Added branch-scoped read policies and authenticated SELECT-only access. Requisition and line-item tables have no direct authenticated INSERT/UPDATE/DELETE grants.
+- Added dedicated `get_requisition_approval_configuration` and `save_requisition_approval_policy` RPCs. Finance administrators can create immutable policy versions, amount bands and ordered `approve_requisitions` steps without broad table DML.
+- The Finance Configuration workspace now includes a requisition approval section. The mock RPC adapter and permission catalogue mirror the database policy-configuration API; mock tests cover scope, policy immutability boundaries, approval-step ordering and unauthorized configuration.
+
+**Validation:**
+- PostgreSQL 17 fresh-install/security workflow: [run 44625599425](https://github.com/bock12/SCMS/actions/runs/44625599425) — success. This applied both requisition migrations and passed the durable requisition submission, ordered approval, rejection, self-approval prevention, permission denial, audit, RPC hardening and direct-DML checks.
+- SCMS Build Validation: [run 44626099721](https://github.com/bock12/SCMS/actions/runs/44626099721) — success. Automated tests and application build passed.
+- No browser acceptance test was performed. No live Supabase migration, deployment or production data write was performed.
+
+**Remaining boundary:** The Finance Configuration UI can now configure requisition policies, and the database can persist and approve requisitions. The existing requisition forms and Finance Officer workspace still use the legacy localStorage model. The next slice must connect requisition submission/listing/approval to the new RPCs and mock adapter, then add an atomic, unique source link from an approved requisition to one canonical payment. A requisition must not be marked paid, and actual expenditure must remain zero, until its linked payment journal is posted.
