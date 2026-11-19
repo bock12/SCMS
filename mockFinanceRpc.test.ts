@@ -630,3 +630,89 @@ describe('canonical finance transaction setup guards', () => {
     expect(state.documents).toHaveLength(0);
   });
 });
+
+
+describe('mock requisition approval configuration RPCs', () => {
+  test('creates an immutable branch-scoped policy with ordered requisition-only approval steps', async () => {
+    const ctx = fixture();
+    const saved = await ctx.rpc.rpc('save_requisition_approval_policy', {
+      p_branch_id: 'branch-a',
+      p_name: 'Department Requisition Policy',
+      p_min_amount_base: 0,
+      p_max_amount_base: 5000,
+      p_steps: [
+        { step_number: 1, required_approvals: 1 },
+        { step_number: 2, required_approvals: 2 }
+      ]
+    });
+
+    expect(saved.error).toBeNull();
+    expect(saved.data.step_count).toBe(2);
+    expect(saved.data.version).toBe(1);
+
+    const configuration = await ctx.rpc.rpc('get_requisition_approval_configuration', {
+      p_branch_id: 'branch-a'
+    });
+    expect(configuration.error).toBeNull();
+    expect(configuration.data.policies).toHaveLength(1);
+    expect(configuration.data.policies[0].transaction_type).toBe('requisition');
+    expect(configuration.data.bands[0].max_amount_base).toBe(5000);
+    expect(configuration.data.steps.map((step: any) => step.step_number)).toEqual([1, 2]);
+    expect(configuration.data.steps.every((step: any) =>
+      step.required_permission_key === 'approve_requisitions' &&
+      step.prohibit_submitter_approval === true
+    )).toBe(true);
+
+    const generalFinance = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
+    expect(generalFinance.error).toBeNull();
+    expect(generalFinance.data.approvalPolicies.some((policy: any) =>
+      policy.transaction_type === 'requisition'
+    )).toBe(false);
+  });
+
+  test('branch finance managers cannot create church-wide requisition policies', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('save_requisition_approval_policy', {
+      p_branch_id: null,
+      p_name: 'Church-wide Requisition Policy',
+      p_min_amount_base: 0,
+      p_max_amount_base: null,
+      p_steps: [{ step_number: 1, required_approvals: 1 }]
+    });
+
+    expect(result.error?.message).toContain('Insufficient permission');
+    expect(ctx.read().approvalPolicies.some(policy => policy.transaction_type === 'requisition')).toBe(false);
+  });
+
+  test('approvers without finance configuration permission cannot create policies', async () => {
+    const ctx = fixture();
+    ctx.setUser('user-approver-1');
+    const result = await ctx.rpc.rpc('save_requisition_approval_policy', {
+      p_branch_id: 'branch-a',
+      p_name: 'Unauthorized Policy',
+      p_min_amount_base: 0,
+      p_max_amount_base: null,
+      p_steps: [{ step_number: 1, required_approvals: 1 }]
+    });
+
+    expect(result.error?.message).toContain('Insufficient permission');
+    expect(ctx.read().approvalPolicies.some(policy => policy.transaction_type === 'requisition')).toBe(false);
+  });
+
+  test('rejects gaps and invalid approval counts without persisting a policy', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('save_requisition_approval_policy', {
+      p_branch_id: 'branch-a',
+      p_name: 'Invalid Policy',
+      p_min_amount_base: 0,
+      p_max_amount_base: null,
+      p_steps: [
+        { step_number: 1, required_approvals: 1 },
+        { step_number: 3, required_approvals: 0 }
+      ]
+    });
+
+    expect(result.error?.message).toContain('numbered consecutively');
+    expect(ctx.read().approvalPolicies.some(policy => policy.transaction_type === 'requisition')).toBe(false);
+  });
+});
