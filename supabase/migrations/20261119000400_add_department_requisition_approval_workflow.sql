@@ -201,8 +201,11 @@ begin
   if v_profile_id is null then
     raise exception 'No member profile is linked to this account';
   end if;
-  if p_branch_id is null or not private.has_permission('submit_requisitions', p_branch_id) then
-    raise exception 'Insufficient permission to submit a requisition in this branch';
+  if p_branch_id is null or not exists (
+    select 1 from public.church_branches b
+    where b.id = p_branch_id and b.status = 'active'
+  ) or not private.has_permission('submit_requisitions', p_branch_id) then
+    raise exception 'Insufficient permission or inactive branch for requisition submission';
   end if;
 
   select * into v_profile
@@ -231,10 +234,14 @@ begin
      or p_requested_amount is null or p_requested_amount <= 0
      or p_currency_code is null
      or p_exchange_rate_to_base is null or p_exchange_rate_to_base <= 0
-     or p_priority is null or p_priority not in ('low','medium','high','urgent')
-     or jsonb_typeof(p_items) is distinct from 'array'
-     or jsonb_array_length(p_items) = 0 then
-    raise exception 'A title, positive amount, currency, exchange rate, priority and at least one item are required';
+     or p_priority is null or p_priority not in ('low','medium','high','urgent') then
+    raise exception 'A title, positive amount, currency, exchange rate and priority are required';
+  end if;
+  if jsonb_typeof(p_items) is distinct from 'array' then
+    raise exception 'Requisition items must be supplied as an array';
+  end if;
+  if jsonb_array_length(p_items) = 0 then
+    raise exception 'A requisition requires at least one item';
   end if;
 
   if exists (
@@ -431,7 +438,7 @@ begin
   if v_profile_id is null then
     raise exception 'No member profile is linked to this account';
   end if;
-  if p_decision not in ('approved','rejected') then
+  if p_decision is null or p_decision not in ('approved','rejected') then
     raise exception 'Decision must be approved or rejected';
   end if;
 
