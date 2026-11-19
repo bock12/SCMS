@@ -6,7 +6,7 @@ import { hasEffectivePermission } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
-import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, decideDatabaseRequisitionApproval } from './requisitionService';
 import { getEventBudgetApprovals } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
@@ -66,24 +66,36 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
   // Requisitions & Event Budgets State
   const [requisitions, setRequisitions] = useState<DepartmentRequisition[]>([]);
+  const [requisitionError, setRequisitionError] = useState<string | null>(null);
   const [eventBudgets, setEventBudgets] = useState<EventBudgetApproval[]>([]);
 
   // Sync Requisitions and Event Budgets with Service
-  const reloadRequisitions = () => {
-    setRequisitions(getRequisitions());
+  const reloadRequisitions = async () => {
+    setRequisitionError(null);
+    if (profile?.branch_id) {
+      const result = await getDatabaseRequisitions(profile.branch_id);
+      if (result.error) {
+        setRequisitionError(result.error.message);
+        setRequisitions([]);
+      } else {
+        setRequisitions(result.data || []);
+      }
+    } else {
+      setRequisitions([]);
+    }
     setEventBudgets(getEventBudgetApprovals());
   };
 
   useEffect(() => {
-    reloadRequisitions();
-    const handleUpdate = () => reloadRequisitions();
+    void reloadRequisitions();
+    const handleUpdate = () => { void reloadRequisitions(); };
     window.addEventListener('requisitions_updated', handleUpdate);
     window.addEventListener('event_budgets_updated', handleUpdate);
     return () => {
       window.removeEventListener('requisitions_updated', handleUpdate);
       window.removeEventListener('event_budgets_updated', handleUpdate);
     };
-  }, []);
+  }, [profile?.branch_id]);
 
   // Ledger Filters
   const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
@@ -296,20 +308,48 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     alert("Requisition verified & settled in Good Standing!");
   };
 
-  const handleApproveRequisition = (reqId: string) => {
-    const updated = requisitions.map(r => r.id === reqId ? { ...r, status: 'approved' as const } : r);
-    setRequisitions(updated);
-    saveRequisitions(updated);
+  const handleApproveRequisition = async (reqId: string) => {
+    const requisition = requisitions.find(item => item.id === reqId);
+    const currentStep = requisition?.approval_steps?.find(step => step.actor_can_decide);
+    if (!currentStep) {
+      alert('There is no requisition approval step currently assigned to your permissions. Earlier steps may still be pending.');
+      return;
+    }
+    const result = await decideDatabaseRequisitionApproval(
+      currentStep.id, 'approved',
+      profile ? `Approved by ${profile.first_name} ${profile.last_name}` : undefined
+    );
+    if (result.error) {
+      alert(result.error.message);
+      return;
+    }
+    await reloadRequisitions();
   };
 
-  const handleRejectRequisition = (reqId: string) => {
-    if (!confirm("Are you sure you want to reject this funding proposal?")) return;
-    const updated = requisitions.map(r => r.id === reqId ? { ...r, status: 'rejected' as const } : r);
-    setRequisitions(updated);
-    saveRequisitions(updated);
+  const handleRejectRequisition = async (reqId: string) => {
+    if (!confirm('Are you sure you want to reject this funding proposal?')) return;
+    const requisition = requisitions.find(item => item.id === reqId);
+    const currentStep = requisition?.approval_steps?.find(step => step.actor_can_decide);
+    if (!currentStep) {
+      alert('There is no requisition approval step currently assigned to your permissions. Earlier steps may still be pending.');
+      return;
+    }
+    const result = await decideDatabaseRequisitionApproval(
+      currentStep.id, 'rejected',
+      profile ? `Rejected by ${profile.first_name} ${profile.last_name}` : undefined
+    );
+    if (result.error) {
+      alert(result.error.message);
+      return;
+    }
+    await reloadRequisitions();
   };
 
   const openDisbursementModal = (req: DepartmentRequisition) => {
+    if (req.approval_request_id) {
+      alert('The requisition is approved, but source-linked payment creation is not available yet. Create a payment through canonical Finance Transaction Entry; do not mark this requisition as disbursed.');
+      return;
+    }
     setDisburseReq(req);
     setDisbursementInvoiceNo(`INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
     setDisbursementTxnRef(`WIRE-SLCB-${Math.floor(100000 + Math.random() * 900000)}`);
