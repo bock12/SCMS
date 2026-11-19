@@ -1189,7 +1189,9 @@ jobs:
               'public.get_requisition_approval_configuration(uuid)',
               'public.save_requisition_approval_policy(uuid,text,numeric,numeric,jsonb)',
               'public.get_department_requisitions(uuid)',
-              'public.get_department_requisition_submission_options(uuid,uuid)'
+              'public.get_department_requisition_submission_options(uuid,uuid)',
+              'public.create_department_requisition_payment(uuid,date,uuid,text,numeric,text,uuid,uuid,uuid,text,text,text)',
+              'public.get_department_requisition_payment_summary(uuid)'
             ] LOOP
               IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
                 RAISE EXCEPTION 'Authenticated role is missing requisition RPC grant: %', v_signature;
@@ -1216,7 +1218,11 @@ jobs:
               OR has_table_privilege('authenticated', 'public.department_requisitions', 'DELETE')
               OR has_table_privilege('authenticated', 'public.department_requisition_items', 'INSERT')
               OR has_table_privilege('authenticated', 'public.department_requisition_items', 'UPDATE')
-              OR has_table_privilege('authenticated', 'public.department_requisition_items', 'DELETE') THEN
+              OR has_table_privilege('authenticated', 'public.department_requisition_items', 'DELETE')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.journal_entries', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.journal_entries', 'UPDATE') THEN
               RAISE EXCEPTION 'Requisition workflow must not grant direct table DML';
             END IF;
 
