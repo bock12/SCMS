@@ -92,7 +92,7 @@ begin
     raise exception 'Church settings must be configured before financial operations';
   end if;
   if not exists (
-    select 1 from public.currencies c where c.code = p_currency_code
+    select 1 from public.currencies c where c.code = p_currency_code and c.is_active
   ) then
     raise exception 'A valid event budget currency is required';
   end if;
