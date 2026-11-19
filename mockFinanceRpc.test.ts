@@ -756,6 +756,23 @@ describe('mock department requisition lifecycle RPCs', () => {
     ]
   };
 
+  test('returns branch-scoped submission options only to authorized ministry leaders', async () => {
+    const ctx = fixture();
+    const options = await ctx.rpc.rpc('get_department_requisition_submission_options', {
+      p_branch_id: 'branch-a', p_ministry_id: 'ministry-a'
+    });
+    expect(options.error).toBeNull();
+    expect(options.data.ministry_name).toBe('Worship Ministry');
+    expect(options.data.base_currency_code).toBe('SLL');
+    expect(options.data.currencies).toContain('SLL');
+
+    ctx.setUser('user-member');
+    const denied = await ctx.rpc.rpc('get_department_requisition_submission_options', {
+      p_branch_id: 'branch-a', p_ministry_id: 'ministry-a'
+    });
+    expect(denied.error?.message).toContain('Insufficient permission');
+  });
+
   test('submits a pending requisition with reconciled item lines and no payment journal', async () => {
     const ctx = fixture();
     await createRequisitionPolicy(ctx);
