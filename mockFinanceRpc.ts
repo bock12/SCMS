@@ -718,6 +718,123 @@ export function createMockFinanceRpc(
     return success({ policy_id: policyId, band_id: bandId, step_count: stepIds.length, version });
   }
 
+  function createDepartmentRequisitionPayment(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const requisition = state.requisitions.find(item => item.id === args.p_requisition_id);
+    if (!requisition) return fail('Department requisition not found');
+    if (!hasPermission(state, actor.id, 'manage_finances', requisition.branch_id)) {
+      return fail('Insufficient permission to pay a requisition in this branch', '42501');
+    }
+    if (requisition.status !== 'approved') return fail('Only approved requisitions can receive payments');
+    const requestKey = String(args.p_request_key || '').trim();
+    if (!requestKey) return fail('A payment idempotency request key is required');
+    const existing = state.documents.find(item =>
+      item.source_requisition_id === requisition.id && item.source_request_key === requestKey);
+    if (existing) {
+      const journal = state.journals.find(item => item.source_id === existing.id &&
+        ['financial_document_pending', 'financial_document'].includes(item.source_type));
+      return success({
+        document_id: existing.id, journal_entry_id: existing.journal_entry_id ?? journal?.id ?? null,
+        status: existing.status, requisition_id: requisition.id, already_exists: true
+      });
+    }
+    if (args.p_profile_id) {
+      const selectedProfile = state.profiles.find(item => item.id === args.p_profile_id &&
+        item.branch_id === requisition.branch_id &&
+        item.membership_status === 'active' && item.record_status === 'active');
+      if (!selectedProfile) return fail('Selected member profile must be active in the requisition branch');
+    }
+    const amount = Number(args.p_amount);
+    if (!Number.isFinite(amount) || amount <= 0) return fail('Payment amount must be positive');
+    const linked = state.documents.filter(item => item.source_requisition_id === requisition.id);
+    let paid = 0;
+    let reserved = 0;
+    for (const document of linked) {
+      const journal = state.journals.find(item => item.id === document.journal_entry_id ||
+        (item.source_id === document.id && ['financial_document_pending', 'financial_document'].includes(item.source_type)));
+      if (document.status === 'approved' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
+        paid += Number(document.amount || 0);
+      } else if (['draft', 'pending_approval', 'approved'].includes(document.status) && journal?.status !== 'posted') {
+        reserved += Number(document.amount || 0);
+      }
+    }
+    const remaining = round4(Number(requisition.requested_amount) - paid - reserved);
+    if (remaining <= 0) return fail('The approved requisition amount is already fully paid or reserved');
+    if (round4(amount) > remaining) return fail('Payment exceeds the remaining approved requisition amount');
+    const rate = Number(requisition.exchange_rate_to_base);
+    if (String(args.p_currency_code || requisition.currency).trim().toUpperCase() !== requisition.currency ||
+        Number(args.p_exchange_rate_to_base ?? rate) !== rate) {
+      return fail('Payment currency and exchange rate must match the approved requisition');
+    }
+    const txArgs = {
+      ...args,
+      p_document_type: 'payment',
+      p_branch_id: requisition.branch_id,
+      p_currency_code: requisition.currency,
+      p_exchange_rate_to_base: rate,
+      p_description: String(args.p_description || '').trim() || requisition.title
+    };
+    const created = createTransaction(txArgs, state, false);
+    if (created.error) return created;
+    const document = state.documents.find(item => item.id === created.data.document_id);
+    if (!document || document.document_type !== 'payment' ||
+        document.branch_id !== requisition.branch_id || document.currency_code !== requisition.currency) {
+      return fail('Canonical payment could not be linked to the approved requisition');
+    }
+    document.source_requisition_id = requisition.id;
+    document.source_request_key = requestKey;
+    storage.save(state);
+    return success({ ...created.data, requisition_id: requisition.id, source_requisition_id: requisition.id, already_exists: false });
+  }
+
+  function getDepartmentRequisitionPaymentSummary(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = args.p_branch_id ?? null;
+    if (!branchId || !hasPermission(state, actor.id, 'manage_finances', branchId)) {
+      return fail('Insufficient permission to view requisition payment details in this branch', '42501');
+    }
+    const requisitions = state.requisitions.filter(item => item.branch_id === branchId);
+    return success(requisitions.map(requisition => {
+      const payments = state.documents.filter(item => item.source_requisition_id === requisition.id);
+      let paid = 0;
+      let reserved = 0;
+      const paymentRows = payments.map(document => {
+        const journal = state.journals.find(item => item.id === document.journal_entry_id ||
+          (item.source_id === document.id && ['financial_document_pending', 'financial_document'].includes(item.source_type)));
+        if (document.status === 'approved' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
+          paid += Number(document.amount || 0);
+        } else if (['draft', 'pending_approval', 'approved'].includes(document.status) && journal?.status !== 'posted') {
+          reserved += Number(document.amount || 0);
+        }
+        return {
+          document_id: document.id, journal_entry_id: document.journal_entry_id ?? journal?.id ?? null,
+          amount: document.amount, currency_code: document.currency_code, status: document.status,
+          journal_status: journal?.status ?? null, transaction_date: document.transaction_date,
+          external_reference: document.external_reference
+        };
+      });
+      paid = round4(paid);
+      reserved = round4(reserved);
+      const remaining = Math.max(0, round4(Number(requisition.requested_amount) - paid - reserved));
+      return {
+        requisition_id: requisition.id, requested_amount: requisition.requested_amount,
+        currency_code: requisition.currency, paid_amount: paid, reserved_amount: reserved,
+        remaining_amount: remaining,
+        payment_status: paid >= Number(requisition.requested_amount) ? 'paid' :
+          paid > 0 ? 'partially_paid' : reserved > 0 ? 'payment_pending' : 'unpaid',
+        payments: paymentRows
+      };
+    }));
+  }
+
   function getDepartmentRequisitions(args: Record<string, any> = {}) {
     const state = storage.load();
     const auth = getAuth();
@@ -1446,6 +1563,8 @@ export function createMockFinanceRpc(
         if (name === 'get_department_requisition_submission_options') return getDepartmentRequisitionSubmissionOptions(args);
         if (name === 'submit_department_requisition') return submitDepartmentRequisition(args);
         if (name === 'decide_department_requisition_approval') return decideDepartmentRequisitionApproval(args);
+        if (name === 'create_department_requisition_payment') return createDepartmentRequisitionPayment(args);
+        if (name === 'get_department_requisition_payment_summary') return getDepartmentRequisitionPaymentSummary(args);
         if (name === 'save_requisition_approval_policy') return saveRequisitionApprovalPolicy(args);
         if (name === 'submit_event_budget_for_approval') return submitEventBudgetForApproval(args);
         if (name === 'get_event_budget_submission_options') return getEventBudgetSubmissionOptions(args);
