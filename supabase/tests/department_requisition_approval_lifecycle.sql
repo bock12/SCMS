@@ -4,17 +4,17 @@
 DO $department_requisition_lifecycle$
 DECLARE
   v_branch_id uuid := '10000000-0000-4000-8000-000000000001';
-  v_submitter_auth uuid := '99000000-0000-4000-8000-000000000001';
-  v_submitter_profile uuid := '99000000-0000-4000-8000-000000000002';
-  v_pastor_auth uuid := '99000000-0000-4000-8000-000000000003';
-  v_pastor_profile uuid := '99000000-0000-4000-8000-000000000004';
-  v_finance_auth uuid := '99000000-0000-4000-8000-000000000005';
-  v_finance_profile uuid := '99000000-0000-4000-8000-000000000006';
-  v_member_auth uuid := '99000000-0000-4000-8000-000000000007';
-  v_member_profile uuid := '99000000-0000-4000-8000-000000000008';
-  v_ministry_id uuid := '99000000-0000-4000-8000-000000000009';
-  v_policy_id uuid := '99000000-0000-4000-8000-000000000010';
-  v_band_id uuid := '99000000-0000-4000-8000-000000000011';
+  v_submitter_auth uuid := 'a7000000-0000-4000-8000-000000000001';
+  v_submitter_profile uuid := 'a7000000-0000-4000-8000-000000000002';
+  v_pastor_auth uuid := 'a7000000-0000-4000-8000-000000000003';
+  v_pastor_profile uuid := 'a7000000-0000-4000-8000-000000000004';
+  v_finance_auth uuid := 'a7000000-0000-4000-8000-000000000005';
+  v_finance_profile uuid := 'a7000000-0000-4000-8000-000000000006';
+  v_member_auth uuid := 'a7000000-0000-4000-8000-000000000007';
+  v_member_profile uuid := 'a7000000-0000-4000-8000-000000000008';
+  v_ministry_id uuid := 'a7000000-0000-4000-8000-000000000009';
+  v_policy_id uuid := 'a7000000-0000-4000-8000-000000000010';
+  v_band_id uuid := 'a7000000-0000-4000-8000-000000000011';
   v_step1_id uuid;
   v_step2_id uuid;
   v_result jsonb;
