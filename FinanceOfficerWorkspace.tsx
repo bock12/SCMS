@@ -14,6 +14,7 @@ import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
+import { DepartmentRequisitionPaymentWorkspace } from './DepartmentRequisitionPaymentWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -1394,8 +1395,12 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {workspaceTab === 'requisitions' && (
         <div className="space-y-6">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Requisition approval is not payment.</strong> Approval records authorization only. It does not create a payment or posted expense. Source-linked payment creation and expenditure reconciliation are still pending integration.
+            <strong>Requisition approval is not payment.</strong> Approved requisitions can now receive separately approved canonical payments. A requisition is shown as paid only from its linked posted journal; pending and approved-but-unposted payments remain reservations, not expenditure.
           </div>
+          {hasEffectivePermission(financePermissions, 'manage_finances') && (
+            <DepartmentRequisitionPaymentWorkspace branchId={profile?.branch_id || null} requisitions={requisitions as any[]} />
+          )}
+
           {/* Requisitions Overview Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-1">
