@@ -174,7 +174,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           {currentTab === 'overview' && <OverviewTab onSwitchTab={setTab} />}
           {currentTab === 'events' && (
             can('manage_events') 
-              ? <EventsAdminTab /> 
+              ? <EventsAdminTab profile={profile} /> 
               : <PermissionRestrictedCard requiredPermission="manage_resources" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'resources' && (
@@ -6985,7 +6985,7 @@ export const StreamDetailsPage = ({ profile }: { profile: Profile | null }) => {
 
 // --- Church Events & Calendar Administration Tab ---
 
-const EventsAdminTab = () => {
+const EventsAdminTab = ({ profile }: { profile: Profile }) => {
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   const [members, setMembers] = useState<Profile[]>([]);
@@ -8540,6 +8540,7 @@ const EventsAdminTab = () => {
     return (
       <EventWorkspaceModal
         event={workspaceEvent}
+        profileId={profile.id}
         members={members}
         registrations={registrations}
         onClose={() => setWorkspaceEvent(null)}
