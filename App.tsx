@@ -25,7 +25,7 @@ import { MemberEventSurveysPage } from './MemberEventSurveysPage';
 import { CalendarPage } from './CalendarPage';
 import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption } from './eventAccountService';
 import { getGivingConfig } from './givingConfig';
-import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, getDepartmentRequisitionSubmissionOptions, submitDatabaseRequisition } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
 import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
@@ -4326,6 +4326,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   }, [activeDept]);
   
   const [requisitions, setRequisitions] = useState<DepartmentRequisition[]>([]);
+  const [localRequisitionDrafts, setLocalRequisitionDrafts] = useState<DepartmentRequisition[]>(() => getRequisitions().filter(item => item.status === 'draft'));
   const [showProposalModal, setShowProposalModal] = useState(false);
   const [proposalSuccessToast, setProposalSuccessToast] = useState<string | null>(null);
 
@@ -4334,32 +4335,37 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [previewProposal, setPreviewProposal] = useState<DepartmentRequisition | null>(null);
   const [previewTab, setPreviewTab] = useState<'invoice' | 'edit'>('invoice');
 
-  const handleSaveAndSubmitEditedProposal = (updatedReq: DepartmentRequisition) => {
+  const handleSaveAndSubmitEditedProposal = async (updatedReq: DepartmentRequisition) => {
     const totalAmount = updatedReq.items.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unit_price || 0)), 0);
     const finalReq: DepartmentRequisition = {
       ...updatedReq,
       requested_amount: totalAmount > 0 ? totalAmount : updatedReq.requested_amount,
-      items: updatedReq.items.map((item, idx) => ({
+      items: updatedReq.items.map(item => ({
         ...item,
         total_price: Number(item.quantity || 1) * Number(item.unit_price || 0)
       }))
     };
 
-    const exists = requisitions.some(r => r.id === finalReq.id);
-    let updatedList: DepartmentRequisition[];
-    if (exists) {
-      updatedList = requisitions.map(r => r.id === finalReq.id ? finalReq : r);
-    } else {
-      updatedList = [finalReq, ...requisitions];
-    }
-
-    saveRequisitions(updatedList);
-    setRequisitions(updatedList);
     setShowProposalPreviewModal(false);
     setShowProposalModal(false);
     setPreviewProposal(null);
 
-    setProposalSuccessToast(`Proposal & Proforma Invoice ${finalReq.requisition_number} saved & submitted for Senior Pastor & Board Approval!`);
+    if (finalReq.status === 'draft') {
+      const updatedDrafts = [finalReq, ...localRequisitionDrafts.filter(item => item.id !== finalReq.id)];
+      setLocalRequisitionDrafts(updatedDrafts);
+      saveRequisitions(updatedDrafts);
+      setRequisitions(current => [finalReq, ...current.filter(item => item.id !== finalReq.id)]);
+      setProposalSuccessToast(`Proposal saved locally as draft (${finalReq.requisition_number}). It has not been submitted for approval.`);
+      setTimeout(() => setProposalSuccessToast(null), 6000);
+      return;
+    }
+
+    try {
+      const submitted = await submitRequisitionToDatabase(finalReq);
+      setProposalSuccessToast(`Requisition ${submitted.requisition_number} submitted for the configured approval workflow.`);
+    } catch (error: any) {
+      setProposalSuccessToast(error?.message || 'Unable to submit the requisition.');
+    }
     setTimeout(() => setProposalSuccessToast(null), 6000);
   };
 
@@ -5094,16 +5100,27 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setTimeout(() => setProposalSuccessToast(null), 4000);
   };
 
-  const reloadReqs = () => {
-    setRequisitions(getRequisitions());
+  const reloadReqs = async () => {
+    const branchId = profile?.branch_id;
+    if (!branchId) {
+      setRequisitions(localRequisitionDrafts);
+      return;
+    }
+    const result = await getDatabaseRequisitions(branchId);
+    if (result.error) {
+      setProposalSuccessToast(result.error.message);
+      setRequisitions(localRequisitionDrafts);
+      return;
+    }
+    setRequisitions([...(result.data || []), ...localRequisitionDrafts]);
   };
 
   useEffect(() => {
-    reloadReqs();
-    const handleUpd = () => reloadReqs();
+    void reloadReqs();
+    const handleUpd = () => { void reloadReqs(); };
     window.addEventListener('requisitions_updated', handleUpd);
     return () => window.removeEventListener('requisitions_updated', handleUpd);
-  }, []);
+  }, [profile?.branch_id, activeMinistryObj?.id, localRequisitionDrafts]);
 
   if (!isLeaderOrStaff) {
     return (
@@ -5257,6 +5274,45 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setReqDisbInfo(req.disbursement_account_info || '');
     setReqItems(req.items.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit_price: i.unit_price })));
     setShowProposalModal(true);
+  };
+
+  const submitRequisitionToDatabase = async (requisition: DepartmentRequisition) => {
+    if (!profile?.branch_id || !activeMinistryObj?.id) {
+      throw new Error('Your account must be linked to an active branch ministry before submitting a requisition.');
+    }
+    const options = await getDepartmentRequisitionSubmissionOptions(profile.branch_id, activeMinistryObj.id);
+    if (options.error || !options.data) {
+      throw new Error(options.error?.message || 'Unable to load requisition submission options.');
+    }
+    const currencyCode = options.data.base_currency_code;
+    if (!currencyCode || !options.data.currencies.includes(currencyCode)) {
+      throw new Error('The church base currency is not active. Ask Finance to correct the currency configuration.');
+    }
+    const result = await submitDatabaseRequisition({
+      branchId: profile.branch_id,
+      ministryId: activeMinistryObj.id,
+      title: requisition.title,
+      description: requisition.description,
+      requestedAmount: requisition.requested_amount,
+      currencyCode,
+      exchangeRateToBase: 1,
+      priority: requisition.priority,
+      neededByDate: requisition.needed_by_date,
+      vendorQuoteReference: requisition.vendor_quote_reference || requisition.vendor_quote_url,
+      items: requisition.items.map(item => ({
+        item_name: item.item_name,
+        quantity: Number(item.quantity),
+        unit_price: Number(item.unit_price)
+      }))
+    });
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message || 'Requisition submission did not return a confirmation.');
+    }
+    const remainingDrafts = localRequisitionDrafts.filter(item => item.id !== requisition.id);
+    setLocalRequisitionDrafts(remainingDrafts);
+    saveRequisitions(remainingDrafts);
+    await reloadReqs();
+    return result.data;
   };
 
   // Requisition Proposal Handlers
