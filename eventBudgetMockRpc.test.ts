@@ -179,7 +179,8 @@ describe('event budget mock finance RPC lifecycle', () => {
     expect(own.data.budgets[0].approval_steps).toHaveLength(1);
 
     const broadListing = await ctx.rpc.rpc('get_event_budgets', { p_branch_id: 'branch-a' });
-    expect(broadListing.error?.code).toBe('42501');
+    expect(broadListing.error).toBeNull();
+    expect(broadListing.data.budgets).toHaveLength(0);
     const financeConfiguration = await ctx.rpc.rpc('get_finance_configuration');
     expect(financeConfiguration.error?.code).toBe('42501');
 
