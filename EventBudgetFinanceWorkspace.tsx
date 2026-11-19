@@ -49,7 +49,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
     const [budgetResult, configResult, eventResult] = await Promise.all([
       getEventBudgets(branchId),
       getFinanceConfiguration(),
-      supabase.from('events').select('id,title,name,finance_event_id,branch_id').order('title', { ascending: true })
+      supabase.from('events').select('*').order('title', { ascending: true })
     ]);
     if (budgetResult.error) setError(budgetResult.error.message);
     else setBudgets(budgetResult.data?.budgets || []);
