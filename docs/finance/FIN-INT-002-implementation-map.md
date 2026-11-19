@@ -168,3 +168,18 @@ Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, bra
 **Remaining boundary:** Event Manager's original budget submission form still writes legacy localStorage proposals. Those records are not automatically imported, approved, or converted. Finance Officers can submit a new canonical budget from the canonical workspace by selecting a saved event. A future pass should move the Event Manager submission form to this same service and remove the duplicate legacy submission path. The canonical budget listing RPC is currently implemented by the mock adapter; a database listing RPC and full live Supabase parity are still required before production use.
 
 **Validation:** SCMS Build Validation run 44513693652 completed successfully for commit `f85d993b405b2fa0346105cc5dea079dc01b399b`; automated tests and application build passed. No live Supabase migration or database write was performed.
+
+
+## Slice 4 progress — Event Manager submission UI
+
+- The Event Manager's event workspace now embeds the shared canonical event-budget workflow with the current event preselected. It resolves the event through the existing UUID identity bridge and submits through `submit_event_budget_for_approval`; the Event Manager no longer creates a new localStorage approval record through the Proforma Invoice submit action.
+- The canonical submission form requires an open financial period, configured currency and exchange rate, an active expense account, and an optional active fund. It creates the canonical budget, approval request and ordered approval steps through the existing service/RPC path.
+- The event-scoped workspace is submission-only: it does not expose Finance Officer approval or payment actions. The legacy localStorage proposal banner is labelled read-only; existing records are retained and are not imported, approved or treated as canonical budgets.
+- The existing Proforma Invoice builder remains available for print/reference, but its legacy submit handler now fails closed and directs users to the canonical workflow.
+- The signed-in profile ID is passed from the Events admin page into the event workspace so the shared workflow can identify the actor.
+
+**Permission and live-schema boundary:** The current database/mock submit RPC requires branch `manage_finances`, while Event Managers may only have `manage_events`. The current listing/configuration calls also use finance-scoped access. Therefore this UI integration is usable only for profiles that already have the required finance permissions; it does not yet grant ordinary Event Managers a narrowly scoped submission-only permission or configuration read. A follow-up security slice must add a least-privilege event-budget submission configuration/listing path and permit authorized event managers to submit without granting broad finance access. The canonical event-budget listing remains mock-only; full live Supabase parity is not complete.
+
+**Validation:** SCMS Build Validation run 44529182175 completed successfully for commit `5602f6641277f03b0f6ddab26863e3df012b7e7a`; automated tests and application build passed. No browser/runtime test was performed. No live Supabase migration, deployment or database write was performed.
+
+**Next:** add least-privilege Event Manager authorization and read APIs, then proceed to department requisition database/payment integration.
