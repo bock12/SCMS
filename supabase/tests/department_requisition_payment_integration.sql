@@ -109,7 +109,7 @@ BEGIN
   SELECT item.value INTO v_summary
   FROM jsonb_array_elements(v_summary) item(value)
   WHERE item.value->>'requisition_id' = v_requisition_id::text;
-  IF v_summary->>'payment_status' <> 'payment_pending'
+  IF v_summary IS NULL OR v_summary->>'payment_status' <> 'payment_pending'
      OR (v_summary->>'paid_amount')::numeric <> 0
      OR (v_summary->>'reserved_amount')::numeric <> 80 THEN
     RAISE EXCEPTION 'Approved but unposted requisition payment was incorrectly counted as paid';
@@ -123,7 +123,7 @@ BEGIN
   SELECT item.value INTO v_summary
   FROM jsonb_array_elements(v_summary) item(value)
   WHERE item.value->>'requisition_id' = v_requisition_id::text;
-  IF v_summary->>'payment_status' <> 'partially_paid'
+  IF v_summary IS NULL OR v_summary->>'payment_status' <> 'partially_paid'
      OR (v_summary->>'paid_amount')::numeric <> 80
      OR (v_summary->>'remaining_amount')::numeric <> 70 THEN
     RAISE EXCEPTION 'Posted partial payment was not reflected in requisition paid totals';
@@ -167,7 +167,7 @@ BEGIN
   SELECT item.value INTO v_summary
   FROM jsonb_array_elements(v_summary) item(value)
   WHERE item.value->>'requisition_id' = v_requisition_id::text;
-  IF v_summary->>'payment_status' <> 'paid'
+  IF v_summary IS NULL OR v_summary->>'payment_status' <> 'paid'
      OR (v_summary->>'paid_amount')::numeric <> 150
      OR (v_summary->>'remaining_amount')::numeric <> 0 THEN
     RAISE EXCEPTION 'Fully posted requisition payments did not settle the approved amount';
