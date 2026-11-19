@@ -1146,11 +1146,11 @@ jobs:
       - name: Verify receipt and payment transaction lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
 
-      - name: Verify event budget approval, payment linkage and posted actuals
-        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
-
       - name: Verify finance document listing and scope isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_listing.sql
+
+      - name: Verify event budget approval, payment linkage and posted actuals
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
 
       - name: Verify journal API grants and hardening
         run: |
