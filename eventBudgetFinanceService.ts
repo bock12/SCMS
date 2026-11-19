@@ -37,6 +37,14 @@ export interface EventBudgetPaymentInput {
   exchangeRateToBase: number;
 }
 
+export interface EventBudgetSubmissionOptions {
+  currencies: string[];
+  baseCurrencyCode: string | null;
+  chartAccounts: Array<{ id: string; code: string; name: string; account_type: string; is_control_account: boolean; is_active: boolean }>;
+  funds: Array<{ id: string; name: string; code: string; fund_type: 'general' | 'designated' | 'restricted'; is_default: boolean; is_active: boolean }>;
+  periods: Array<{ id: string; financial_year_id: string; name: string; start_date: string; end_date: string; status: 'open' | 'closed'; year_status: string }>;
+}
+
 export interface EventBudgetRpcResult {
   budget_id: string;
   approval_request_id: string;
@@ -108,4 +116,23 @@ export async function getEventBudgets(
   client: RpcClient = defaultRpcClient
 ): Promise<RpcResponse<{ budgets: Array<Record<string, any>> }>> {
   return client.rpc('get_event_budgets', { p_branch_id: branchId ?? null });
+}
+
+
+export async function getEventBudgetSubmissionOptions(
+  event: FinanceEventIdentity,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<EventBudgetSubmissionOptions>> {
+  return client.rpc('get_event_budget_submission_options', {
+    p_event_id: getFinanceEventUuid(event)
+  });
+}
+
+export async function getMyEventBudgets(
+  event: FinanceEventIdentity,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<{ budgets: Array<Record<string, any>> }>> {
+  return client.rpc('get_my_event_budgets', {
+    p_event_id: getFinanceEventUuid(event)
+  });
 }
