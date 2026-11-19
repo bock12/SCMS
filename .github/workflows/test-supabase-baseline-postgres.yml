@@ -19,6 +19,8 @@ on:
       - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
       - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
       - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
+      - "supabase/migrations/20261119000200_least_privilege_event_budget_submission.sql"
+      - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
@@ -1099,6 +1101,9 @@ jobs:
       - name: Apply event budget approval and payment integration RPCs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql
 
+      - name: Apply least-privilege event budget submission APIs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000200_least_privilege_event_budget_submission.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1109,7 +1114,9 @@ jobs:
             FOREACH v_signature IN ARRAY ARRAY[
               'public.submit_event_budget_for_approval(uuid,uuid,text,character,numeric,jsonb)',
               'public.decide_event_budget_approval(uuid,text,text)',
-              'public.create_event_budget_payment(uuid,date,uuid,text,numeric,text,uuid,uuid,uuid,text,text,numeric)'
+              'public.create_event_budget_payment(uuid,date,uuid,text,numeric,text,uuid,uuid,uuid,text,text,numeric)',
+              'public.get_event_budget_submission_options(uuid)',
+              'public.get_my_event_budgets(uuid)'
             ] LOOP
               IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
                 RAISE EXCEPTION 'Authenticated role is missing event budget RPC grant: %', v_signature;
@@ -1151,6 +1158,9 @@ jobs:
 
       - name: Verify event budget approval, payment linkage and posted actuals
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
+
+      - name: Verify least-privilege Event Manager budget submission
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_submission_permissions.sql
 
       - name: Verify journal API grants and hardening
         run: |
