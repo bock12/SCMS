@@ -756,7 +756,7 @@ export function createMockFinanceRpc(
     for (const document of linked) {
       const journal = state.journals.find(item => item.id === document.journal_entry_id ||
         (item.source_id === document.id && ['financial_document_pending', 'financial_document'].includes(item.source_type)));
-      if (document.status === 'approved' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
+      if (document.status === 'posted' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
         paid += Number(document.amount || 0);
       } else if (['draft', 'pending_approval', 'approved'].includes(document.status) && journal?.status !== 'posted') {
         reserved += Number(document.amount || 0);
@@ -809,7 +809,7 @@ export function createMockFinanceRpc(
       const paymentRows = payments.map(document => {
         const journal = state.journals.find(item => item.id === document.journal_entry_id ||
           (item.source_id === document.id && ['financial_document_pending', 'financial_document'].includes(item.source_type)));
-        if (document.status === 'approved' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
+        if (document.status === 'posted' && journal?.status === 'posted' && document.journal_entry_id === journal.id) {
           paid += Number(document.amount || 0);
         } else if (['draft', 'pending_approval', 'approved'].includes(document.status) && journal?.status !== 'posted') {
           reserved += Number(document.amount || 0);
@@ -1263,6 +1263,12 @@ export function createMockFinanceRpc(
 
     journal.status = 'posted';
     journal.posted_at = new Date().toISOString();
+    if (journal.source_type === 'financial_document') {
+      const document = state.documents.find(item => item.id === journal.source_id);
+      if (document && document.journal_entry_id === journal.id && document.status === 'approved') {
+        document.status = 'posted';
+      }
+    }
     storage.save(state);
     return success({ journal_entry_id: journal.id, status: 'posted', already_posted: false });
   }
