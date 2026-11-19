@@ -10,14 +10,14 @@ import {
 import { getFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 import type { FinancialPaymentMethod } from './financeTransactionService';
 
-interface Props { branchId: string | null; profileId: string | null; }
+interface Props { branchId: string | null; profileId: string | null; fixedEvent?: { id: string; title: string; finance_event_id?: string; branch_id?: string }; submissionOnly?: boolean; }
 type BudgetRecord = Record<string, any>;
 const fieldClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800';
 const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50';
 
-export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profileId }) => {
+export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profileId, fixedEvent, submissionOnly = false }) => {
   const [budgets, setBudgets] = useState<BudgetRecord[]>([]);
-  const [events, setEvents] = useState<Array<{ id: string; title: string; finance_event_id?: string; branch_id?: string }>>([]);
+  const [events, setEvents] = useState<Array<{ id: string; title: string; finance_event_id?: string; branch_id?: string }>>(fixedEvent ? [fixedEvent] : []);
   const [showSubmit, setShowSubmit] = useState(false);
   const [eventId, setEventId] = useState('');
   const [budgetName, setBudgetName] = useState('');
@@ -55,25 +55,27 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
     else setBudgets(budgetResult.data?.budgets || []);
     if (configResult.error) setError(current => current || configResult.error!.message);
     else setConfiguration(configResult.data);
-    if (eventResult.error) setError(current => current || eventResult.error.message);
+    if (fixedEvent) setEvents([fixedEvent]);
+    else if (eventResult.error) setError(current => current || eventResult.error.message);
     else setEvents((eventResult.data || []).filter((event: any) => !branchId || event.branch_id === branchId)
       .map((event: any) => ({ id: event.id, title: event.title || event.name || 'Church event', finance_event_id: event.finance_event_id, branch_id: event.branch_id })));
     
     setLoading(false);
   };
 
-  useEffect(() => { void reload(); }, [branchId]);
+  useEffect(() => { void reload(); }, [branchId, fixedEvent?.id, fixedEvent?.finance_event_id]);
 
   const expenseAccounts = useMemo(() => (configuration?.chartAccounts || []).filter(account =>
     account.is_active && account.account_type === 'expense' && !account.is_control_account), [configuration]);
 
   const openSubmit = () => {
-    setEventId(events[0]?.id || '');
+    setEventId(fixedEvent?.id || events[0]?.id || '');
     setPeriodId(configuration?.periods.find(period => period.status === 'open')?.id || '');
     setCurrencyCode(configuration?.baseCurrencyCode || configuration?.currencies[0] || '');
     setExpenseAccountId(expenseAccounts[0]?.id || '');
     setBudgetFundId(configuration?.funds.find(fund => fund.is_active)?.id || '');
-    setBudgetName(events[0]?.title ? `${events[0].title} Budget` : 'Event Budget');
+    const selected = fixedEvent || events[0];
+    setBudgetName(selected?.title ? `${selected.title} Budget` : 'Event Budget');
     setShowSubmit(true);
   };
 
@@ -182,7 +184,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
           <form onSubmit={submitBudget} className="max-h-[90vh] w-full max-w-xl space-y-3 overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <div><h4 className="text-lg font-black text-slate-900">Submit canonical event budget</h4><p className="text-xs text-slate-500">Submission creates a persisted budget and approval request. It does not create an expense or payment.</p></div>
-            <label className="block text-xs font-bold text-slate-600">Church event<select required className={fieldClass + ' mt-1'} value={eventId} onChange={e => { setEventId(e.target.value); const item = events.find(event => event.id === e.target.value); if (item) setBudgetName(item.title + ' Budget'); }}><option value="">Select event</option>{events.map(event => <option key={event.id} value={event.id}>{event.title}</option>)}</select></label>
+            {!fixedEvent && <label className="block text-xs font-bold text-slate-600">Church event<select required className={fieldClass + ' mt-1'} value={eventId} onChange={e => { setEventId(e.target.value); const item = events.find(event => event.id === e.target.value); if (item) setBudgetName(item.title + ' Budget'); }}><option value="">Select event</option>{events.map(event => <option key={event.id} value={event.id}>{event.title}</option>)}</select></label>}
             <label className="block text-xs font-bold text-slate-600">Budget name<input required className={fieldClass + ' mt-1'} value={budgetName} onChange={e => setBudgetName(e.target.value)} /></label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-xs font-bold text-slate-600">Financial period<select required className={fieldClass + ' mt-1'} value={periodId} onChange={e => setPeriodId(e.target.value)}><option value="">Select open period</option>{(configuration?.periods || []).filter(period => period.status === 'open').map(period => <option key={period.id} value={period.id}>{period.name} ({period.start_date}–{period.end_date})</option>)}</select></label>
@@ -224,8 +226,8 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
                   <div><span className="text-slate-500">Approval steps</span><p className="font-bold text-slate-900">{(budget.approval_steps || []).filter((step: any) => step.status === 'approved').length} / {(budget.approval_steps || []).length} approved</p></div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {myStep && <><button type="button" disabled={saving} className={buttonClass} onClick={() => void decide(budget, 'approved')}>Approve budget</button><button type="button" disabled={saving} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50" onClick={() => void decide(budget, 'rejected')}>Reject budget</button></>}
-                  {canPay && <button type="button" disabled={saving} className={buttonClass} onClick={() => openPayment(budget)}><Wallet size={14} /> Create canonical payment</button>}
+                  {!submissionOnly && myStep && <><button type="button" disabled={saving} className={buttonClass} onClick={() => void decide(budget, 'approved')}>Approve budget</button><button type="button" disabled={saving} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 disabled:opacity-50" onClick={() => void decide(budget, 'rejected')}>Reject budget</button></>}
+                  {!submissionOnly && canPay && <button type="button" disabled={saving} className={buttonClass} onClick={() => openPayment(budget)}><Wallet size={14} /> Create canonical payment</button>}
                   {budget.payment_document && <span className="self-center text-xs text-slate-500">Payment {budget.payment_document.document_number || budget.payment_document.id} · journal {budget.payment_document.journal_entry_id || 'pending'}</span>}
                 </div>
               </article>
