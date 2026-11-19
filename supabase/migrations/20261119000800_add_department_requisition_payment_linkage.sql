@@ -75,11 +75,20 @@ begin
   if not found then
     raise exception 'Department requisition not found';
   end if;
+  if not private.has_permission('manage_finances', v_requisition.branch_id) then
+    raise exception 'Insufficient permission to pay a requisition in this branch';
+  end if;
   if v_requisition.status <> 'approved' then
     raise exception 'Only approved requisitions can receive payments';
   end if;
-  if not private.has_permission('manage_finances', v_requisition.branch_id) then
-    raise exception 'Insufficient permission to pay a requisition in this branch';
+  if p_profile_id is not null and not exists (
+    select 1 from public.profiles p
+    where p.id = p_profile_id
+      and p.branch_id = v_requisition.branch_id
+      and p.membership_status = 'active'
+      and p.record_status = 'active'
+  ) then
+    raise exception 'Selected member profile must be active in the requisition branch';
   end if;
 
   -- Safe idempotent retry: return the existing payment without creating a
@@ -91,7 +100,7 @@ begin
   if found then
     select j.id into v_journal_id
     from public.journal_entries j
-    where j.source_type = 'financial_document'
+    where j.source_type in ('financial_document_pending','financial_document')
       and j.source_id = v_existing.id;
     return jsonb_build_object(
       'requisition_id', p_requisition_id,
