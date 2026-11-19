@@ -78,7 +78,7 @@ create or replace function public.save_requisition_approval_policy(
   p_name text,
   p_min_amount_base numeric,
   p_max_amount_base numeric,
-  p_required_approvals integer
+  p_steps jsonb
 )
 returns jsonb
 language plpgsql
@@ -90,7 +90,7 @@ declare
   v_version integer;
   v_policy_id uuid;
   v_band_id uuid;
-  v_step_id uuid;
+  v_step_count integer;
 begin
   if (select auth.uid()) is null then
     raise exception 'Authentication required';
@@ -115,9 +115,23 @@ begin
 
   if p_name is null or length(trim(p_name)) = 0
      or p_min_amount_base is null or p_min_amount_base < 0
-     or (p_max_amount_base is not null and p_max_amount_base <= p_min_amount_base)
-     or p_required_approvals is null or p_required_approvals < 1 then
-    raise exception 'A policy name, valid amount band and positive approval count are required';
+     or (p_max_amount_base is not null and p_max_amount_base <= p_min_amount_base) then
+    raise exception 'A policy name and valid amount band are required';
+  end if;
+  if jsonb_typeof(p_steps) is distinct from 'array' or jsonb_array_length(p_steps) = 0 then
+    raise exception 'At least one ordered requisition approval step is required';
+  end if;
+  select count(*) into v_step_count
+  from jsonb_to_recordset(p_steps) as step(step_number integer, required_approvals integer);
+  if v_step_count = 0
+     or exists (
+       select 1 from jsonb_to_recordset(p_steps) as step(step_number integer, required_approvals integer)
+       where step.step_number is null or step.step_number < 1
+          or step.required_approvals is null or step.required_approvals < 1
+     )
+     or (select min(step.step_number) from jsonb_to_recordset(p_steps) as step(step_number integer, required_approvals integer)) <> 1
+     or (select max(step.step_number) from jsonb_to_recordset(p_steps) as step(step_number integer, required_approvals integer)) <> v_step_count then
+    raise exception 'Requisition approval steps must be numbered consecutively from one with positive approval counts';
   end if;
 
   -- Serialize version allocation for each branch/church scope.
@@ -146,9 +160,13 @@ begin
   insert into public.approval_policy_steps (
     band_id, step_number, required_permission_key, required_approvals,
     prohibit_submitter_approval
-  ) values (
-    v_band_id, 1, 'approve_requisitions', p_required_approvals, true
-  ) returning id into v_step_id;
+  )
+  select
+    v_band_id, step.step_number, 'approve_requisitions', step.required_approvals, true
+  from jsonb_to_recordset(p_steps) as step(
+    step_number integer, required_approvals integer
+  )
+  order by step.step_number;
 
   insert into public.audit_logs (
     actor_profile_id, action, entity_type, entity_id, branch_id, details
@@ -160,14 +178,14 @@ begin
       'version', v_version,
       'min_amount_base', p_min_amount_base,
       'max_amount_base', p_max_amount_base,
-      'required_approvals', p_required_approvals
+      'steps', p_steps
     )
   );
 
   return jsonb_build_object(
     'policy_id', v_policy_id,
     'band_id', v_band_id,
-    'step_id', v_step_id,
+    'step_count', v_step_count,
     'version', v_version
   );
 end;
@@ -175,12 +193,12 @@ $$;
 
 comment on function public.get_requisition_approval_configuration(uuid) is
   'Returns branch-scoped requisition approval policies, amount bands and approval steps.';
-comment on function public.save_requisition_approval_policy(uuid,text,numeric,numeric,integer) is
-  'Creates a new immutable requisition approval policy version with an amount band and submitter-separated approver step.';
+comment on function public.save_requisition_approval_policy(uuid,text,numeric,numeric,jsonb) is
+  'Creates a new immutable requisition approval policy version with an amount band and ordered submitter-separated approval steps.';
 
 revoke all on function public.get_requisition_approval_configuration(uuid)
   from public, anon, authenticated, service_role;
-revoke all on function public.save_requisition_approval_policy(uuid, text, numeric, numeric, integer)
+revoke all on function public.save_requisition_approval_policy(uuid, text, numeric, numeric, jsonb)
   from public, anon, authenticated, service_role;
 grant execute on function public.get_requisition_approval_configuration(uuid)
   to authenticated;
