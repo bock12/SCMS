@@ -460,6 +460,9 @@ describe('finance configuration authorization parity', () => {
     const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
     expect(loaded.error).toBeNull();
     const changed = structuredClone(loaded.data);
+    changed.chartAccounts = changed.chartAccounts.map((account: any, index: number) => ({
+      ...account, code: String(1000 + index * 1000), name: `Account ${index + 1}`
+    }));
     changed.financialAccounts.push({
       id: 'cross-branch-account', branch_id: 'branch-b',
       chart_account_id: 'cash-chart', name: 'Other Branch Cash',
