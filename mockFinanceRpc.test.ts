@@ -824,6 +824,83 @@ describe('mock department requisition lifecycle RPCs', () => {
     expect(ctx.read().requisitions[0].approved_by_profile_id).toBe('approver-2');
   });
 
+  test('creates idempotent partial requisition payments and counts paid amounts only after posting', async () => {
+    const ctx = fixture();
+    await createRequisitionPolicy(ctx);
+    const submitted = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
+    expect(submitted.error).toBeNull();
+    const requisitionSteps = ctx.read().approvalSteps
+      .filter(step => step.approval_request_id === submitted.data.approval_request_id)
+      .sort((a, b) => a.step_order - b.step_order);
+    ctx.setUser('user-approver-1');
+    expect((await ctx.rpc.rpc('decide_department_requisition_approval', {
+      p_request_step_id: requisitionSteps[0].id, p_decision: 'approved'
+    })).error).toBeNull();
+    ctx.setUser('user-approver-2');
+    expect((await ctx.rpc.rpc('decide_department_requisition_approval', {
+      p_request_step_id: requisitionSteps[1].id, p_decision: 'approved'
+    })).error).toBeNull();
+
+    const paymentArgs = {
+      p_requisition_id: submitted.data.requisition_id,
+      p_transaction_date: '2026-06-10',
+      p_profile_id: null,
+      p_party_name: 'Equipment supplier',
+      p_amount: 80,
+      p_payment_method: 'bank_transfer',
+      p_financial_account_id: 'cash-account',
+      p_category_account_id: 'expense-chart',
+      p_fund_id: 'fund-a',
+      p_external_reference: 'REQ-PAY-001',
+      p_description: 'First partial payment',
+      p_request_key: 'attempt-1'
+    };
+    ctx.setUser('user-creator');
+    const created = await ctx.rpc.rpc('create_department_requisition_payment', paymentArgs);
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('pending_approval');
+
+    const retry = await ctx.rpc.rpc('create_department_requisition_payment', paymentArgs);
+    expect(retry.error).toBeNull();
+    expect(retry.data.document_id).toBe(created.data.document_id);
+    expect(retry.data.already_exists).toBe(true);
+    expect(ctx.read().documents.filter(item => item.source_requisition_id === submitted.data.requisition_id)).toHaveLength(1);
+
+    const over = await ctx.rpc.rpc('create_department_requisition_payment', {
+      ...paymentArgs, p_amount: 80, p_request_key: 'attempt-over'
+    });
+    expect(over.error?.message).toContain('remaining approved requisition amount');
+
+    const paymentRequest = ctx.read().approvalRequests.find(item => item.id === created.data.approval_request_id);
+    const paymentSteps = ctx.read().approvalSteps
+      .filter(step => step.approval_request_id === paymentRequest.id)
+      .sort((a, b) => a.step_order - b.step_order);
+    ctx.setUser('user-approver-1');
+    await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: paymentSteps[0].id, p_decision: 'approved'
+    });
+    ctx.setUser('user-approver-2');
+    await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: paymentSteps[1].id, p_decision: 'approved'
+    });
+
+    ctx.setUser('user-creator');
+    let summary = await ctx.rpc.rpc('get_department_requisition_payment_summary', { p_branch_id: 'branch-a' });
+    expect(summary.error).toBeNull();
+    expect(summary.data[0].payment_status).toBe('payment_pending');
+    expect(summary.data[0].paid_amount).toBe(0);
+    expect(summary.data[0].reserved_amount).toBe(80);
+
+    const posted = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+    summary = await ctx.rpc.rpc('get_department_requisition_payment_summary', { p_branch_id: 'branch-a' });
+    expect(summary.data[0].payment_status).toBe('partially_paid');
+    expect(summary.data[0].paid_amount).toBe(80);
+    expect(summary.data[0].remaining_amount).toBe(70);
+  });
+
   test('fails closed for missing policy, invalid item totals and unauthorized submitters', async () => {
     const ctx = fixture();
     const noPolicy = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
