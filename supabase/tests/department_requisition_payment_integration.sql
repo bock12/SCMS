@@ -21,6 +21,8 @@ DECLARE
   v_third_request uuid;
   v_third_step uuid;
   v_post jsonb;
+  v_payment_policy_id uuid := 'a8000000-0000-4000-8000-000000000001';
+  v_payment_band_id uuid := 'a8000000-0000-4000-8000-000000000002';
 BEGIN
   SELECT id INTO v_requisition_id
   FROM public.department_requisitions
@@ -31,6 +33,23 @@ BEGIN
   IF v_requisition_id IS NULL THEN
     RAISE EXCEPTION 'Approved requisition fixture was not created by the preceding lifecycle test';
   END IF;
+
+  -- Isolate this test from earlier finance lifecycle fixtures by configuring
+  -- a current, explicit one-step payment approval policy for this branch.
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_payment_policy_id, 'FIN-INT-002 Requisition Payment Policy',
+    'financial_document', v_branch_id, 1001, '2020-01-01', true,
+    'a7000000-0000-4000-8000-000000000006'
+  );
+  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
+  VALUES (v_payment_band_id, v_payment_policy_id, 0, NULL);
+  INSERT INTO public.approval_policy_steps (
+    band_id, step_number, required_permission_key, required_approvals,
+    prohibit_submitter_approval
+  ) VALUES (v_payment_band_id, 1, 'approve_finances', 1, true);
 
   PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
   v_payment := public.create_department_requisition_payment(
