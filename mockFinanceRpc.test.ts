@@ -454,6 +454,26 @@ describe('finance configuration authorization parity', () => {
     expect(saved.error?.message).toContain('Church-wide approval policies');
     expect(ctx.read().approvalPolicies.some(policy => policy.id === 'church-policy-new')).toBe(false);
   });
+
+  test('branch finance managers cannot create a financial account in another branch', async () => {
+    const ctx = fixture();
+    const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
+    expect(loaded.error).toBeNull();
+    const changed = structuredClone(loaded.data);
+    changed.financialAccounts.push({
+      id: 'cross-branch-account', branch_id: 'branch-b',
+      chart_account_id: 'cash-chart', name: 'Other Branch Cash',
+      account_type: 'cash', currency_code: 'SLL', is_active: true
+    });
+
+    const saved = await ctx.rpc.rpc('save_finance_configuration', {
+      p_branch_id: 'branch-a',
+      p_configuration: changed
+    });
+
+    expect(saved.error?.message).toContain('must match the requested branch');
+    expect(ctx.read().financialAccounts.some(account => account.id === 'cross-branch-account')).toBe(false);
+  });
 });
 
 describe('finance configuration scope', () => {
