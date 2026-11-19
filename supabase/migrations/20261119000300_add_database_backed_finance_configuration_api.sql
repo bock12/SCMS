@@ -584,14 +584,6 @@ begin
       raise exception 'Approval policies require a valid name, scope, transaction type, version and effective dates';
     end if;
 
-    if v_branch_id is null then
-      if not private.has_permission('manage_finances', null) then
-        raise exception 'Church-wide approval policies require church-level finance management permission';
-      end if;
-    elsif not private.has_permission('manage_finances', v_branch_id) then
-      raise exception 'Insufficient permission to manage approval policies in this branch';
-    end if;
-
     select to_jsonb(ap) into v_existing from public.approval_policies ap where ap.id = v_id;
     if v_existing is not null then
       if v_existing->>'name' is distinct from v_name
@@ -604,6 +596,14 @@ begin
         raise exception 'Approval policy versions are immutable; create a new version instead';
       end if;
     else
+      if v_branch_id is null then
+        if not private.has_permission('manage_finances', null) then
+          raise exception 'Church-wide approval policies require church-level finance management permission';
+        end if;
+      elsif not private.has_permission('manage_finances', v_branch_id) then
+        raise exception 'Insufficient permission to manage approval policies in this branch';
+      end if;
+
       insert into public.approval_policies (
         id, name, transaction_type, branch_id, version, effective_from,
         effective_to, is_active, created_by_profile_id
