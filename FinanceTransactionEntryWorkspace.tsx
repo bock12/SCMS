@@ -148,9 +148,29 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
 
   if (loading) return <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading transaction-entry configuration…</div>;
 
-  const noSetup = !configuration.currencies.length || !configuration.financialAccounts.some(account => account.is_active) ||
+  const today = new Date().toISOString().slice(0, 10);
+  const hasOpenPeriodForDate = configuration.periods.some(period =>
+    period.status === 'open' && period.year_status === 'open' &&
+    transactionDate >= period.start_date && transactionDate <= period.end_date
+  );
+  const applicablePolicies = configuration.approvalPolicies
+    .filter(policy => policy.is_active && policy.transaction_type === 'financial_document' &&
+      (policy.branch_id === null || policy.branch_id === branchId) &&
+      policy.effective_from <= today && (!policy.effective_to || policy.effective_to >= today))
+    .sort((a, b) => Number(b.branch_id !== null) - Number(a.branch_id !== null) || b.version - a.version);
+  const selectedPolicy = applicablePolicies[0];
+  const enteredBaseAmount = Number(amount) * Number(exchangeRate);
+  const hasApprovalBand = Boolean(selectedPolicy && configuration.approvalPolicyBands.some(band =>
+    band.policy_id === selectedPolicy.id &&
+    (enteredBaseAmount <= 0 || (enteredBaseAmount >= band.min_amount_base &&
+      (band.max_amount_base === null || enteredBaseAmount < band.max_amount_base)))
+  ));
+  const noSetup = !configuration.currencies.length ||
+    !configuration.financialAccounts.some(account => account.is_active &&
+      (account.branch_id === null || account.branch_id === branchId)) ||
     !configuration.chartAccounts.some(account => account.is_active && account.account_type === 'income') ||
-    !configuration.chartAccounts.some(account => account.is_active && account.account_type === 'expense');
+    !configuration.chartAccounts.some(account => account.is_active && account.account_type === 'expense') ||
+    !hasOpenPeriodForDate || !hasApprovalBand;
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
@@ -170,7 +190,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
       </div>}
 
       {noSetup && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-        Configure supported currencies, an active financial account, income and expense chart accounts, an open financial period, and an approval policy before entering transactions.
+        Configure supported currencies, an active branch-compatible financial account, income and expense chart accounts, an open financial period covering the selected transaction date, and an active approval policy band covering the entered amount before submitting.
       </div>}
 
       <div className="flex gap-2">
