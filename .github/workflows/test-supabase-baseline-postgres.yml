@@ -25,6 +25,8 @@ on:
       - "supabase/migrations/20261119000500_add_requisition_approval_configuration_api.sql"
       - "supabase/migrations/20261119000600_add_department_requisition_read_api.sql"
       - "supabase/migrations/20261119000700_add_requisition_submission_options_api.sql"
+      - "supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql"
+      - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
@@ -1125,6 +1127,9 @@ jobs:
       - name: Apply requisition submission options API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000700_add_requisition_submission_options_api.sql
 
+      - name: Apply department requisition payment linkage
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1237,6 +1242,9 @@ jobs:
 
       - name: Verify department requisition approval lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/department_requisition_approval_lifecycle.sql
+
+      - name: Verify requisition payment linkage and posted settlement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/department_requisition_payment_integration.sql
 
       - name: Verify journal API grants and hardening
         run: |
