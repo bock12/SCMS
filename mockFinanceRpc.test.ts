@@ -336,7 +336,7 @@ describe('canonical finance configuration RPCs', () => {
       p_branch_id: 'branch-a', p_configuration: configuration
     });
     expect(saved.error).toBeNull();
-    const loaded = await ctx.rpc.rpc('get_finance_configuration');
+    const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
     expect(loaded.error).toBeNull();
     expect(loaded.data.baseCurrencyCode).toBe('SLL');
     expect(loaded.data.chartAccounts).toHaveLength(2);
@@ -432,7 +432,7 @@ describe('finance configuration scope', () => {
       () => ({ userId: 'user-creator' }));
     const result = await rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
     expect(result.error).toBeNull();
-    expect(result.data.financialAccounts.map((item: any) => item.id)).toEqual(['account-a']);
+    expect(result.data.financialAccounts.map((item: any) => item.id)).toEqual(['cash-account', 'account-a']);
     expect(result.data.approvalPolicies.map((item: any) => item.id)).toContain('policy-global');
     expect(result.data.approvalPolicies.map((item: any) => item.id)).not.toContain('policy-other');
   });

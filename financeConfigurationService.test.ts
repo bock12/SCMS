@@ -22,7 +22,7 @@ const config: FinanceConfiguration = {
 describe('finance configuration service', () => {
   test('loads canonical configuration through the mock/database RPC boundary', async () => {
     let called = '';
-    const result = await getFinanceConfiguration({
+    const result = await getFinanceConfiguration(null, {
       rpc: async name => { called = name; return { data: config, error: null }; }
     });
     expect(called).toBe('get_finance_configuration');
