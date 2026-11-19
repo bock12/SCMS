@@ -140,3 +140,20 @@ The local event model now carries an optional `finance_event_id` UUID bridge. Ex
 The helper in `eventFinanceIdentity.ts` accepts only a UUID event identity or an explicit UUID bridge. It deliberately rejects friendly IDs and malformed values rather than casting them to UUIDs. This is a local mock identity bridge only; a live database integration must resolve the actual persisted `public.events.id`, not reuse a browser-generated UUID as if it existed in Supabase.
 
 Validation added for direct UUID IDs, explicit bridge resolution, and rejection of friendly IDs without a bridge. This slice does not yet enable event-budget submission, approval or payment in the UI.
+## Slice 3 progress — deterministic event-budget mock RPC adapter
+
+The browser mock now exposes the event-budget lifecycle through the same canonical finance RPC boundary as the database implementation:
+
+- `submit_event_budget_for_approval` validates the authenticated profile, branch `manage_finances` permission, open financial period/year, supported currency and base exchange rate, active expense accounts/funds, positive budget total, active budget approval policy, threshold band and configured approvers. It persists a mock budget, budget lines, approval request and ordered approval steps together.
+- `decide_event_budget_approval` enforces assigned approver identity, branch permission, configured submitter prohibition, ordered approval steps, required approvals, and approved/rejected source status.
+- `create_event_budget_payment` requires the persisted approved budget and approval request, checks the source amount/currency/rate/account/fund, rejects duplicates, and creates the canonical payment document, draft journal and source link in one mock-state save.
+- `get_event_budgets` reports source budget lines and linked payment. Event actuals are derived only from expense debits on the linked journal after it is posted; pending or approved-but-unposted payments remain zero actual.
+- Mock finance state now stores events, event budgets and budget lines in the isolated finance store. Older `scms_mock_finance_v2` stores are normalized with empty arrays for the new collections.
+- The mock adapter resolves local event rows through their explicit `finance_event_id` UUID bridge. These local rows are not evidence that a corresponding row exists in live Supabase.
+- Typed service methods are available in `eventBudgetFinanceService.ts` for submission, approval decisions, canonical payment creation and listing.
+
+Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, branch restrictions, missing approval policy, rejection, payment eligibility, duplicate prevention, currency/account/fund mismatches, persistence, and posted-only actuals.
+
+**UI boundary:** Event budget screens still use the legacy localStorage workflow and have not yet been connected to these RPCs. Legacy seeded approvals remain informational and are not imported as approved database/mock finance budgets. The existing disbursement path remains fail-closed. The next UI slice must explicitly map local event IDs to the UUID bridge and must not mark a budget paid merely because a payment document was created or approved.
+
+**Configuration boundary:** The mock adapter supports a separate `budget` approval policy when that policy and its bands/steps are present in finance configuration. The current Accounting Setup UI still needs a dedicated budget-policy configuration path before ordinary users can configure this workflow through the UI.
