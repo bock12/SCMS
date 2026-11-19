@@ -101,3 +101,22 @@ The payment creation RPC must verify the source's persisted approval state and p
 ## Validation boundary
 
 Run Bun tests, Vite production build and the PostgreSQL 17 fresh-install/security workflow after implementation. Build/test success is not browser/runtime verification. No live Supabase migration replay, deployment or production data operation is included.
+
+
+## Slice 2 progress — event budget database workflow
+
+Migration `supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql` now establishes the first database-controlled event-budget path:
+
+- Adds `financial_documents.source_budget_id` with a restrictive FK to `budgets.id`.
+- Restricts source-linked documents to payment documents and enforces one canonical payment per event budget with a partial unique index.
+- Adds `submit_event_budget_for_approval`: verifies authenticated profile and branch `manage_finances`, persisted event, open financial period/year, valid currency/base rate, active expense accounts/funds, non-zero budget total, active `budget` approval policy and matching threshold band. It creates the budget, lines, approval request and ordered approval steps atomically.
+- Adds `decide_event_budget_approval`: accepts only a submitted event-budget approval request and delegates the decision to the existing ordered approval engine, which persists approved/rejected state.
+- Adds `create_event_budget_payment`: locks the approved event budget, checks branch permission, persisted approval state, approved amount, currency/rate and budget-line account/fund match; then calls the existing canonical payment RPC and links the resulting document to the budget in the same transaction.
+- The existing financial-document approval and journal posting lifecycle remains unchanged. The event budget stays approved while its payment awaits approval; actual expenditure remains zero until the linked journal is posted.
+- No direct authenticated DML grants are introduced. New public RPCs use SECURITY DEFINER with an empty search_path and narrowly scoped authenticated grants.
+
+The PostgreSQL 17 workflow now applies the migration and checks function grants, function hardening, and absence of direct table DML. `supabase/tests/event_budget_payment_integration.sql` exercises event budget submission, separate approval, canonical payment linkage, duplicate prevention, unapproved-budget rejection, exclusion of approved-but-unposted amounts from actuals, and inclusion after controlled posting.
+
+**Important UI boundary:** this slice adds and tests the database RPC contract only. `eventBudgetService.ts` and the Finance Officer event-budget screens still use the legacy localStorage model. They are not yet connected to these RPCs, and their historical seeded records are not automatically imported. Keep the old UI disbursement path fail-closed until the mock adapter, service and UI are migrated to the same source-linked workflow.
+
+**Requisition boundary:** department requisitions still have no durable requisition domain tables. They remain out of scope for this event-budget database slice.
