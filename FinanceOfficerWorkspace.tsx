@@ -1379,48 +1379,49 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {workspaceTab === 'requisitions' && (
         <div className="space-y-6">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Operational proposal workflow only.</strong> Pastor approval, finance approval and the disbursed status do not themselves create a posted accounting expense. Record the actual vendor payment through the canonical Finance transaction entry and post its journal. Automatic requisition-to-journal source linking is not yet implemented.
+            <strong>Requisition approval is not payment.</strong> Approval records authorization only. It does not create a payment or posted expense. Source-linked payment creation and expenditure reconciliation are still pending integration.
           </div>
           {/* Requisitions Overview Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-amber-700 tracking-wider block">Awaiting Pastor Approval</span>
+              <span className="text-[10px] font-extrabold uppercase text-amber-700 tracking-wider block">Awaiting Approval</span>
               <div className="text-2xl font-black text-amber-600">
-                {requisitions.filter(r => r.status === 'pending_pastor_approval' || r.status === 'pending_approval').length} Proposals
+                {requisitions.filter(r => r.status === 'pending_approval').length} Proposals
               </div>
-              <p className="text-[11px] text-slate-400">Step 1: Senior Pastor review</p>
+              <p className="text-[11px] text-slate-400">Waiting for configured approval steps</p>
             </div>
 
             <div className="bg-white p-5 rounded-3xl border border-purple-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-purple-700 tracking-wider block">Pastor Approved (Disburse Queue)</span>
+              <span className="text-[10px] font-extrabold uppercase text-purple-700 tracking-wider block">Approved — Payment Pending</span>
               <div className="text-2xl font-black text-purple-700">
-                {requisitions.filter(r => r.status === 'pastor_approved' || r.status === 'approved').length} Ready to Disburse
+                {requisitions.filter(r => r.status === 'approved').length} Approved
               </div>
-              <p className="text-[11px] text-slate-400">Step 2: FO invoice & payment</p>
+              <p className="text-[11px] text-slate-400">No payment or journal is created yet</p>
             </div>
 
             <div className="bg-white p-5 rounded-3xl border border-indigo-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-indigo-700 tracking-wider block">Disbursed (Receipt Audit)</span>
+              <span className="text-[10px] font-extrabold uppercase text-indigo-700 tracking-wider block">Rejected Requests</span>
               <div className="text-2xl font-black text-indigo-600">
-                {requisitions.filter(r => r.status === 'disbursed' || r.status === 'reconciled').length} Active Requisitions
+                {requisitions.filter(r => r.status === 'rejected').length} Rejected
               </div>
-              <p className="text-[11px] text-slate-400">Step 3 & 4: Expenditure report</p>
+              <p className="text-[11px] text-slate-400">Requires review before resubmission</p>
             </div>
 
             <div className="bg-white p-5 rounded-3xl border border-emerald-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-emerald-700 tracking-wider block">Settled in Good Standing</span>
+              <span className="text-[10px] font-extrabold uppercase text-emerald-700 tracking-wider block">Total Requests</span>
               <div className="text-2xl font-black text-emerald-600">
-                {requisitions.filter(r => r.status === 'settled').length} Closed Requisitions
+                {requisitions.length} Requisitions
               </div>
-              <p className="text-[11px] text-slate-400">100% receipt verified</p>
+              <p className="text-[11px] text-slate-400">Branch-visible requisitions</p>
             </div>
           </div>
 
+          {requisitionError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">Unable to load database requisitions: {requisitionError}</div>}
           {/* Requisitions List */}
           <div className="space-y-4">
             {requisitions.map(req => {
               const isUrgent = req.priority === 'urgent' || req.priority === 'high';
-              const standing = getDepartmentFinancialStanding(req.department_name, requisitions);
+              const currentApprovalStep = req.approval_steps?.find(step => step.actor_can_decide);
 
               return (
                 <div key={req.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 hover:shadow-md transition-shadow">
@@ -1439,11 +1440,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                           Priority: {req.priority}
                         </span>
 
-                        {/* Department Financial Standing Compliance Badge */}
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border flex items-center gap-1 ${standing.badge_color}`}>
-                          <ShieldCheck size={12} />
-                          Department Standing: {standing.standing_status} ({standing.reconciliation_compliance_rate}%)
-                        </span>
+
                       </div>
 
                       <h3 className="text-xl font-black text-slate-900">{req.title}</h3>
@@ -1560,68 +1557,38 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                     </div>
                   )}
 
-                  {/* Action Bar */}
+                  {/* Approval and payment actions */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                     <div className="text-xs text-slate-500 font-medium">
-                      {req.disbursement_method && (
-                        <span>Channel: <strong className="text-slate-800 uppercase">{req.disbursement_method.replace('_', ' ')}</strong></span>
-                      )}
-                      {req.disbursement_account_info && (
-                        <span className="ml-3 text-slate-700 font-mono">• {req.disbursement_account_info}</span>
-                      )}
+                      {req.status === 'approved' && <span className="text-emerald-700 font-semibold">Approved. Payment creation is a separate finance workflow.</span>}
+                      {req.status === 'pending_approval' && !currentApprovalStep && <span>Waiting for an earlier step or another authorized approver.</span>}
+                      {req.approval_request?.status && <span className="ml-2">Approval request: <strong>{req.approval_request.status}</strong></span>}
                     </div>
-
                     <div className="flex items-center gap-2">
-                      {(req.status === 'pending_approval' || req.status === 'pending_pastor_approval') && (
+                      {req.status === 'pending_approval' && currentApprovalStep && (
                         <>
                           <button
-                            onClick={() => handleApproveRequisition(req.id)}
+                            onClick={() => void handleApproveRequisition(req.id)}
                             className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
                           >
-                            Approve Proposal
+                            Approve Step {currentApprovalStep.step_number}
                           </button>
-
                           <button
-                            onClick={() => handleEscalateToBoard(req.id)}
-                            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center gap-1"
-                          >
-                            <Send size={13} /> Escalate to Board
-                          </button>
-
-                          <button
-                            onClick={() => handleRejectRequisition(req.id)}
+                            onClick={() => void handleRejectRequisition(req.id)}
                             className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                           >
                             Reject
                           </button>
                         </>
                       )}
-
-                      {req.status === 'reconciled' && (
-                        <button
-                          onClick={() => handleSettleRequisition(req.id)}
-                          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-1.5"
-                        >
-                          <ShieldCheck size={16} /> Audit & Settle in Good Standing
-                        </button>
-                      )}
-
-                      {req.status === 'approved' && (
-                        <button
-                          onClick={() => openDisbursementModal(req)}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-1.5"
-                        >
-                          <FileCode size={15} /> Generate Expense Invoice & Disburse
-                        </button>
-                      )}
-
                       <button
                         onClick={() => handlePrintRequisitionVoucher(req)}
                         className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Printer size={14} /> Print Voucher / Invoice
+                        <Printer size={14} /> Print Requisition
                       </button>
                     </div>
+                  </div>
                   </div>
                 </div>
               );
