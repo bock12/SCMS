@@ -259,7 +259,7 @@ The receipt/payment development mock now follows the canonical PostgreSQL approv
 - Approval decisions are recorded per profile and step. The same profile cannot satisfy multiple approvals for one step; the step advances only after its configured number of distinct approvals is reached.
 - Ordered approval steps must complete in sequence. Only completion of the final step changes the document to approved and links its exact pending draft journal.
 - A policy with a matching amount band and zero approval steps is an explicit immediate-approval configuration. Missing policies and uncovered amount bands fail closed.
-- The finance configuration UI now asks for the number of distinct approvals for receipts/payments rather than a fixed named approver. The separate event-budget configuration path retains its existing assigned-approver input.
+- The finance configuration UI uses permission-based approval steps and required distinct approval counts for both receipts/payments and event budgets; it no longer asks for fixed named approvers.
 - Mock document listing now treats a null branch filter as church-wide scope only; it no longer broadens the result to every branch visible to the actor.
 
 Regression tests cover distinct approvers for a multi-approval step, duplicate-decision denial, immediate approval, missing policy/band failures and exact branch filtering.
@@ -271,6 +271,28 @@ No SQL migration was changed in this checkpoint, so the PostgreSQL workflow was 
 
 ### Remaining before production use
 
-1. Add narrow database-backed read/write APIs for finance configuration (currencies, accounts, funds, periods, approval policies, amount bands and steps). The current configuration workspace persists to the development mock store only.
-2. Perform browser/runtime acceptance testing against the mock workflow.
-3. Review and approve deployment of the already-tested SQL migrations separately. Do not infer live deployment from CI.
+1. Perform browser/runtime acceptance testing against the mock workflow.
+2. Review and approve deployment of the already-tested SQL migrations separately. Do not infer live deployment from CI.
+
+
+## Database-backed finance configuration checkpoint — 2026-11-19
+
+The finance configuration workspace now has authenticated PostgreSQL read and write RPCs in migration `20261119000300_add_database_backed_finance_configuration_api.sql`:
+
+- `public.get_finance_configuration(uuid)` returns currencies, base currency, chart of accounts, branch financial accounts, funds, financial years, periods and approval policies/bands/steps. A branch-scoped reader sees only that branch's financial accounts and its own plus church-wide fallback policies.
+- `public.save_finance_configuration(uuid,jsonb)` validates and atomically creates supported configuration records. The underlying tables remain non-writable to authenticated clients; no direct finance-table DML grant was added.
+- Both functions are `SECURITY DEFINER` with an empty `search_path`, and execute permission is granted only to `authenticated`.
+- Branch financial accounts and branch approval policies require `manage_finances` in that branch. Church-wide currency, chart-account and fund changes require church-level finance/chart configuration permission. Financial years and periods require church-level financial-period management.
+- Existing chart-account, fund, financial-account, financial-year, period and approval-policy definitions are immutable through this first API. New policy bands and steps must accompany a newly created policy in the same atomic save. A new event-budget policy must contain an approval step; a zero-step financial-document policy is an explicit immediate-approval policy.
+- Base currency cannot be changed after posted accounting entries exist. New financial years/periods are opened only; closing remains a separate workflow.
+- Currency input currently supplies three-letter codes only; a newly added currency receives its code as its initial display name. Rich currency name/symbol maintenance remains a follow-up.
+
+The Finance Configuration workspace now supplies its branch scope to the read and write service calls and creates UUID-compatible configuration IDs. The mock adapter filters configuration by branch and preserves other branches' financial accounts and approval policies when a branch-scoped save occurs. Event-budget mock approvals now use the same permission-based, distinct-approver step model as the database workflow rather than assigning steps to fixed profiles.
+
+Regression coverage now includes configuration read/save, branch-scoped account creation, branch/church-wide policy context, immutable policy definitions, cross-branch account rejection, restricted RPC grants, empty-search-path security-definer checks and preservation of unrelated branch configuration.
+
+Validation:
+- [PostgreSQL 17 fresh-install/security workflow #44557918225](https://github.com/bock12/SCMS/actions/runs/44557918225): passed, including the finance configuration API lifecycle and security checks.
+- [SCMS Build Validation #44558047739](https://github.com/bock12/SCMS/actions/runs/44558047739): passed automated tests and Vite production build.
+
+These checks use disposable CI PostgreSQL and the local development mock. The migration has **not** been applied to the live Supabase project; no live database was connected or changed. Browser acceptance testing is still outstanding.
