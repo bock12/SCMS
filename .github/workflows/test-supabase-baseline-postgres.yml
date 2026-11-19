@@ -18,6 +18,8 @@ on:
       - "supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql"
       - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
       - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
+      - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
+      - "supabase/tests/event_budget_payment_integration.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
@@ -1094,8 +1096,58 @@ jobs:
           $finance_document_listing_grants$;
           SQL
 
+      - name: Apply event budget approval and payment integration RPCs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql
+
+      - name: Verify event budget finance RPC grants and hardening
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $event_budget_rpc_grants$
+          DECLARE
+            v_signature text;
+          BEGIN
+            FOREACH v_signature IN ARRAY ARRAY[
+              'public.submit_event_budget_for_approval(uuid,uuid,text,character,numeric,jsonb)',
+              'public.decide_event_budget_approval(uuid,text,text)',
+              'public.create_event_budget_payment(uuid,date,uuid,text,numeric,text,uuid,uuid,uuid,text,text,numeric)'
+            ] LOOP
+              IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
+                RAISE EXCEPTION 'Authenticated role is missing event budget RPC grant: %', v_signature;
+              END IF;
+              IF has_function_privilege('anon', v_signature, 'EXECUTE')
+                OR has_function_privilege('service_role', v_signature, 'EXECUTE') THEN
+                RAISE EXCEPTION 'Untrusted role can execute event budget RPC: %', v_signature;
+              END IF;
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_proc p
+                WHERE p.oid = to_regprocedure(v_signature)
+                  AND p.prosecdef
+                  AND EXISTS (
+                    SELECT 1 FROM unnest(p.proconfig) setting
+                    WHERE setting = 'search_path=""'
+                  )
+              ) THEN
+                RAISE EXCEPTION 'Event budget RPC is not SECURITY DEFINER with an empty search_path: %', v_signature;
+              END IF;
+            END LOOP;
+
+            IF has_table_privilege('authenticated', 'public.budgets', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.budgets', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.budget_lines', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.budget_lines', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.financial_documents', 'UPDATE') THEN
+              RAISE EXCEPTION 'Event budget integration must not grant direct finance-table DML';
+            END IF;
+          END
+          $event_budget_rpc_grants$;
+          SQL
+
       - name: Verify receipt and payment transaction lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
+
+      - name: Verify event budget approval, payment linkage and posted actuals
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
 
       - name: Verify finance document listing and scope isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_listing.sql
