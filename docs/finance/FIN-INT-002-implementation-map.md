@@ -183,3 +183,22 @@ Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, bra
 **Validation:** SCMS Build Validation run 44529182175 completed successfully for commit `5602f6641277f03b0f6ddab26863e3df012b7e7a`; automated tests and application build passed. No browser/runtime test was performed. No live Supabase migration, deployment or database write was performed.
 
 **Next:** add least-privilege Event Manager authorization and read APIs, then proceed to department requisition database/payment integration.
+
+
+## Slice 5 progress — least-privilege Event Manager submission and read APIs
+
+- Added the dedicated `submit_event_budgets` permission in the events module. The migration grants it to roles that already have `manage_events`; it does not add finance permissions. Custom roles created later can be given the permission explicitly alongside `manage_events` through the role-permission editor.
+- Updated `submit_event_budget_for_approval` to require both branch-scoped `manage_events` and `submit_event_budgets`, rather than `manage_finances`. Finance Officer payment creation and approval/posting workflows retain their existing finance permissions.
+- Added `get_event_budget_submission_options(event_id)`, which returns only active currencies, the base currency, open financial periods, active non-control expense accounts and active funds for an authorized event manager. It does not return bank/cash accounts, approval policies, finance configuration or other finance setup.
+- Added `get_my_event_budgets(event_id)`, which returns only event budgets submitted by the current profile for that event, including line totals and approval-step progress. It does not return other submitters' budgets, payment documents, journal details or posted actuals.
+- Both read APIs are SECURITY DEFINER functions with an empty search path and narrow authenticated-only execute grants. No direct table DML grants were added.
+- The Event Manager UI now uses these narrow APIs when embedded in an event. The Finance Officer workspace continues to use its finance-scoped configuration and branch budget listing path. Event Managers cannot approve budgets or create payments from the submission-only view.
+- Mock RPC behavior, mock permission catalogue, role labels and regression tests were updated to match the new authorization boundary.
+
+**Security coverage:** PostgreSQL tests use a custom event-manager role with only `manage_events` and `submit_event_budgets`. They verify submission without `view_finances`, `manage_finances`, `approve_finances` or `post_journals`; scoped option reads; own-submission-only listing; denial for finance-only users; and authenticated-only RPC grants/security hardening. Mock tests verify the same separation and ensure event managers cannot use the finance-wide budget listing or finance configuration RPCs.
+
+**Validation:** SCMS Build Validation run 44549290133 — success. PostgreSQL 17 fresh-install/security run 44549290080 — success. Both ran for commit `31bea07a132fd1e3e61e936097662b8a40c94140`. The final SQL integration workflow includes the new migration and least-privilege regression test. No browser/runtime test was performed. No live Supabase migration, deployment or database write was performed.
+
+**Remaining boundary:** The Finance Officer's broad event-budget listing (`get_event_budgets`) is still mock-only, so full Finance Officer live Supabase parity remains incomplete. The Event Manager's own-submission list now has a database RPC. Department requisitions still lack durable requisition domain tables and canonical payment/journal links.
+
+**Next:** begin department requisition database and payment integration, reusing the canonical approval and financial-document lifecycle without treating approved/disbursed UI flags as posted expenses.
