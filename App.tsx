@@ -4429,8 +4429,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               <tr>
                 <th>Item Name & Specifications</th>
                 <th style="text-align: center;">Quantity</th>
-                <th style="text-align: right;">Unit Price (SLE)</th>
-                <th style="text-align: right;">Line Total (SLE)</th>
+                <th style="text-align: right;">Unit Price ({previewProposal.currency || reqBaseCurrency})</th>
+                <th style="text-align: right;">Line Total (${req.currency || 'SLE'})</th>
               </tr>
             </thead>
             <tbody>
@@ -4448,7 +4448,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           </table>
 
           <div class="total-box">
-            TOTAL INVOICE AMOUNT: SLE ${totalAmount.toLocaleString()}
+            TOTAL INVOICE AMOUNT: ${req.currency || 'SLE'} ${totalAmount.toLocaleString()}
           </div>
 
           <div class="signatures">
@@ -6012,7 +6012,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           {req.items.map(i => (
                             <div key={i.id} className="py-1.5 flex justify-between items-center text-slate-800">
                               <span>{i.item_name} <strong className="text-slate-400 font-normal">x{i.quantity}</strong></span>
-                              <strong className="font-mono text-slate-900">SLE {i.total_price.toLocaleString()}</strong>
+                              <strong className="font-mono text-slate-900">{req.currency || 'SLE'} {i.total_price.toLocaleString()}</strong>
                             </div>
                           ))}
                         </div>
@@ -7502,7 +7502,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 <div className="hidden sm:grid grid-cols-12 gap-2 px-3 py-2 bg-slate-200/70 rounded-xl font-extrabold text-[11px] text-slate-700 uppercase tracking-wider">
                   <div className="col-span-5">Item Description & Specification</div>
                   <div className="col-span-2 text-center">Quantity</div>
-                  <div className="col-span-2 text-right">Unit Price (SLE)</div>
+                  <div className="col-span-2 text-right">Unit Price ({reqBaseCurrency})</div>
                   <div className="col-span-2 text-right">Line Subtotal</div>
                   <div className="col-span-1 text-center">Action</div>
                 </div>
@@ -7558,9 +7558,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
                           {/* Unit Price */}
                           <div className="sm:col-span-2">
-                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Unit Price (SLE)</label>
+                            <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Unit Price ({reqBaseCurrency})</label>
                             <div className="relative">
-                              <span className="absolute left-2.5 top-2 text-[10px] font-bold text-slate-400 font-mono">SLE</span>
+                              <span className="absolute left-2.5 top-2 text-[10px] font-bold text-slate-400 font-mono">{reqBaseCurrency}</span>
                               <input
                                 type="number"
                                 min={0}
@@ -7577,7 +7577,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <div className="sm:col-span-2 text-right">
                             <label className="sm:hidden text-[10px] font-bold text-slate-400 block mb-0.5">Line Total</label>
                             <div className="py-2 px-2.5 bg-indigo-50/70 border border-indigo-100 rounded-lg font-black text-indigo-900 font-mono text-xs text-right">
-                              SLE {lineSubtotal.toLocaleString()}
+                              {reqBaseCurrency} {lineSubtotal.toLocaleString()}
                             </div>
                           </div>
 
@@ -8338,8 +8338,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <th className="py-2.5 px-3 text-center w-10">#</th>
                           <th className="py-2.5 px-4">Item Description & Specifications</th>
                           <th className="py-2.5 px-3 text-center w-16">Qty</th>
-                          <th className="py-2.5 px-4 text-right">Unit Price (SLE)</th>
-                          <th className="py-2.5 px-4 text-right">Line Subtotal (SLE)</th>
+                          <th className="py-2.5 px-4 text-right">Unit Price (${req.currency || 'SLE'})</th>
+                          <th className="py-2.5 px-4 text-right">Line Subtotal ({previewProposal.currency || reqBaseCurrency})</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
@@ -8380,12 +8380,12 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     <div className="flex justify-between text-slate-300">
                       <span>Items Subtotal:</span>
                       <span>
-                        SLE {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
+                        {previewProposal.currency || reqBaseCurrency} {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
                       </span>
                     </div>
                     <div className="flex justify-between text-slate-400 text-[11px]">
                       <span>Tax / Import Duty (0% Exempt):</span>
-                      <span>SLE 0.00</span>
+                      <span>{previewProposal.currency || reqBaseCurrency} 0.00</span>
                     </div>
                     <div className="pt-2 border-t border-slate-700 flex justify-between items-center text-sm font-black">
                       <span className="text-amber-400 uppercase font-sans">Total Requested Budget:</span>
@@ -8538,7 +8538,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             className="w-28 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono text-right"
                           />
                           <span className="text-xs font-black text-indigo-700 w-24 text-right font-mono">
-                            SLE {(Number(item.quantity || 1) * Number(item.unit_price || 0)).toLocaleString()}
+                            {previewProposal.currency || reqBaseCurrency} {(Number(item.quantity || 1) * Number(item.unit_price || 0)).toLocaleString()}
                           </span>
                           {previewProposal.items.length > 1 && (
                             <button
