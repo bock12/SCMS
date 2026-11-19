@@ -17,7 +17,10 @@ function fixture() {
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
-    events: [{ id: eventUuid, branch_id: 'branch-a', title: 'Annual Conference' }],
+    events: [
+      { id: eventUuid, branch_id: 'branch-a', title: 'Annual Conference' },
+      { id: '8b2b7e68-7b14-4b93-9f17-2e5c5b18b49a', branch_id: 'branch-b', title: 'Other Branch Event' }
+    ],
     currencies: ['SLL', 'USD'],
     baseCurrencyCode: 'SLL',
     chartAccounts: [
@@ -139,7 +142,8 @@ describe('event budget mock finance RPC lifecycle', () => {
     const wrongBranch = await ctx.rpc.rpc('submit_event_budget_for_approval', {
       ...submitArgs, p_event_id: '8b2b7e68-7b14-4b93-9f17-2e5c5b18b49a'
     });
-    expect(wrongBranch.error?.code).toBe('22023');
+    expect(wrongBranch.error?.code).toBe('42501');
+    expect(wrongBranch.error?.message).toContain('Insufficient permission');
     const state = ctx.read();
     state.approvalPolicies = state.approvalPolicies.filter(item => item.transaction_type !== 'budget');
     const isolated = createMockFinanceRpc({
