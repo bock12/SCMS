@@ -1112,6 +1112,16 @@ const persistedMockFinanceStorage = createBrowserMockFinanceStorage(mockFinanceK
 const mockFinanceRpc = createMockFinanceRpc({
   load() {
     const state = persistedMockFinanceStorage.load();
+    // These event rows are local mock application records, not evidence of a
+    // corresponding live public.events row. Only their explicit UUID bridge
+    // is exposed to the isolated mock finance RPC adapter.
+    state.events = (localDb.events || []).map((event: any) => ({
+      id: event.finance_event_id,
+      branch_id: event.branch_id,
+      name: event.title || event.name || 'Church event',
+      title: event.title || event.name || 'Church event'
+    })).filter((event: any) => typeof event.id === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id));
     state.profiles = (localDb.profiles || []).map((profile: any) => ({
       id: profile.id,
       auth_user_id: profile.auth_user_id || null,
@@ -1926,7 +1936,11 @@ export const supabase = {
         functionName === 'get_finance_documents' ||
         functionName === 'get_finance_journals' ||
         functionName === 'post_finance_journal_entry' ||
-        functionName === 'post_journal_entry') {
+        functionName === 'post_journal_entry' ||
+        functionName === 'submit_event_budget_for_approval' ||
+        functionName === 'decide_event_budget_approval' ||
+        functionName === 'create_event_budget_payment' ||
+        functionName === 'get_event_budgets') {
       return mockFinanceRpc.rpc(functionName, args);
     }
     if (!actor) {
