@@ -30,6 +30,18 @@ describe('finance configuration service', () => {
     expect(result.data?.approvalPolicyBands[0].max_amount_base).toBeNull();
   });
 
+  test('forwards the active branch when loading scoped configuration', async () => {
+    let branchId: unknown = undefined;
+    const result = await getFinanceConfiguration('branch-a', {
+      rpc: async (_name, args) => {
+        branchId = args?.p_branch_id;
+        return { data: config, error: null };
+      }
+    });
+    expect(branchId).toBe('branch-a');
+    expect(result.error).toBeNull();
+  });
+
   test('saves canonical configuration as one validated payload', async () => {
     let call: { name: string; args?: Record<string, unknown> } | null = null;
     const result = await saveFinanceConfiguration(config, 'branch-a', {
