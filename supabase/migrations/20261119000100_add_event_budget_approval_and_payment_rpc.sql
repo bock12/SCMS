@@ -68,7 +68,7 @@ begin
     raise exception 'Insufficient permission to submit an event budget for this branch';
   end if;
 
-  select * into v_period
+  select fp.* into v_period
   from public.financial_periods fp
   join public.financial_years fy on fy.id = fp.financial_year_id
   where fp.id = p_period_id
