@@ -3,7 +3,7 @@
 **Reviewed:** 2026-11-19  
 **Repository:** `bock12/SCMS`  
 **Branch:** `main`  
-**Reviewed head:** `7b4a28f3694c4899cc34b82cc477410e37d42bd5`
+**Reviewed head:** `e848a05a0229ff70f9966f37298af4479b0db8d2`
 
 ## Objective
 
@@ -220,3 +220,21 @@ Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, bra
 - No browser acceptance test was performed. No live Supabase migration, deployment or production data write was performed.
 
 **Remaining boundary:** The Finance Configuration UI can now configure requisition policies, and the database can persist and approve requisitions. The existing requisition forms and Finance Officer workspace still use the legacy localStorage model. The next slice must connect requisition submission/listing/approval to the new RPCs and mock adapter, then add an atomic, unique source link from an approved requisition to one canonical payment. A requisition must not be marked paid, and actual expenditure must remain zero, until its linked payment journal is posted.
+
+
+## Slice 7 progress — requisition UI and mock lifecycle integration
+
+- Added `get_department_requisitions`, a branch-scoped read RPC. Submitters see their own requests; users with branch-scoped requisition approval or finance-management permission can see branch requests. The response includes line items, approval history, ordered steps and an `actor_can_decide` flag derived from the current approval state and permissions.
+- Added `get_department_requisition_submission_options`, which returns the submitting member's active ministry/department, active currencies and configured church base currency. The form uses the base currency and a rate of 1 for this initial workflow.
+- Added matching mock RPCs for submission options, submission, listing and approval decisions. Mock approval decisions enforce the same submitter separation, permission checks, ordered steps and required approval counts.
+- Added typed requisition service methods for loading, submitting and deciding through the canonical RPCs.
+- The ministry leader proposal form now submits to the database workflow. Local drafts remain explicitly local-only; they are not presented as submitted requests.
+- The Finance Officer workspace now loads database requisitions and records approval/rejection through the decision RPC. Users with only `approve_requisitions` receive a requisition-only console and do not gain finance-ledger access.
+- The requisition screens no longer present approval as payment or collect payment-account details at requisition stage. Approved requisitions explicitly remain unpaid until a separate canonical payment is created and posted.
+
+**Validation:**
+- PostgreSQL 17 fresh-install/security workflow: [run 44626519821](https://github.com/bock12/SCMS/actions/runs/44626519821) — success. Includes the scoped read and submission-options APIs and their lifecycle/security tests.
+- SCMS Build Validation: [run 44628994220](https://github.com/bock12/SCMS/actions/runs/44628994220) — success. Application build and automated tests passed.
+- No browser acceptance test was performed. No live Supabase migration or deployment was performed.
+
+**Next implementation boundary:** Add a source-requisition link to canonical financial documents and a secure requisition-payment creation RPC. Reserve pending payments against the approved amount, permit retry after rejected payments, and update the requisition to partially paid/paid only when the linked journal is actually posted. The payment must still pass its own approval workflow and journal-posting guard.
