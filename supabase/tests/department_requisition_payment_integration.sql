@@ -126,7 +126,7 @@ BEGIN
   IF v_summary IS NULL OR v_summary->>'payment_status' <> 'partially_paid'
      OR (v_summary->>'paid_amount')::numeric <> 80
      OR (v_summary->>'remaining_amount')::numeric <> 70 THEN
-    RAISE EXCEPTION 'Posted partial payment was not reflected in requisition paid totals';
+    RAISE EXCEPTION 'Posted partial payment was not reflected in requisition paid totals: %', coalesce(v_summary::text, 'NULL');
   END IF;
 
   -- A rejected payment releases its reservation and can be retried with a new key.
