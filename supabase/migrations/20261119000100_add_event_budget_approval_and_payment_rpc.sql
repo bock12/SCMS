@@ -318,7 +318,16 @@ begin
   if not private.has_permission('manage_finances', v_budget.branch_id) then
     raise exception 'Insufficient permission to create a payment for this event budget';
   end if;
-  if v_budget.status <> 'approved' or v_budget.approval_request_id is null then
+  if v_budget.status <> 'approved'
+     or v_budget.approval_request_id is null
+     or v_budget.approved_at is null
+     or not exists (
+       select 1 from public.approval_requests ar
+       where ar.id = v_budget.approval_request_id
+         and ar.transaction_type = 'budget'
+         and ar.target_id = v_budget.id
+         and ar.status = 'approved'
+     ) then
     raise exception 'Only an approved event budget can be paid';
   end if;
   if exists (
