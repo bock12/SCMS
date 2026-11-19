@@ -41,6 +41,11 @@ DECLARE
   v_base_credits numeric(20,4);
   v_post_result jsonb;
   v_journal_listing jsonb;
+  v_configuration jsonb;
+  v_new_financial_account_id uuid := '96000000-0000-4000-8000-000000000022';
+  v_policy5_id uuid := '96000000-0000-4000-8000-000000000023';
+  v_band5_id uuid := '96000000-0000-4000-8000-000000000024';
+  v_step5_id uuid := '96000000-0000-4000-8000-000000000025';
 BEGIN
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
@@ -451,6 +456,86 @@ BEGIN
     IF position('before approval' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
   END;
 
-  RAISE NOTICE 'FIN-INT-001 receipt/payment and approval lifecycle checks passed';
+  -- Branch-scoped finance configuration read and save APIs.
+  v_configuration := public.get_finance_configuration(v_branch_id);
+  IF v_configuration->>'baseCurrencyCode' <> 'SLE'
+     OR NOT (v_configuration->'currencies' ? 'SLE')
+     OR jsonb_typeof(v_configuration->'chartAccounts') <> 'array'
+     OR jsonb_typeof(v_configuration->'approvalPolicySteps') <> 'array' THEN
+    RAISE EXCEPTION 'Finance configuration read API returned an incomplete payload';
+  END IF;
+
+  v_configuration := jsonb_set(
+    v_configuration, '{financialAccounts}',
+    (v_configuration->'financialAccounts') || jsonb_build_array(jsonb_build_object(
+      'id', v_new_financial_account_id, 'chart_account_id', v_cash_chart_id,
+      'branch_id', v_branch_id, 'name', 'Configuration API Mobile Money',
+      'account_type', 'mobile_money', 'currency_code', 'SLE',
+      'provider_name', 'Test Provider', 'account_reference', 'CFG-001', 'is_active', true
+    ))
+  );
+  v_configuration := jsonb_set(
+    v_configuration, '{approvalPolicies}',
+    (v_configuration->'approvalPolicies') || jsonb_build_array(jsonb_build_object(
+      'id', v_policy5_id, 'name', 'FIN-INT Configuration API Policy',
+      'transaction_type', 'financial_document', 'branch_id', v_branch_id,
+      'version', 99, 'effective_from', '2026-01-01', 'effective_to', null, 'is_active', true
+    ))
+  );
+  v_configuration := jsonb_set(
+    v_configuration, '{approvalPolicyBands}',
+    (v_configuration->'approvalPolicyBands') || jsonb_build_array(jsonb_build_object(
+      'id', v_band5_id, 'policy_id', v_policy5_id, 'min_amount_base', 0, 'max_amount_base', null
+    ))
+  );
+  v_configuration := jsonb_set(
+    v_configuration, '{approvalPolicySteps}',
+    (v_configuration->'approvalPolicySteps') || jsonb_build_array(jsonb_build_object(
+      'id', v_step5_id, 'band_id', v_band5_id, 'step_number', 1,
+      'required_permission_key', 'approve_finances',
+      'required_approvals', 2, 'prohibit_submitter_approval', true
+    ))
+  );
+
+  PERFORM public.save_finance_configuration(v_branch_id, v_configuration);
+  v_configuration := public.get_finance_configuration(v_branch_id);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.financial_accounts
+    WHERE id = v_new_financial_account_id
+      AND branch_id = v_branch_id AND account_reference = 'CFG-001'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.approval_policies
+    WHERE id = v_policy5_id AND branch_id = v_branch_id AND version = 99
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.approval_policy_steps
+    WHERE id = v_step5_id AND required_approvals = 2
+  ) THEN
+    RAISE EXCEPTION 'Finance configuration save API did not persist branch account and approval policy records';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.chart_of_accounts', 'INSERT')
+    OR has_table_privilege('authenticated', 'public.financial_accounts', 'INSERT')
+    OR has_table_privilege('authenticated', 'public.approval_policies', 'INSERT') THEN
+    RAISE EXCEPTION 'Finance configuration API must not grant direct table inserts';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.get_finance_configuration(uuid)', 'EXECUTE')
+    OR NOT has_function_privilege('authenticated', 'public.save_finance_configuration(uuid,jsonb)', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.get_finance_configuration(uuid)', 'EXECUTE')
+    OR has_function_privilege('anon', 'public.save_finance_configuration(uuid,jsonb)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.get_finance_configuration(uuid)', 'EXECUTE')
+    OR has_function_privilege('service_role', 'public.save_finance_configuration(uuid,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Finance configuration RPC grants are not restricted to authenticated users';
+  END IF;
+
+  BEGIN
+    PERFORM public.get_finance_configuration(NULL);
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_CHURCH_SCOPE_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_CHURCH_SCOPE_DENIAL' THEN RAISE; END IF;
+    IF position('Insufficient permission' in SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+
+  RAISE NOTICE 'FIN-INT-001 receipt/payment, approval and finance configuration lifecycle checks passed';
 END
 $finance_transaction_lifecycle$;
