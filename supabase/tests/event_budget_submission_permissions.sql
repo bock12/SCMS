@@ -61,14 +61,6 @@ BEGIN
     RAISE EXCEPTION 'Expected event-budget expense fixture account was not found';
   END IF;
 
-  IF NOT private.has_permission('manage_events', v_branch_id)
-     OR NOT private.has_permission('submit_event_budgets', v_branch_id)
-     OR private.has_permission('manage_finances', v_branch_id) THEN
-    -- The first assertion is checked under the event manager identity below;
-    -- do not rely on the current session identity before setting its claim.
-    NULL;
-  END IF;
-
   PERFORM set_config('request.jwt.claim.sub', v_event_manager_auth::text, true);
 
   IF NOT private.has_permission('manage_events', v_branch_id)
