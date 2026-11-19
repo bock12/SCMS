@@ -47,6 +47,8 @@ DECLARE
   v_band5_id uuid := '96000000-0000-4000-8000-000000000024';
   v_step5_id uuid := '96000000-0000-4000-8000-000000000025';
   v_global_policy_id uuid := '96000000-0000-4000-8000-000000000026';
+  v_policy_index integer;
+  v_bad_configuration jsonb;
 BEGIN
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
@@ -523,6 +525,60 @@ BEGIN
     WHERE id = v_step5_id AND required_approvals = 2
   ) THEN
     RAISE EXCEPTION 'Finance configuration save API did not persist branch account and approval policy records';
+  END IF;
+
+  -- Existing church-wide fallback policies are readable in branch scope,
+  -- but the branch actor cannot rewrite an immutable policy version.
+  SELECT ordinality - 1 INTO v_policy_index
+  FROM jsonb_array_elements(v_configuration->'approvalPolicies') WITH ORDINALITY item(value, ordinality)
+  WHERE item.value->>'id' = v_policy5_id::text;
+  v_bad_configuration := jsonb_set(
+    v_configuration,
+    ARRAY['approvalPolicies', v_policy_index::text, 'name'],
+    to_jsonb('Tampered policy name'::text)
+  );
+  BEGIN
+    PERFORM public.save_finance_configuration(v_branch_id, v_bad_configuration);
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_IMMUTABLE_POLICY_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_IMMUTABLE_POLICY_DENIAL' THEN RAISE; END IF;
+    IF position('immutable' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  -- The RPC rejects a financial account payload that crosses branch scope.
+  v_bad_configuration := jsonb_set(
+    v_configuration,
+    '{financialAccounts}',
+    (v_configuration->'financialAccounts') || jsonb_build_array(jsonb_build_object(
+      'id', '96000000-0000-4000-8000-000000000027',
+      'chart_account_id', v_cash_chart_id,
+      'branch_id', '10000000-0000-4000-8000-000000000099',
+      'name', 'Cross Branch Account',
+      'account_type', 'cash',
+      'currency_code', 'SLE',
+      'is_active', true
+    ))
+  );
+  BEGIN
+    PERFORM public.save_finance_configuration(v_branch_id, v_bad_configuration);
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_BRANCH_SCOPE_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_BRANCH_SCOPE_DENIAL' THEN RAISE; END IF;
+    IF position('requested branch' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    WHERE p.oid = 'public.get_finance_configuration(uuid)'::regprocedure
+      AND p.prosecdef
+      AND 'search_path=""' = ANY(p.proconfig)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    WHERE p.oid = 'public.save_finance_configuration(uuid,jsonb)'::regprocedure
+      AND p.prosecdef
+      AND 'search_path=""' = ANY(p.proconfig)
+  ) THEN
+    RAISE EXCEPTION 'Finance configuration RPCs must be SECURITY DEFINER with an empty search_path';
   END IF;
 
   IF has_table_privilege('authenticated', 'public.chart_of_accounts', 'INSERT')
