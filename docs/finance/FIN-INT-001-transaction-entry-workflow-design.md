@@ -248,3 +248,29 @@ The Finance Officer ledger's old FinancialRecord-based CSV/PDF export actions ha
 Department requisition and event-budget approval/disbursement screens now explain that their workflow statuses are not accounting postings. The disbursement handlers continue to fail closed while the legacy persistence function is disabled. There is currently no canonical source relationship linking a department requisition or event budget to a financial document and journal. Therefore, department/event actual expenditure cannot be accurately derived yet; chart-of-accounts expense balances are the supported posted accounting projection until that source-linking task is completed.
 
 Tests cover posted-only inclusion, draft/rejected exclusion, income/expense balance arithmetic, calendar period filtering and separation of base currencies.
+
+
+## Approval-model parity checkpoint — 2026-11-19
+
+The receipt/payment development mock now follows the canonical PostgreSQL approval-step contract rather than assigning each approval step to a fixed profile:
+
+- Financial-document policy steps are defined by `required_permission_key`, `required_approvals` and `prohibit_submitter_approval`.
+- An eligible active profile may decide a pending step when they hold the required permission at the document branch. The submitter is excluded when the step requires separation of duties.
+- Approval decisions are recorded per profile and step. The same profile cannot satisfy multiple approvals for one step; the step advances only after its configured number of distinct approvals is reached.
+- Ordered approval steps must complete in sequence. Only completion of the final step changes the document to approved and links its exact pending draft journal.
+- A policy with a matching amount band and zero approval steps is an explicit immediate-approval configuration. Missing policies and uncovered amount bands fail closed.
+- The finance configuration UI now asks for the number of distinct approvals for receipts/payments rather than a fixed named approver. The separate event-budget configuration path retains its existing assigned-approver input.
+- Mock document listing now treats a null branch filter as church-wide scope only; it no longer broadens the result to every branch visible to the actor.
+
+Regression tests cover distinct approvers for a multi-approval step, duplicate-decision denial, immediate approval, missing policy/band failures and exact branch filtering.
+
+Validation on commit `be4abfa27ae5a6c898ad2fc205312cdaca9c19e4`:
+- [SCMS Build Validation #44554299682](https://github.com/bock12/SCMS/actions/runs/44554299682): passed; automated tests and Vite production build succeeded.
+
+No SQL migration was changed in this checkpoint, so the PostgreSQL workflow was not rerun. Its earlier successful transaction lifecycle/security runs remain the evidence for the SQL layer. No live Supabase project was connected, migrated or changed, and no browser/runtime test was performed.
+
+### Remaining before production use
+
+1. Add narrow database-backed read/write APIs for finance configuration (currencies, accounts, funds, periods, approval policies, amount bands and steps). The current configuration workspace persists to the development mock store only.
+2. Perform browser/runtime acceptance testing against the mock workflow.
+3. Review and approve deployment of the already-tested SQL migrations separately. Do not infer live deployment from CI.
