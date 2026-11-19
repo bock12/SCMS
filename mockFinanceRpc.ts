@@ -441,7 +441,8 @@ export function createMockFinanceRpc(
             step_number: step.step_order,
             required_approvals: step.required_approvals || 1,
             status: step.status,
-            approvals_received: step.status === 'approved' ? Number(step.required_approvals || 1) : 0
+            approvals_received: state.approvalDecisions.filter(decision =>
+              decision.approval_request_step_id === step.id && decision.decision === 'approved').length
           })) : [];
         return {
           ...clone(budget),
@@ -924,23 +925,38 @@ export function createMockFinanceRpc(
     state.currencies = currencies;
     state.baseCurrencyCode = baseCurrency;
     state.chartAccounts = clone(chartAccounts);
-    state.financialAccounts = clone(config.financialAccounts);
+    state.financialAccounts = [
+      ...state.financialAccounts.filter(account => (account.branch_id ?? null) !== branchId),
+      ...clone(config.financialAccounts)
+    ];
     state.funds = clone(config.funds);
     state.financialYears = clone(config.financialYears);
     state.periods = clone(config.periods).map((period: any) => ({
       ...period,
       year_status: config.financialYears.find((year: any) => year.id === period.financial_year_id)?.status ?? 'closed'
     }));
-    state.approvalPolicies = clone(config.approvalPolicies).map((policy: any) => ({
-      ...policy,
-      min_amount: Math.min(...config.approvalPolicyBands.filter((band: any) => band.policy_id === policy.id).map((band: any) => Number(band.min_amount_base)), 0),
-      max_amount: null,
-      approver_profile_ids: config.approvalPolicySteps
-        .filter((step: any) => config.approvalPolicyBands.some((band: any) => band.id === step.band_id && band.policy_id === policy.id))
-        .flatMap((step: any) => step.approver_profile_ids || [])
-    }));
-    state.approvalPolicyBands = clone(config.approvalPolicyBands);
-    state.approvalPolicySteps = clone(config.approvalPolicySteps);
+    const scopedPolicyIds = new Set(config.approvalPolicies.map((policy: any) => policy.id));
+    const scopedBandIds = new Set(config.approvalPolicyBands.map((band: any) => band.id));
+    state.approvalPolicies = [
+      ...state.approvalPolicies.filter(policy =>
+        !scopedPolicyIds.has(policy.id) && (policy.branch_id ?? null) !== branchId),
+      ...clone(config.approvalPolicies).map((policy: any) => ({
+        ...policy,
+        min_amount: Math.min(...config.approvalPolicyBands.filter((band: any) => band.policy_id === policy.id).map((band: any) => Number(band.min_amount_base)), 0),
+        max_amount: null,
+        approver_profile_ids: config.approvalPolicySteps
+          .filter((step: any) => config.approvalPolicyBands.some((band: any) => band.id === step.band_id && band.policy_id === policy.id))
+          .flatMap((step: any) => step.approver_profile_ids || [])
+      }))
+    ];
+    state.approvalPolicyBands = [
+      ...state.approvalPolicyBands.filter(band => !scopedPolicyIds.has(band.policy_id)),
+      ...clone(config.approvalPolicyBands)
+    ];
+    state.approvalPolicySteps = [
+      ...state.approvalPolicySteps.filter(step => !scopedBandIds.has(step.band_id)),
+      ...clone(config.approvalPolicySteps)
+    ];
     storage.save(state);
     return success({ saved: true });
   }
