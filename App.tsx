@@ -5245,6 +5245,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const openNewProposalModal = () => {
     setEditingReqId(null);
     setEditingReqNum(null);
+    setReqBaseCurrency('SLE');
     setReqDept(activeDept);
     setReqApplicantName(profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader');
     setReqApplicantRole('Department Head');
@@ -5344,7 +5345,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleSaveFundingProposal = async (isDraft: boolean) => {
-    if (!reqTitle.trim()) return;
+    if (!reqTitle.trim() || (!isDraft && reqOptionsLoading)) return;
 
     const formattedItems: RequisitionItem[] = reqItems.map((item, idx) => ({
       id: `item-${Date.now()}-${idx}`,
@@ -5980,6 +5981,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             req.status === 'pending_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
                             req.status === 'submitted_to_board' ? 'bg-purple-100 text-purple-800 animate-bounce' :
                             req.status === 'approved' ? 'bg-indigo-100 text-indigo-800 font-bold' :
+                            req.status === 'rejected' ? 'bg-rose-100 text-rose-800 font-bold' :
                             req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800 font-bold' :
                             req.status === 'reconciled' ? 'bg-teal-100 text-teal-800 font-bold' :
                             req.status === 'settled' ? 'bg-emerald-800 text-white font-bold' :
@@ -5988,9 +5990,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                             {req.status === 'draft' ? '📝 Draft (Saved — Not Submitted)' :
                              req.status === 'pending_pastor_approval' ? 'Step 1: Awaiting Senior Pastor Approval' :
                              req.status === 'pastor_approved' ? 'Step 2: Approved by Senior Pastor — Sent to Finance' :
-                             req.status === 'pending_approval' ? 'Under Finance Triage' : 
+                             req.status === 'pending_approval' ? 'Awaiting Configured Approval Steps' : 
                              req.status === 'submitted_to_board' ? 'Escalated to Executive Board' :
-                             req.status === 'approved' ? 'Authorized by Board' :
+                             req.status === 'approved' ? 'Approved — Payment Not Created' :
+                             req.status === 'rejected' ? 'Rejected' :
                              req.status === 'disbursed' ? 'Disbursed (Awaiting Receipts)' :
                              req.status === 'reconciled' ? 'Receipts Uploaded (Under Audit)' :
                              req.status === 'settled' ? 'Audited & Settled in Good Standing' :
@@ -7705,6 +7708,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
                   <button
                     type="submit"
+                    disabled={reqOptionsLoading}
                     className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-1.5 cursor-pointer"
                   >
                     <Send size={15} /> Submit Proposal
@@ -8307,7 +8311,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     </span>
                     <h3 className="font-black text-slate-900 text-sm">Board of Senior Pastors & Finance Secretariat</h3>
                     <p className="text-slate-600 font-semibold">
-                      Attention: <strong>Senior Pastor Board & Finance Officer Sahr Sesay</strong>
+                      Attention: <strong>Configured Requisition Approvers</strong>
                     </p>
                     <p className="text-slate-400 text-[11px]">Payment channel and beneficiary are selected by Finance after requisition approval.</p>
                   </div>
@@ -8605,7 +8609,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   }}
                   className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-md shadow-indigo-100 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Send size={15} /> Submit for Pastoral Approval
+                  <Send size={15} /> Submit for Approval
                 </button>
               </div>
             </div>
