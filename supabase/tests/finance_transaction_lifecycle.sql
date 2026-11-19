@@ -479,7 +479,7 @@ BEGIN
     (v_configuration->'approvalPolicies') || jsonb_build_array(jsonb_build_object(
       'id', v_policy5_id, 'name', 'FIN-INT Configuration API Policy',
       'transaction_type', 'financial_document', 'branch_id', v_branch_id,
-      'version', 99, 'effective_from', '2026-01-01', 'effective_to', null, 'is_active', true
+      'version', 99, 'effective_from', '2099-01-01', 'effective_to', null, 'is_active', true
     ))
   );
   v_configuration := jsonb_set(
