@@ -6037,10 +6037,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                       )}
 
                       <div className="text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2 pt-1">
-                        <div>
-                          <span>Preferred Payment: <strong className="text-slate-800 uppercase">{req.disbursement_method?.replace('_', ' ')}</strong></span>
-
-                        </div>
+                        <div className="text-[11px] text-slate-500">Payment details are arranged by Finance after approval.</div>
 
                         <div className="flex flex-wrap items-center gap-2">
                           {req.status === 'draft' ? (
@@ -8309,7 +8306,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
                       BILLED TO (TREASURY & APPROVAL BODY):
                     </span>
-                    <h3 className="font-black text-slate-900 text-sm">Board of Senior Pastors & Finance Secretariat</h3>
+                    <h3 className="font-black text-slate-900 text-sm">Configured Requisition Approvers</h3>
                     <p className="text-slate-600 font-semibold">
                       Attention: <strong>Configured Requisition Approvers</strong>
                     </p>
