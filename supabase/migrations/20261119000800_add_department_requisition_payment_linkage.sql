@@ -122,7 +122,7 @@ begin
 
   select
     coalesce(sum(d.amount) filter (
-      where d.status = 'approved'
+      where d.status = 'posted'
         and j.status = 'posted'
         and d.journal_entry_id = j.id
     ), 0),
@@ -257,7 +257,7 @@ begin
       left join lateral (
         select
           coalesce(sum(d.amount) filter (
-            where d.status = 'approved' and j.status = 'posted'
+            where d.status = 'posted' and j.status = 'posted'
               and d.journal_entry_id = j.id
           ), 0) as paid_amount,
           coalesce(sum(d.amount) filter (
