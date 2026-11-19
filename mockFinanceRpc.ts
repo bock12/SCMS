@@ -2,7 +2,10 @@ export type MockFinanceDocumentType = 'receipt' | 'payment';
 export type MockFinanceDecision = 'approved' | 'rejected';
 
 export interface MockFinanceState {
-  profiles: Array<{ id: string; auth_user_id: string | null; status?: string }>;
+  profiles: Array<{ id: string; auth_user_id: string | null; status?: string; branch_id?: string | null; first_name?: string; last_name?: string; membership_status?: string; record_status?: string }>;
+  ministries: Array<{ id: string; branch_id: string | null; name: string; entity_type: string; status: string }>;
+  requisitions: Array<Record<string, any>>;
+  requisitionItems: Array<Record<string, any>>;
   permissions: Array<{ profile_id: string; permission: string; branch_id: string | null }>;
   currencies: string[];
   baseCurrencyCode: string | null;
@@ -64,6 +67,9 @@ export function createBrowserMockFinanceStorage(
         throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
       }
       parsed.approvalDecisions = Array.isArray(parsed.approvalDecisions) ? parsed.approvalDecisions : [];
+      parsed.ministries = Array.isArray(parsed.ministries) ? parsed.ministries : [];
+      parsed.requisitions = Array.isArray(parsed.requisitions) ? parsed.requisitions : [];
+      parsed.requisitionItems = Array.isArray(parsed.requisitionItems) ? parsed.requisitionItems : [];
       parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
       parsed.budgets = Array.isArray(parsed.budgets) ? parsed.budgets : [];
       parsed.budgetLines = Array.isArray(parsed.budgetLines) ? parsed.budgetLines : [];
@@ -95,7 +101,7 @@ export function expandMockFinancePermissions(
 
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
-    profiles: [], permissions: [], currencies: [], baseCurrencyCode: null,
+    profiles: [], permissions: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
     documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
