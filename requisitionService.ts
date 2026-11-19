@@ -404,3 +404,75 @@ export async function decideDatabaseRequisitionApproval(
     p_comments: comments ?? null
   });
 }
+
+
+export interface CreateDepartmentRequisitionPaymentInput {
+  requisitionId: string;
+  transactionDate: string;
+  profileId?: string | null;
+  partyName: string;
+  amount: number;
+  paymentMethod: 'cash' | 'bank_transfer' | 'mobile_money' | 'card' | 'cheque' | 'other';
+  financialAccountId: string;
+  categoryAccountId: string;
+  fundId?: string | null;
+  externalReference?: string | null;
+  description?: string | null;
+  requestKey: string;
+}
+
+/** Creates an independently approved canonical payment linked to an approved requisition. */
+export async function createDatabaseRequisitionPayment(
+  input: CreateDepartmentRequisitionPaymentInput,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<{
+  requisition_id: string;
+  document_id: string;
+  journal_entry_id: string;
+  approval_request_id: string | null;
+  status: string;
+  already_exists: boolean;
+}>> {
+  return client.rpc('create_department_requisition_payment', {
+    p_requisition_id: input.requisitionId,
+    p_transaction_date: input.transactionDate,
+    p_profile_id: input.profileId ?? null,
+    p_party_name: input.partyName,
+    p_amount: input.amount,
+    p_payment_method: input.paymentMethod,
+    p_financial_account_id: input.financialAccountId,
+    p_category_account_id: input.categoryAccountId,
+    p_fund_id: input.fundId ?? null,
+    p_external_reference: input.externalReference ?? null,
+    p_description: input.description ?? null,
+    p_request_key: input.requestKey
+  });
+}
+
+export interface DepartmentRequisitionPaymentSummary {
+  requisition_id: string;
+  requested_amount: number;
+  currency_code: string;
+  paid_amount: number;
+  reserved_amount: number;
+  remaining_amount: number;
+  payment_status: 'unpaid' | 'payment_pending' | 'partially_paid' | 'paid';
+  payments: Array<{
+    document_id: string;
+    journal_entry_id: string | null;
+    amount: number;
+    currency_code: string;
+    status: string;
+    journal_status: string | null;
+    transaction_date: string;
+    external_reference: string | null;
+  }>;
+}
+
+/** Finance-only payment summary; paid amounts include posted journals only. */
+export async function getDatabaseRequisitionPaymentSummary(
+  branchId: string,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<DepartmentRequisitionPaymentSummary[]>> {
+  return client.rpc('get_department_requisition_payment_summary', { p_branch_id: branchId });
+}
