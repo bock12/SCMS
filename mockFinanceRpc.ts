@@ -483,7 +483,13 @@ export function createMockFinanceRpc(
         .filter(line => line.journal_entry_id === journal.id && Number(line.debit_amount) > 0 &&
           state.chartAccounts.some(account => account.id === line.account_id && account.account_type === 'expense'))
         .reduce((sum, line) => sum + Number(line.debit_amount || 0), 0) : 0;
+      const approvalRequest = state.approvalRequests.find(item => item.id === budget.approval_request_id);
+      const approvalSteps = approvalRequest
+        ? state.approvalSteps.filter(item => item.approval_request_id === approvalRequest.id).map(clone)
+        : [];
       return { ...clone(budget), lines, payment_document: document ? clone(document) : null,
+        approval_request: approvalRequest ? clone(approvalRequest) : null,
+        approval_steps: approvalSteps,
         posted_journal_entry_id: journal?.id ?? null, total_actual: round4(actual) };
     }) });
   }
