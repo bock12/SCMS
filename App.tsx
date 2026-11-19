@@ -4418,8 +4418,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               <span style="font-weight: 800; color: #0f172a;">${req.applicant_name} (${req.applicant_role || 'Ministry Lead'})</span>
             </div>
             <div>
-              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Disbursement Channel:</strong><br/>
-              <span style="font-weight: 800; color: #0f172a;">${req.disbursement_method?.replace('_', ' ').toUpperCase()} • ${req.disbursement_account_info || 'Church Treasury Standard'}</span>
+              <strong style="color: #475569; font-size: 10px; text-transform: uppercase;">Payment Status:</strong><br/>
+              <span style="font-weight: 800; color: #0f172a;">Not created. Finance will arrange payment after approval.</span>
             </div>
           </div>
 
@@ -4710,6 +4710,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [reqPriority, setReqPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('high');
   const [reqNeededDate, setReqNeededDate] = useState('');
   const [reqVendorQuote, setReqVendorQuote] = useState('');
+  const [reqBaseCurrency, setReqBaseCurrency] = useState('SLE');
+  const [reqOptionsLoading, setReqOptionsLoading] = useState(false);
   const [reqDisbMethod, setReqDisbMethod] = useState<'bank_transfer' | 'mobile_money' | 'cash'>('bank_transfer');
   const [reqDisbInfo, setReqDisbInfo] = useState('');
   const [reqItems, setReqItems] = useState<{ item_name: string; quantity: number; unit_price: number }[]>([
@@ -5257,6 +5259,15 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       { item_name: 'Equipment / Service Quotation Item', quantity: 1, unit_price: 1500 }
     ]);
     setShowProposalModal(true);
+    if (profile?.branch_id && activeMinistryObj?.id) {
+      setReqOptionsLoading(true);
+      void getDepartmentRequisitionSubmissionOptions(profile.branch_id, activeMinistryObj.id)
+        .then(result => {
+          if (result.error || !result.data) setProposalSuccessToast(result.error?.message || 'Unable to load requisition currency options.');
+          else setReqBaseCurrency(result.data.base_currency_code);
+        })
+        .finally(() => setReqOptionsLoading(false));
+    }
   };
 
   const handleEditExistingProposal = (req: DepartmentRequisition) => {
@@ -5272,6 +5283,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setReqVendorQuote(req.vendor_quote_url || '');
     setReqDisbMethod(req.disbursement_method || 'bank_transfer');
     setReqDisbInfo(req.disbursement_account_info || '');
+    setReqBaseCurrency(req.currency || 'SLE');
     setReqItems(req.items.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit_price: i.unit_price })));
     setShowProposalModal(true);
   };
@@ -5285,6 +5297,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       throw new Error(options.error?.message || 'Unable to load requisition submission options.');
     }
     const currencyCode = options.data.base_currency_code;
+    if (requisition.currency && requisition.currency !== currencyCode) {
+      throw new Error(`The church base currency is now ${currencyCode}. Reopen the requisition before submitting it.`);
+    }
     if (!currencyCode || !options.data.currencies.includes(currencyCode)) {
       throw new Error('The church base currency is not active. Ask Finance to correct the currency configuration.');
     }
@@ -5348,7 +5363,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       title: reqTitle.trim(),
       description: reqDesc.trim(),
       requested_amount: totalReqAmount,
-      currency: 'SLE',
+      currency: reqBaseCurrency,
       priority: reqPriority,
       status: isDraft ? 'draft' : 'pending_approval',
       created_at: new Date().toISOString(),
@@ -6021,9 +6036,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                       <div className="text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div>
                           <span>Preferred Payment: <strong className="text-slate-800 uppercase">{req.disbursement_method?.replace('_', ' ')}</strong></span>
-                          {req.disbursement_account_info && (
-                            <span className="ml-3 font-mono text-slate-700">• Account: {req.disbursement_account_info}</span>
-                          )}
+
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
@@ -7605,44 +7618,32 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 border-indigo-800 pt-2 sm:pt-0">
                     <span className="text-indigo-300 block text-[10px] uppercase font-extrabold tracking-wider">Calculated Total Requested Budget</span>
                     <span className="text-emerald-400 font-mono font-black text-xl tracking-tight">
-                      SLE {reqItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unit_price || 0)), 0).toLocaleString()}
+                      {reqBaseCurrency} {reqItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unit_price || 0)), 0).toLocaleString()}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* SECTION 3: DISBURSEMENT DETAILS */}
+              {/* SECTION 3: VENDOR QUOTE REFERENCE */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
                 <div className="flex items-center gap-2 font-black text-slate-900 text-sm">
                   <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs">3</span>
-                  <span>Disbursement Preference & Vendor Quotes</span>
+                  <span>Vendor Quote Reference</span>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-extrabold text-slate-700 block mb-1">Preferred Payment Channel</label>
-                    <select
-                      value={reqDisbMethod}
-                      onChange={e => setReqDisbMethod(e.target.value as any)}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl font-bold cursor-pointer"
-                    >
-                      <option value="bank_transfer">Direct Vendor Bank Wire</option>
-                      <option value="mobile_money">Mobile Money Transfer</option>
-                      <option value="cash">Petty Cash Voucher</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="font-extrabold text-slate-700 block mb-1">Vendor Proforma Ref / Link</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Proforma #TECH-SL-9912"
-                      value={reqVendorQuote}
-                      onChange={e => setReqVendorQuote(e.target.value)}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
-                    />
-                  </div>
+                <p className="text-[11px] leading-relaxed text-slate-600">
+                  Finance selects the payment channel and beneficiary only after the requisition has completed its approval workflow. Do not include bank or mobile-money account details in this request.
+                </p>
+                <div>
+                  <label className="font-extrabold text-slate-700 block mb-1">Vendor Proforma Reference / Link</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Proforma #TECH-SL-9912"
+                    value={reqVendorQuote}
+                    onChange={e => setReqVendorQuote(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl"
+                  />
                 </div>
+                <p className="text-[10px] text-slate-500">Amounts are entered in the church base currency: {reqBaseCurrency}{reqOptionsLoading ? ' (loading currency setup…)' : ''}.</p>
               </div>
 
               {/* SECTION 4: FORM ACTIONS BAR */}
@@ -7668,14 +7669,12 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                       title: reqTitle.trim() || 'Equipment Procurement Request',
                       description: reqDesc.trim(),
                       requested_amount: totalReqAmount > 0 ? totalReqAmount : 5000,
-                      currency: 'SLE',
+                      currency: reqBaseCurrency,
                       priority: reqPriority,
                       status: 'draft',
                       created_at: new Date().toISOString(),
                       needed_by_date: reqNeededDate || new Date(Date.now() + 86400000 * 14).toISOString().slice(0, 10),
                       vendor_quote_url: reqVendorQuote.trim() || undefined,
-                      disbursement_method: reqDisbMethod,
-                      disbursement_account_info: reqDisbInfo.trim() || undefined,
                       items: formattedItems
                     };
 
@@ -8310,7 +8309,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     <p className="text-slate-600 font-semibold">
                       Attention: <strong>Senior Pastor Board & Finance Officer Sahr Sesay</strong>
                     </p>
-                    <p className="text-slate-400 text-[11px]">Channel: {previewProposal.disbursement_method?.replace(/_/g, ' ').toUpperCase() || 'Bank Wire'}</p>
+                    <p className="text-slate-400 text-[11px]">Payment channel and beneficiary are selected by Finance after requisition approval.</p>
                   </div>
                 </div>
 
@@ -8362,19 +8361,13 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 {/* Invoice Totals & Summary Block */}
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pt-2">
                   <div className="w-full sm:w-1/2 p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5 text-xs">
-                    <span className="font-extrabold text-slate-700 block">Payment & Account Instructions</span>
+                    <span className="font-extrabold text-slate-700 block">Vendor Quote & Payment Workflow</span>
                     <p className="text-[11px] text-slate-500">
-                      Disbursement Method:{' '}
-                      <strong className="text-slate-800">{previewProposal.disbursement_method?.replace(/_/g, ' ').toUpperCase()}</strong>
+                      This requisition does not create or authorize a payment. Finance will select the payment account and method after all approval steps are complete.
                     </p>
                     {previewProposal.vendor_quote_url && (
                       <p className="text-[11px] text-slate-500">
                         Vendor Quote Ref: <strong className="text-indigo-700 font-mono">{previewProposal.vendor_quote_url}</strong>
-                      </p>
-                    )}
-                    {previewProposal.disbursement_account_info && (
-                      <p className="text-[11px] text-slate-500">
-                        Account Details: <span className="font-mono">{previewProposal.disbursement_account_info}</span>
                       </p>
                     )}
                   </div>
