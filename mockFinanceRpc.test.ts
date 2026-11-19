@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, expandMockFinancePermissions, type MockFinanceState } from './mockFinanceRpc';
 
-function fixture(options: { churchFinance?: boolean } = {}) {
+function fixture(options: { churchFinance?: boolean; emptyApprovalPolicy?: boolean } = {}) {
   const state: MockFinanceState = {
     ...createEmptyMockFinanceState(),
     profiles: [
@@ -19,21 +19,22 @@ function fixture(options: { churchFinance?: boolean } = {}) {
     currencies: ['SLL', 'USD'],
     baseCurrencyCode: 'SLL',
     chartAccounts: [
-      { id: 'cash-chart', is_active: true, account_type: 'asset' },
-      { id: 'income-chart', is_active: true, account_type: 'income' },
-      { id: 'expense-chart', is_active: true, account_type: 'expense' }
+      { id: 'cash-chart', code: '1000', name: 'Cash', normal_balance: 'debit', is_active: true, account_type: 'asset', is_control_account: false },
+      { id: 'income-chart', code: '4000', name: 'Offering Income', normal_balance: 'credit', is_active: true, account_type: 'income', is_control_account: false },
+      { id: 'expense-chart', code: '5000', name: 'Operating Expense', normal_balance: 'debit', is_active: true, account_type: 'expense', is_control_account: false }
     ],
     financialAccounts: [
-      { id: 'cash-account', branch_id: 'branch-a', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' }
+      { id: 'cash-account', branch_id: 'branch-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' }
     ],
-    funds: [{ id: 'fund-a', is_active: true }],
-    periods: [{ id: 'period-a', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
-    approvalPolicies: [{
-      id: 'policy-a', is_active: true, transaction_type: 'financial_document',
+    funds: [{ id: 'fund-a', code: 'GEN', name: 'General Fund', fund_type: 'general', is_default: true, is_active: true }],
+    financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+    periods: [{ id: 'period-a', financial_year_id: 'fy-2026', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
+    approvalPolicies: options.emptyApprovalPolicy ? [] : [{
+      id: 'policy-a', name: 'Receipt and Payment Approval', is_active: true, transaction_type: 'financial_document',
       branch_id: 'branch-a', version: 1, effective_from: '2026-01-01'
     }],
-    approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 1000000 }],
-    approvalPolicySteps: [
+    approvalPolicyBands: options.emptyApprovalPolicy ? [] : [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 1000000 }],
+    approvalPolicySteps: options.emptyApprovalPolicy ? [] : [
       { id: 'policy-step-1', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
       { id: 'policy-step-2', band_id: 'band-a', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
     ]
@@ -392,7 +393,8 @@ describe('canonical finance configuration RPCs', () => {
       currencies: ['SLL', 'USD'], baseCurrencyCode: 'SLL',
       chartAccounts: [
         { id: 'cash-chart', code: '1000', name: 'Cash', account_type: 'asset', normal_balance: 'debit', is_active: true },
-        { id: 'income-chart', code: '4000', name: 'Offering Income', account_type: 'income', normal_balance: 'credit', is_active: true }
+        { id: 'income-chart', code: '4000', name: 'Offering Income', account_type: 'income', normal_balance: 'credit', is_active: true },
+        { id: 'expense-chart', code: '5000', name: 'Operating Expense', account_type: 'expense', normal_balance: 'debit', is_active: true }
       ],
       financialAccounts: [
         { id: 'cash-account', chart_account_id: 'cash-chart', branch_id: 'branch-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true }
@@ -401,8 +403,11 @@ describe('canonical finance configuration RPCs', () => {
       financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
       periods: [{ id: 'period-a', financial_year_id: 'fy-2026', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
       approvalPolicies: [{ id: 'policy-a', name: 'Receipt and Payment Approval', transaction_type: 'financial_document', branch_id: 'branch-a', version: 1, effective_from: '2026-01-01', is_active: true }],
-      approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 100 }],
-      approvalPolicySteps: [{ id: 'step-a', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }]
+      approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 1000000 }],
+      approvalPolicySteps: [
+        { id: 'policy-step-1', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 'policy-step-2', band_id: 'band-a', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
     };
     const saved = await ctx.rpc.rpc('save_finance_configuration', {
       p_branch_id: 'branch-a', p_configuration: configuration
@@ -412,7 +417,7 @@ describe('canonical finance configuration RPCs', () => {
     expect(loaded.error).toBeNull();
     expect(loaded.data.baseCurrencyCode).toBe('SLL');
     expect(loaded.data.chartAccounts).toHaveLength(2);
-    expect(loaded.data.approvalPolicyBands[0].max_amount_base).toBe(100);
+    expect(loaded.data.approvalPolicyBands[0].max_amount_base).toBe(1000000);
     expect(ctx.read().financialYears).toHaveLength(1);
   });
 
@@ -428,7 +433,7 @@ describe('canonical finance configuration RPCs', () => {
   });
 
   test('enforces approval amount bands rather than flattening them into one unlimited policy', async () => {
-    const ctx = fixture({ churchFinance: true });
+    const ctx = fixture({ churchFinance: true, emptyApprovalPolicy: true });
     const configuration = {
       currencies: ['SLL'], baseCurrencyCode: 'SLL',
       chartAccounts: [
