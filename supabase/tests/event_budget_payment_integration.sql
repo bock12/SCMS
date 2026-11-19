@@ -85,7 +85,7 @@ BEGIN
     is_active, created_by_profile_id
   ) VALUES (
     v_finance_policy_id, 'FIN-INT-002 Immediate Payment Policy', 'financial_document',
-    v_branch_id, 5, '2020-01-01', true, v_submitter_profile
+    v_branch_id, 6, '2020-01-01', true, v_submitter_profile
   );
 
   INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
