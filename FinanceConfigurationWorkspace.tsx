@@ -45,6 +45,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [periodYearId, setPeriodYearId] = useState('');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
+  const [policyType, setPolicyType] = useState<'financial_document' | 'budget'>('financial_document');
   const [policyName, setPolicyName] = useState('Financial Document Approval');
   const [policyMin, setPolicyMin] = useState('0');
   const [policyMax, setPolicyMax] = useState('');
@@ -148,7 +149,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     const bandId = makeId('band');
     update({
       approvalPolicies: [...configuration.approvalPolicies, {
-        id: policyId, name: policyName.trim(), transaction_type: 'financial_document',
+        id: policyId, name: policyName.trim(), transaction_type: policyType,
         branch_id: branchId, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === branchId).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
       }],
       approvalPolicyBands: [...configuration.approvalPolicyBands, {
@@ -160,7 +161,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         prohibit_submitter_approval: true, approver_profile_ids: selectedApprovers
       }]
     });
-    setPolicyName('Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
+    setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
     setSelectedApprovers([]);
   };
 
@@ -261,17 +262,27 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 className="font-black text-slate-900">Approval policy</h3>
+          <h3 className="font-black text-slate-900">Approval policies</h3>
+          <p className="mt-1 text-xs text-slate-500">Configure separate approval rules for canonical receipts/payments and event budgets.</p>
           <div className="mt-3 space-y-2">
+            <label className={labelClass}>Workflow type</label>
+            <select className={fieldClass} value={policyType} onChange={e => {
+              const next = e.target.value as typeof policyType;
+              setPolicyType(next);
+              setPolicyName(next === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
+            }}>
+              <option value="financial_document">Receipts and payments</option>
+              <option value="budget">Event budget approval</option>
+            </select>
             <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={policyMin} onChange={e => setPolicyMin(e.target.value)} /><input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={policyMax} onChange={e => setPolicyMax(e.target.value)} /></div>
             <label className={labelClass}>Approver for this step</label>
             <select className={fieldClass} value={selectedApprovers[0] || ''} onChange={e => setSelectedApprovers(e.target.value ? [e.target.value] : [])}>
               {approvers.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}
             </select>
-            <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add policy and amount band</button>
+            <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
           </div>
-          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version}</li>)}</ul>
+          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
         </div>
       </section>
 
