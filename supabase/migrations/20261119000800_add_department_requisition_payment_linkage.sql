@@ -78,8 +78,17 @@ begin
   if not private.has_permission('manage_finances', v_requisition.branch_id) then
     raise exception 'Insufficient permission to pay a requisition in this branch';
   end if;
-  if v_requisition.status <> 'approved' then
-    raise exception 'Only approved requisitions can receive payments';
+  if v_requisition.status <> 'approved'
+     or v_requisition.approval_request_id is null
+     or not exists (
+       select 1 from public.approval_requests ar
+       where ar.id = v_requisition.approval_request_id
+         and ar.transaction_type = 'requisition'
+         and ar.target_id = v_requisition.id
+         and ar.branch_id = v_requisition.branch_id
+         and ar.status = 'approved'
+     ) then
+    raise exception 'Only requisitions with a completed approved workflow can receive payments';
   end if;
   if p_profile_id is not null and not exists (
     select 1 from public.profiles p
