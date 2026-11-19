@@ -26,6 +26,7 @@ export interface MockFinanceState {
   journalLines: Array<Record<string, any>>;
   approvalRequests: Array<Record<string, any>>;
   approvalSteps: Array<Record<string, any>>;
+  approvalDecisions: Array<Record<string, any>>;
   nextId: number;
 }
 
@@ -62,6 +63,7 @@ export function createBrowserMockFinanceStorage(
           typeof parsed.nextId !== 'number' || !Number.isInteger(parsed.nextId) || parsed.nextId < 1) {
         throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
       }
+      parsed.approvalDecisions = Array.isArray(parsed.approvalDecisions) ? parsed.approvalDecisions : [];
       parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
       parsed.budgets = Array.isArray(parsed.budgets) ? parsed.budgets : [];
       parsed.budgetLines = Array.isArray(parsed.budgetLines) ? parsed.budgetLines : [];
@@ -96,7 +98,7 @@ export function createEmptyMockFinanceState(): MockFinanceState {
     profiles: [], permissions: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
-    documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], nextId: 1
+    documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
   };
 }
 
@@ -157,45 +159,46 @@ export function createMockFinanceRpc(
     if (!period) return fail('No open financial period and year exist for the transaction date');
 
     const baseAmount = round4(amount * rate);
-    const policy = state.approvalPolicies.find(p => {
-      if (!p.is_active || p.transaction_type !== 'financial_document' ||
-          (p.branch_id !== null && p.branch_id !== branchId) ||
-          (p.effective_from && date < p.effective_from) ||
-          (p.effective_to && date > p.effective_to)) return false;
-      const bands = state.approvalPolicyBands.filter(b => b.policy_id === p.id);
-      return bands.length
-        ? bands.some(b => baseAmount >= Number(b.min_amount_base) &&
-            (b.max_amount_base == null || baseAmount < Number(b.max_amount_base)))
-        : baseAmount >= p.min_amount && (p.max_amount === null || baseAmount <= p.max_amount);
-    });
-    if (!policy) return fail('No active approval policy covers this financial document amount');
+    const policy = state.approvalPolicies
+      .filter(p => p.is_active && p.transaction_type === 'financial_document' &&
+        (p.branch_id === null || p.branch_id === branchId) &&
+        (!p.effective_from || p.effective_from <= new Date().toISOString().slice(0, 10)) &&
+        (!p.effective_to || p.effective_to >= new Date().toISOString().slice(0, 10)))
+      .sort((a, b) => Number(b.branch_id !== null) - Number(a.branch_id !== null) ||
+        Number(b.version || 0) - Number(a.version || 0))[0];
+    if (!policy) return fail('No active financial-document approval policy is configured for this scope');
     const selectedBand = state.approvalPolicyBands.find(b => b.policy_id === policy.id &&
       baseAmount >= Number(b.min_amount_base) &&
       (b.max_amount_base == null || baseAmount < Number(b.max_amount_base)));
-    const configuredApprovers = selectedBand
-      ? state.approvalPolicySteps.filter(s => s.band_id === selectedBand.id)
-          .sort((a, b) => Number(a.step_number) - Number(b.step_number))
-          .flatMap(s => s.approver_profile_ids || [])
-      : policy.approver_profile_ids;
-    if (!configuredApprovers.length) return fail('Approval policy has no configured approvers');
+    if (!selectedBand) return fail('No approval threshold band covers this transaction amount');
+    const policySteps = state.approvalPolicySteps
+      .filter(step => step.band_id === selectedBand.id)
+      .sort((a, b) => Number(a.step_number) - Number(b.step_number));
+    if (policySteps.some((step, index) => !Number.isInteger(Number(step.step_number)) ||
+      Number(step.step_number) !== index + 1 || !step.required_permission_key ||
+      !Number.isInteger(Number(step.required_approvals)) || Number(step.required_approvals) < 1)) {
+      return fail('Approval policy steps are incomplete or incorrectly ordered');
+    }
 
     const documentId = id(state, 'doc');
     const journalId = id(state, 'journal');
-    const requestId = id(state, 'approval');
-    const docStatus = 'pending_approval';
+    const requestId = policySteps.length ? id(state, 'approval') : null;
+    const docStatus = policySteps.length ? 'pending_approval' : 'approved';
     const document = {
       id: documentId, document_type: type, transaction_date: date, branch_id: branchId,
       profile_id: args.p_profile_id ?? null, payee_or_payer_name: party, amount, currency_code: currency,
       payment_method: method, financial_account_id: financialAccount.id, fund_id: args.p_fund_id ?? null,
       external_reference: String(args.p_external_reference || '').trim() || null,
       description, status: docStatus, created_by_profile_id: actor.id, approval_request_id: requestId,
-      exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode, journal_entry_id: null
+      exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode,
+      journal_entry_id: policySteps.length ? null : journalId
     };
     const journal = {
       id: journalId, period_id: period.id, branch_id: branchId, entry_date: date,
       description, reference: document.external_reference, currency_code: currency,
       exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode,
-      source_type: 'financial_document_pending', source_id: documentId, status: 'draft'
+      source_type: policySteps.length ? 'financial_document_pending' : 'financial_document',
+      source_id: documentId, status: 'draft'
     };
     const debitAccount = type === 'receipt' ? cashAccount.id : category.id;
     const creditAccount = type === 'receipt' ? category.id : cashAccount.id;
@@ -209,15 +212,27 @@ export function createMockFinanceRpc(
         profile_id: args.p_profile_id ?? null, description, debit_amount: 0, credit_amount: amount,
         base_debit_amount: 0, base_credit_amount: baseAmount }
     ];
-    const request = { id: requestId, transaction_type: 'financial_document', target_id: documentId, status: 'pending', policy_id: policy.id };
-    const steps = configuredApprovers.map((profileId, index) => ({
-      id: id(state, 'step'), approval_request_id: requestId, step_order: index + 1,
-      approver_profile_id: profileId, status: 'pending', decision: null, comments: null
-    }));
-    state.documents.push(document); state.journals.push(journal); state.journalLines.push(...lines);
-    state.approvalRequests.push(request); state.approvalSteps.push(...steps);
+    if (requestId) {
+      state.approvalRequests.push({
+        id: requestId, transaction_type: 'financial_document', target_id: documentId,
+        branch_id: branchId, status: 'pending', policy_id: policy.id,
+        submitted_by_profile_id: actor.id, amount_base: baseAmount
+      });
+      state.approvalSteps.push(...policySteps.map(policyStep => ({
+        id: id(state, 'step'), approval_request_id: requestId,
+        step_order: Number(policyStep.step_number),
+        required_permission_key: policyStep.required_permission_key,
+        required_approvals: Number(policyStep.required_approvals),
+        prohibit_submitter_approval: policyStep.prohibit_submitter_approval !== false,
+        status: 'pending'
+      })));
+    }
+    state.documents.push(document);
+    state.journals.push(journal);
+    state.journalLines.push(...lines);
     if (persist) storage.save(state);
-    return success({ document_id: documentId, journal_entry_id: journalId, approval_request_id: requestId, status: docStatus });
+    return success({ document_id: documentId, journal_entry_id: journalId,
+      approval_request_id: requestId, status: docStatus });
   }
 
   function decideApproval(args: Record<string, any>) {
@@ -232,25 +247,46 @@ export function createMockFinanceRpc(
     const document = request && state.documents.find(d => d.id === request.target_id);
     if (!request || !document) return fail('Approval step is not for a financial document');
     if (step.status !== 'pending' || request.status !== 'pending') return fail('Approval step is no longer pending');
-    if (step.approver_profile_id !== actor.id || !hasPermission(state, actor.id, 'approve_finances', document.branch_id)) {
-      return fail('You are not authorized to decide this approval step', '42501');
+    const earlierIncompleteStep = state.approvalSteps.some(s => s.approval_request_id === request.id &&
+      s.step_order < step.step_order && s.status !== 'approved');
+    if (earlierIncompleteStep) return fail('Earlier approval steps must be completed first');
+    if (step.prohibit_submitter_approval && request.submitted_by_profile_id === actor.id) {
+      return fail('The submitter cannot approve this request', '42501');
+    }
+    const requiredPermission = step.required_permission_key || 'approve_finances';
+    if (!hasPermission(state, actor.id, requiredPermission, document.branch_id)) {
+      return fail('Approver does not have the required permission', '42501');
     }
     if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
-    const earlierPendingStep = state.approvalSteps.some(s => s.approval_request_id === request.id &&
-      s.step_order < step.step_order && s.status === 'pending');
-    if (earlierPendingStep) return fail('Earlier approval steps must be completed first');
-    step.decision = args.p_decision; step.comments = String(args.p_comments || '').trim() || null;
-    step.status = args.p_decision;
+    if (state.approvalDecisions.some(d => d.approval_request_step_id === step.id && d.approver_profile_id === actor.id)) {
+      return fail('This profile has already decided this approval step');
+    }
+    state.approvalDecisions.push({
+      id: id(state, 'decision'), approval_request_step_id: step.id,
+      approver_profile_id: actor.id, decision: args.p_decision,
+      comments: String(args.p_comments || '').trim() || null,
+      decided_at: new Date().toISOString()
+    });
     if (args.p_decision === 'rejected') {
-      request.status = 'rejected'; document.status = 'rejected';
+      step.status = 'rejected';
+      request.status = 'rejected';
+      document.status = 'rejected';
       return persistDecision(state, request, document, null);
     }
-    const nextStep = state.approvalSteps.find(s => s.approval_request_id === request.id && s.step_order > step.step_order);
-    if (nextStep) return persistDecision(state, request, document, null);
-    request.status = 'approved'; document.status = 'approved';
-    const journal = state.journals.find(j => j.source_type === 'financial_document_pending' && j.source_id === document.id && j.status === 'draft');
+    const approvalsReceived = state.approvalDecisions.filter(d =>
+      d.approval_request_step_id === step.id && d.decision === 'approved').length;
+    if (approvalsReceived >= Number(step.required_approvals || 1)) step.status = 'approved';
+    const allStepsApproved = state.approvalSteps
+      .filter(s => s.approval_request_id === request.id)
+      .every(s => s.status === 'approved');
+    if (!allStepsApproved) return persistDecision(state, request, document, null);
+    request.status = 'approved';
+    document.status = 'approved';
+    const journal = state.journals.find(j =>
+      j.source_type === 'financial_document_pending' && j.source_id === document.id && j.status === 'draft');
     if (!journal) return fail('Approved financial document has no matching pending journal');
-    journal.source_type = 'financial_document'; document.journal_entry_id = journal.id;
+    journal.source_type = 'financial_document';
+    document.journal_entry_id = journal.id;
     return persistDecision(state, request, document, journal.id);
   }
 
@@ -258,7 +294,6 @@ export function createMockFinanceRpc(
     storage.save(state);
     return success({ document_id: document.id, approval_request_id: request.id, journal_entry_id: journalId, approval_status: request.status });
   }
-
 
   function submitEventBudgetForApproval(args: Record<string, any>) {
     const state = clone(storage.load());
@@ -605,16 +640,28 @@ export function createMockFinanceRpc(
         const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
         const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
           .sort((a, b) => Number(a.step_order) - Number(b.step_order));
-        const actorStep = steps.find(step => step.approver_profile_id === actor.id && step.status === 'pending' &&
-          hasPermission(state, actor.id, 'approve_finances', document.branch_id));
+        const actorStep = steps.find(step => step.status === 'pending' &&
+          (!step.prohibit_submitter_approval || request?.submitted_by_profile_id !== actor.id) &&
+          !state.approvalDecisions.some(decision =>
+            decision.approval_request_step_id === step.id && decision.approver_profile_id === actor.id) &&
+          !steps.some(prior => prior.step_order < step.step_order && prior.status !== 'approved') &&
+          hasPermission(state, actor.id, step.required_permission_key || 'approve_finances', document.branch_id));
         return {
           ...clone(document),
           approval_request_id: request?.id ?? null,
           approval_status: request?.status ?? null,
-          approval_steps: steps.map(step => ({
-            id: step.id, step_order: step.step_order, approver_profile_id: step.approver_profile_id,
-            status: step.status, decision: step.decision, comments: step.comments
-          })),
+          approval_steps: steps.map(step => {
+            const decisions = state.approvalDecisions.filter(decision => decision.approval_request_step_id === step.id);
+            const latestDecision = decisions.sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at)))[0];
+            return {
+              id: step.id, step_order: step.step_order,
+              approver_profile_id: latestDecision?.approver_profile_id ?? null,
+              required_approvals: Number(step.required_approvals || 1),
+              approvals_received: decisions.filter(decision => decision.decision === 'approved').length,
+              status: step.status, decision: latestDecision?.decision ?? null,
+              comments: latestDecision?.comments ?? null
+            };
+          }),
           actor_approval_step_id: actorStep?.id ?? null,
           approval_steps_completed: steps.filter(step => step.status === 'approved').length,
           approval_steps_total: steps.length
@@ -856,23 +903,22 @@ export function createMockFinanceRpc(
       }
     }
     const bandIds = new Set(config.approvalPolicyBands.map((band: any) => band.id));
-    if (config.approvalPolicySteps.some((step: any) => !step.id || !bandIds.has(step.band_id) ||
-      !Number.isInteger(Number(step.step_number)) || Number(step.step_number) < 1 ||
-      !step.required_permission_key || !Number.isInteger(Number(step.required_approvals)) ||
-      Number(step.required_approvals) < 1 || !Array.isArray(step.approver_profile_ids) ||
-      Number(step.required_approvals) > step.approver_profile_ids.length)) {
-      return fail('Approval steps require a valid band, order, permission, approval count and sufficient approvers');
-    }
-    for (const step of config.approvalPolicySteps) {
+    if (config.approvalPolicySteps.some((step: any) => {
       const band = config.approvalPolicyBands.find((item: any) => item.id === step.band_id);
       const policy = config.approvalPolicies.find((item: any) => item.id === band?.policy_id);
-      const scope = policy?.branch_id ?? branchId;
-      if (new Set(step.approver_profile_ids).size !== step.approver_profile_ids.length ||
-          step.approver_profile_ids.some((profileId: string) =>
-            !state.profiles.some(profile => profile.id === profileId && profile.status !== 'suspended' && profile.status !== 'archived') ||
-            !hasPermission(state, profileId, step.required_permission_key, scope))) {
-        return fail('Every approval step approver must be active and hold its required permission in the policy scope');
-      }
+      const validCore = step.id && bandIds.has(step.band_id) &&
+        Number.isInteger(Number(step.step_number)) && Number(step.step_number) > 0 &&
+        Boolean(step.required_permission_key) && Number.isInteger(Number(step.required_approvals)) &&
+        Number(step.required_approvals) > 0;
+      if (!validCore) return true;
+      if (policy?.transaction_type === 'financial_document') return false;
+      const ids = Array.isArray(step.approver_profile_ids) ? step.approver_profile_ids : [];
+      return Number(step.required_approvals) > ids.length || new Set(ids).size !== ids.length ||
+        ids.some((profileId: string) =>
+          !state.profiles.some(profile => profile.id === profileId && profile.status !== 'suspended' && profile.status !== 'archived') ||
+          !hasPermission(state, profileId, step.required_permission_key, policy?.branch_id ?? branchId));
+    })) {
+      return fail('Approval steps require valid scope, order, permission and approval counts; budget steps also require eligible assigned approvers');
     }
     state.currencies = currencies;
     state.baseCurrencyCode = baseCurrency;
@@ -890,7 +936,7 @@ export function createMockFinanceRpc(
       max_amount: null,
       approver_profile_ids: config.approvalPolicySteps
         .filter((step: any) => config.approvalPolicyBands.some((band: any) => band.id === step.band_id && band.policy_id === policy.id))
-        .flatMap((step: any) => step.approver_profile_ids)
+        .flatMap((step: any) => step.approver_profile_ids || [])
     }));
     state.approvalPolicyBands = clone(config.approvalPolicyBands);
     state.approvalPolicySteps = clone(config.approvalPolicySteps);

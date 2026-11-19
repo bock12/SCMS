@@ -29,9 +29,13 @@ function fixture() {
     periods: [{ id: 'period-a', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
     approvalPolicies: [{
       id: 'policy-a', is_active: true, transaction_type: 'financial_document',
-      branch_id: 'branch-a', min_amount: 0.01, max_amount: 1000000,
-      approver_profile_ids: ['approver-1', 'approver-2']
-    }]
+      branch_id: 'branch-a', version: 1, effective_from: '2026-01-01'
+    }],
+    approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 1000000 }],
+    approvalPolicySteps: [
+      { id: 'policy-step-1', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'policy-step-2', band_id: 'band-a', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+    ]
   };
   let current = structuredClone(state);
   let authUserId: string | null = 'user-creator';
@@ -309,7 +313,7 @@ describe('canonical finance configuration RPCs', () => {
       periods: [{ id: 'period-a', financial_year_id: 'fy-2026', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
       approvalPolicies: [{ id: 'policy-a', name: 'Receipt and Payment Approval', transaction_type: 'financial_document', branch_id: 'branch-a', version: 1, effective_from: '2026-01-01', is_active: true }],
       approvalPolicyBands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 100 }],
-      approvalPolicySteps: [{ id: 'step-a', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true, approver_profile_ids: ['approver-1'] }]
+      approvalPolicySteps: [{ id: 'step-a', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }]
     };
     const saved = await ctx.rpc.rpc('save_finance_configuration', {
       p_branch_id: 'branch-a', p_configuration: configuration
@@ -348,7 +352,7 @@ describe('canonical finance configuration RPCs', () => {
       periods: [{ id: 'period', financial_year_id: 'fy', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
       approvalPolicies: [{ id: 'policy', name: 'Limited Band', transaction_type: 'financial_document', branch_id: 'branch-a', version: 1, effective_from: '2026-01-01', is_active: true }],
       approvalPolicyBands: [{ id: 'band', policy_id: 'policy', min_amount_base: 0, max_amount_base: 100 }],
-      approvalPolicySteps: [{ id: 'step', band_id: 'band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true, approver_profile_ids: ['approver-1'] }]
+      approvalPolicySteps: [{ id: 'step', band_id: 'band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }]
     };
     const saved = await ctx.rpc.rpc('save_finance_configuration', { p_branch_id: 'branch-a', p_configuration: configuration });
     expect(saved.error).toBeNull();
@@ -358,6 +362,38 @@ describe('canonical finance configuration RPCs', () => {
     const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 50 });
     expect(covered.error).toBeNull();
     expect(ctx.read().approvalSteps).toHaveLength(1);
+  });
+
+  test('allows only distinct profiles with the required permission to satisfy a multi-approval step', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.approvalPolicySteps = [{ id: 'two-approvals', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 2, prohibit_submitter_approval: true }];
+    const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-creator' }));
+    const created = await rpc.rpc('create_financial_document_transaction', args);
+    expect(created.error).toBeNull();
+    const stepId = state.approvalSteps[0].id;
+    const ctxRpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-approver-1' }));
+    const first = await ctxRpc.rpc('decide_financial_document_approval', { p_request_step_id: stepId, p_decision: 'approved' });
+    expect(first.data.approval_status).toBe('pending');
+    const duplicate = await ctxRpc.rpc('decide_financial_document_approval', { p_request_step_id: stepId, p_decision: 'approved' });
+    expect(duplicate.error?.message).toContain('already decided');
+    const secondRpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-approver-2' }));
+    const second = await secondRpc.rpc('decide_financial_document_approval', { p_request_step_id: stepId, p_decision: 'approved' });
+    expect(second.data.approval_status).toBe('approved');
+    expect(state.documents[0].journal_entry_id).toBe(created.data.journal_entry_id);
+  });
+
+  test('immediately approves a covered transaction when the configured band has no approval steps', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.approvalPolicySteps = [];
+    const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-creator' }));
+    const result = await rpc.rpc('create_financial_document_transaction', args);
+    expect(result.error).toBeNull();
+    expect(result.data.status).toBe('approved');
+    expect(result.data.approval_request_id).toBeNull();
+    expect(state.documents[0].journal_entry_id).toBe(result.data.journal_entry_id);
+    expect(state.journals[0].source_type).toBe('financial_document');
   });
 });
 

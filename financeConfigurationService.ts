@@ -37,7 +37,7 @@ export interface FinanceConfiguration {
   }>;
   approvalPolicySteps: Array<{
     id: string; band_id: string; step_number: number; required_permission_key: FinanceApprovalPermission;
-    required_approvals: number; prohibit_submitter_approval: boolean; approver_profile_ids: string[];
+    required_approvals: number; prohibit_submitter_approval: boolean; approver_profile_ids?: string[];
   }>;
 }
 

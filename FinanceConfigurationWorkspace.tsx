@@ -50,6 +50,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [policyMin, setPolicyMin] = useState('0');
   const [policyMax, setPolicyMax] = useState('');
   const [selectedApprovers, setSelectedApprovers] = useState<string[]>([]);
+  const [requiredApprovals, setRequiredApprovals] = useState('1');
 
   const assetAccounts = useMemo(
     () => configuration.chartAccounts.filter(account => account.account_type === 'asset' && account.is_active),
@@ -143,8 +144,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const addApprovalPolicy = () => {
     const min = Number(policyMin);
     const max = policyMax.trim() ? Number(policyMax) : null;
+    const approvalCount = Number(requiredApprovals);
     if (!policyName.trim() || !Number.isFinite(min) || min < 0 ||
-      (max !== null && (!Number.isFinite(max) || max <= min)) || selectedApprovers.length === 0) return;
+      (max !== null && (!Number.isFinite(max) || max <= min)) ||
+      (policyType === 'budget' && selectedApprovers.length === 0) ||
+      (policyType === 'financial_document' && (!Number.isInteger(approvalCount) || approvalCount < 1))) return;
     const policyId = makeId('policy');
     const bandId = makeId('band');
     update({
@@ -157,12 +161,15 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       }],
       approvalPolicySteps: [...configuration.approvalPolicySteps, {
         id: makeId('approval-step'), band_id: bandId, step_number: 1,
-        required_permission_key: 'approve_finances', required_approvals: 1,
-        prohibit_submitter_approval: true, approver_profile_ids: selectedApprovers
+        required_permission_key: 'approve_finances',
+        required_approvals: policyType === 'financial_document' ? approvalCount : 1,
+        prohibit_submitter_approval: true,
+        approver_profile_ids: policyType === 'budget' ? selectedApprovers : []
       }]
     });
     setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
     setSelectedApprovers([]);
+    setRequiredApprovals('1');
   };
 
   const save = async () => {
@@ -276,10 +283,16 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
             </select>
             <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={policyMin} onChange={e => setPolicyMin(e.target.value)} /><input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={policyMax} onChange={e => setPolicyMax(e.target.value)} /></div>
-            <label className={labelClass}>Approver for this step</label>
-            <select className={fieldClass} value={selectedApprovers[0] || ''} onChange={e => setSelectedApprovers(e.target.value ? [e.target.value] : [])}>
-              {approvers.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}
-            </select>
+            {policyType === 'budget' ? <>
+              <label className={labelClass}>Assigned budget approver</label>
+              <select className={fieldClass} value={selectedApprovers[0] || ''} onChange={e => setSelectedApprovers(e.target.value ? [e.target.value] : [])}>
+                {approvers.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}
+              </select>
+            </> : <>
+              <label className={labelClass}>Required distinct approvals</label>
+              <input className={fieldClass} type="number" min="1" step="1" value={requiredApprovals} onChange={e => setRequiredApprovals(e.target.value)} />
+              <p className="mt-1 text-xs text-slate-500">Any active profile with the branch-scoped approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
+            </>}
             <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
           </div>
           <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
