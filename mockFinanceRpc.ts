@@ -774,6 +774,33 @@ export function createMockFinanceRpc(
     return success(requisitions);
   }
 
+  function getDepartmentRequisitionSubmissionOptions(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = args.p_branch_id;
+    if (!branchId || !hasPermission(state, actor.id, 'submit_requisitions', branchId)) {
+      return fail('Insufficient permission to prepare a requisition in this branch', '42501');
+    }
+    if (actor.branch_id !== branchId || actor.membership_status !== 'active' || actor.record_status !== 'active') {
+      return fail('The submitting profile must be an active member of the selected branch', '42501');
+    }
+    const ministry = state.ministries.find(item => item.id === args.p_ministry_id &&
+      item.status === 'active' && ['ministry', 'department'].includes(item.entity_type) &&
+      (item.branch_id == null || item.branch_id === branchId));
+    if (!ministry) return fail('Select an active ministry or department in the same branch');
+    if (!state.baseCurrencyCode) return fail('Church base currency must be configured before requisitions can be submitted');
+    return success({
+      branch_id: branchId,
+      ministry_id: ministry.id,
+      ministry_name: ministry.name,
+      base_currency_code: state.baseCurrencyCode,
+      currencies: clone(state.currencies)
+    });
+  }
+
   function submitDepartmentRequisition(args: Record<string, any> = {}) {
     const state = clone(storage.load());
     const auth = getAuth();
@@ -1416,6 +1443,7 @@ export function createMockFinanceRpc(
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
         if (name === 'get_department_requisitions') return getDepartmentRequisitions(args);
+        if (name === 'get_department_requisition_submission_options') return getDepartmentRequisitionSubmissionOptions(args);
         if (name === 'submit_department_requisition') return submitDepartmentRequisition(args);
         if (name === 'decide_department_requisition_approval') return decideDepartmentRequisitionApproval(args);
         if (name === 'save_requisition_approval_policy') return saveRequisitionApprovalPolicy(args);
