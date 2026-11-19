@@ -10,33 +10,66 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page).toHaveURL(/\/portal(?:\/|$)/);
     await expect(page.getByText('Church Overview').first()).toBeVisible();
 
-    // The built-in demo admin is not guaranteed to carry the finance role in
-    // persisted mock data. Give this isolated browser context an explicit,
-    // church-scoped finance-officer assignment as deterministic test setup.
+    // Resolve the signed-in profile from the mock auth session instead of
+    // assuming that the selected demo account always uses a fixed profile ID.
+    // Seed the complete authorization relationship in this isolated browser DB.
     await page.evaluate(() => {
-      const storageKey = 'faithconnect_db_v2';
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) throw new Error('Mock database was not initialized after demo sign-in.');
-      const database = JSON.parse(raw);
-      const assignments = Array.isArray(database.profile_role_assignments)
+      const databaseKey = 'faithconnect_db_v2';
+      const sessionKey = 'faithconnect_auth_session_v2';
+      const rawDatabase = localStorage.getItem(databaseKey);
+      const rawSession = localStorage.getItem(sessionKey);
+      if (!rawDatabase || !rawSession) throw new Error('Mock database or auth session was not initialized.');
+      const database = JSON.parse(rawDatabase);
+      const session = JSON.parse(rawSession);
+      const authUserId = session.user?.id;
+      const actor = (database.profiles || []).find((profile: { auth_user_id?: string; id: string }) =>
+        profile.auth_user_id === authUserId || profile.id === authUserId
+      );
+      if (!actor) throw new Error(`No church profile found for signed-in mock user ${authUserId || '(unknown)'}.`);
+
+      database.roles = Array.isArray(database.roles) ? database.roles : [];
+      database.permissions = Array.isArray(database.permissions) ? database.permissions : [];
+      database.role_permissions = Array.isArray(database.role_permissions) ? database.role_permissions : [];
+      database.profile_role_assignments = Array.isArray(database.profile_role_assignments)
         ? database.profile_role_assignments
         : [];
-      database.profile_role_assignments = [
-        ...assignments.filter((item: { id?: string }) => item.id !== 'pw-finance-officer-assignment'),
-        {
-          id: 'pw-finance-officer-assignment',
-          profile_id: 'usr-admin-1',
-          role_id: 'mock-role-finance-officer',
-          scope_type: 'church',
-          branch_id: null,
-          district_id: null,
-          assigned_by_profile_id: 'usr-admin-1',
-          assigned_at: new Date().toISOString(),
-          expires_at: null,
-          is_active: true
+
+      let financeRole = database.roles.find((role: { name?: string }) => role.name === 'finance_officer');
+      if (!financeRole) {
+        financeRole = { id: 'pw-finance-officer-role', name: 'finance_officer', is_active: true };
+        database.roles.push(financeRole);
+      }
+      financeRole.is_active = true;
+
+      for (const key of ['view_finances', 'manage_finances']) {
+        let permission = database.permissions.find((item: { key?: string }) => item.key === key);
+        if (!permission) {
+          permission = { id: `pw-${key}`, key };
+          database.permissions.push(permission);
         }
-      ];
-      localStorage.setItem(storageKey, JSON.stringify(database));
+        if (!database.role_permissions.some((link: { role_id: string; permission_id: string }) =>
+          link.role_id === financeRole.id && link.permission_id === permission.id
+        )) {
+          database.role_permissions.push({ role_id: financeRole.id, permission_id: permission.id });
+        }
+      }
+
+      database.profile_role_assignments = database.profile_role_assignments.filter(
+        (item: { id?: string }) => item.id !== 'pw-finance-officer-assignment'
+      );
+      database.profile_role_assignments.push({
+        id: 'pw-finance-officer-assignment',
+        profile_id: actor.id,
+        role_id: financeRole.id,
+        scope_type: 'church',
+        branch_id: null,
+        district_id: null,
+        assigned_by_profile_id: actor.id,
+        assigned_at: new Date(Date.now() - 1000).toISOString(),
+        expires_at: null,
+        is_active: true
+      });
+      localStorage.setItem(databaseKey, JSON.stringify(database));
     });
 
     await page.reload();
