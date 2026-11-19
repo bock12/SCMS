@@ -44,6 +44,15 @@ BEGIN
   CROSS JOIN public.roles r
   WHERE r.name = 'finance_officer' AND r.is_active;
 
+  -- The submitter is also explicitly authorized to manage events; the new
+  -- event-budget RPC no longer relies on finance-manager permission alone.
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, assigned_at, is_active
+  )
+  SELECT v_submitter_profile, r.id, 'branch', v_branch_id, now() - interval '1 day', true
+  FROM public.roles r
+  WHERE r.name = 'pastor' AND r.is_active;
+
   INSERT INTO public.chart_of_accounts (id, code, name, account_type, normal_balance)
   VALUES
     (v_cash_chart_id, 'FIN-INT-002-CASH', 'Event Test Cash', 'asset', 'debit'),
