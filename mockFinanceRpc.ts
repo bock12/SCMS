@@ -632,7 +632,7 @@ export function createMockFinanceRpc(
       hasPermission(state, actor.id, 'manage_finances', branchId) ||
       hasPermission(state, actor.id, 'approve_finances', branchId);
     const visible = state.documents.filter(document =>
-      (!requestedBranch || document.branch_id === requestedBranch) && canView(document.branch_id)
+      document.branch_id === requestedBranch && canView(document.branch_id)
     );
     return success({
       actor_profile_id: actor.id,

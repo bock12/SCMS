@@ -101,6 +101,23 @@ describe('deterministic mock financial-document RPC', () => {
     expect(listed.data.documents[0].approval_steps_completed).toBe(0);
   });
 
+  test('treats a null branch filter as church-wide scope instead of all branches', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.permissions.push({ profile_id: 'creator', permission: 'view_finances', branch_id: null });
+    state.documents.push(
+      { id: 'branch-document', branch_id: 'branch-a', transaction_date: '2026-06-10' },
+      { id: 'church-document', branch_id: null, transaction_date: '2026-06-10' }
+    );
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: () => { throw new Error('unexpected persistence'); }
+    }, () => ({ userId: 'user-creator' }));
+    const result = await rpc.rpc('get_finance_documents', { p_branch_id: null });
+    expect(result.error).toBeNull();
+    expect(result.data.documents.map((document: any) => document.id)).toEqual(['church-document']);
+  });
+
   test('does not expose finance documents to an unrelated branch or unauthorized profile', async () => {
     const ctx = fixture();
     await ctx.rpc.rpc('create_financial_document_transaction', args);
