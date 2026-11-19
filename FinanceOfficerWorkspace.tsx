@@ -13,6 +13,7 @@ import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
+import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -1020,6 +1021,9 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
       {/* --- WORKSPACE TAB 1: FINANCIAL LEDGER & REPORTS --- */}
       {workspaceTab === 'ledger' && (
         <div className="space-y-6">
+          {hasEffectivePermission(financePermissions, 'manage_finances') && (
+            <FinanceTransactionEntryWorkspace branchId={profile?.branch_id || null} />
+          )}
           <FinanceDocumentWorkflowWorkspace branchId={profile?.branch_id || null} />
           <FinanceJournalWorkspace branchId={profile?.branch_id || null} />
           {/* Revenue, expenditure and net-position figures are now rendered from
