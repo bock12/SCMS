@@ -76,6 +76,21 @@ const fail = (message: string, code = '22023') => ({ data: null, error: { code, 
 const success = <T>(data: T) => ({ data, error: null });
 const round4 = (value: number) => Math.round((value + Number.EPSILON) * 10000) / 10000;
 
+/** Expand every effective role permission across its resolved branch scope.
+ * The adapter consumes the same permission catalog as the role editor; keeping
+ * this unfiltered prevents newly introduced scoped permissions from silently
+ * disappearing at the mock RPC boundary.
+ */
+export function expandMockFinancePermissions(
+  profileId: string,
+  permissionKeys: string[],
+  branchIds: Array<string | null>
+): Array<{ profile_id: string; permission: string; branch_id: string | null }> {
+  return [...new Set(permissionKeys)].flatMap(permission =>
+    [...new Set(branchIds)].map(branch_id => ({ profile_id: profileId, permission, branch_id }))
+  );
+}
+
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
     profiles: [], permissions: [], currencies: [], baseCurrencyCode: null,

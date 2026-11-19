@@ -1,5 +1,5 @@
 import type { Profile, District, ChurchBranch, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, PrayerRequest, ChurchEvent, EventRegistration } from './types';
-import { createBrowserMockFinanceStorage, createMockFinanceRpc } from './mockFinanceRpc';
+import { createBrowserMockFinanceStorage, createMockFinanceRpc, expandMockFinancePermissions } from './mockFinanceRpc';
 
 // Storage keys
 function createMockUuid(): string {
@@ -1153,10 +1153,7 @@ const mockFinanceRpc = createMockFinanceRpc({
           : assignment.scope_type === 'district'
             ? branches.filter((branch: any) => branch.district_id === assignment.district_id).map((branch: any) => branch.id)
             : [];
-      permissionKeys.filter((key: string) => ['view_finances', 'manage_finances', 'approve_finances', 'manage_chart_of_accounts', 'manage_financial_periods'].includes(key))
-        .forEach((permission: string) => scopedBranches.forEach((branchId: string | null) => {
-          resolved.push({ profile_id: assignment.profile_id, permission, branch_id: branchId });
-        }));
+      resolved.push(...expandMockFinancePermissions(assignment.profile_id, permissionKeys, scopedBranches));
     });
     state.permissions = resolved;
     return state;

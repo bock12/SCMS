@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
+import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, expandMockFinancePermissions, type MockFinanceState } from './mockFinanceRpc';
 
 function fixture() {
   const state: MockFinanceState = {
@@ -52,6 +52,19 @@ const args = {
   p_category_account_id: 'income-chart', p_fund_id: 'fund-a',
   p_external_reference: ' RCPT-1 ', p_description: ' Sunday offering ', p_exchange_rate_to_base: 1
 };
+
+describe('mock finance permission scope bridge', () => {
+  test('preserves finance, journal-posting and event-budget permissions for resolved scopes', () => {
+    const permissions = expandMockFinancePermissions('staff-1', [
+      'manage_finances', 'post_journals', 'manage_events', 'submit_event_budgets'
+    ], ['branch-a', null, 'branch-a']);
+
+    expect(permissions).toHaveLength(8);
+    expect(permissions).toContainEqual({ profile_id: 'staff-1', permission: 'post_journals', branch_id: 'branch-a' });
+    expect(permissions).toContainEqual({ profile_id: 'staff-1', permission: 'manage_events', branch_id: 'branch-a' });
+    expect(permissions).toContainEqual({ profile_id: 'staff-1', permission: 'submit_event_budgets', branch_id: null });
+  });
+});
 
 describe('deterministic mock financial-document RPC', () => {
   test('creates a balanced pending receipt and persists canonical records', async () => {
