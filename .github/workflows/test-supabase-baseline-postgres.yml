@@ -24,6 +24,7 @@ on:
       - "supabase/migrations/20261119000400_add_department_requisition_approval_workflow.sql"
       - "supabase/migrations/20261119000500_add_requisition_approval_configuration_api.sql"
       - "supabase/migrations/20261119000600_add_department_requisition_read_api.sql"
+      - "supabase/migrations/20261119000700_add_requisition_submission_options_api.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
@@ -1121,6 +1122,9 @@ jobs:
       - name: Apply scoped department requisition read API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000600_add_department_requisition_read_api.sql
 
+      - name: Apply requisition submission options API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000700_add_requisition_submission_options_api.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1179,7 +1183,8 @@ jobs:
               'public.decide_department_requisition_approval(uuid,text,text)',
               'public.get_requisition_approval_configuration(uuid)',
               'public.save_requisition_approval_policy(uuid,text,numeric,numeric,jsonb)',
-              'public.get_department_requisitions(uuid)'
+              'public.get_department_requisitions(uuid)',
+              'public.get_department_requisition_submission_options(uuid,uuid)'
             ] LOOP
               IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
                 RAISE EXCEPTION 'Authenticated role is missing requisition RPC grant: %', v_signature;
