@@ -5,7 +5,7 @@ DO $department_requisition_payment$
 DECLARE
   v_branch_id uuid := '10000000-0000-4000-8000-000000000001';
   v_finance_auth uuid := 'a7000000-0000-4000-8000-000000000005';
-  v_pastor_auth uuid := 'a7000000-0000-4000-8000-000000000003';
+  v_finance_approver_auth uuid := '96000000-0000-4000-8000-000000000012';
   v_requisition_id uuid;
   v_payment jsonb;
   v_retry jsonb;
@@ -100,7 +100,7 @@ BEGIN
   SELECT id INTO v_step_id
   FROM public.approval_request_steps
   WHERE approval_request_id = v_request_id AND step_number = 1;
-  PERFORM set_config('request.jwt.claim.sub', v_pastor_auth::text, true);
+  PERFORM set_config('request.jwt.claim.sub', v_finance_approver_auth::text, true);
   PERFORM public.decide_financial_document_approval(v_step_id, 'approved', 'Payment approved separately');
 
   -- Approval alone is not payment: no paid amount until the journal is posted.
@@ -141,7 +141,7 @@ BEGIN
   SELECT id INTO v_second_step
   FROM public.approval_request_steps
   WHERE approval_request_id = v_second_request AND step_number = 1;
-  PERFORM set_config('request.jwt.claim.sub', v_pastor_auth::text, true);
+  PERFORM set_config('request.jwt.claim.sub', v_finance_approver_auth::text, true);
   PERFORM public.decide_financial_document_approval(v_second_step, 'rejected', 'Rejected for test retry');
 
   PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
@@ -158,7 +158,7 @@ BEGIN
   SELECT id INTO v_third_step
   FROM public.approval_request_steps
   WHERE approval_request_id = v_third_request AND step_number = 1;
-  PERFORM set_config('request.jwt.claim.sub', v_pastor_auth::text, true);
+  PERFORM set_config('request.jwt.claim.sub', v_finance_approver_auth::text, true);
   PERFORM public.decide_financial_document_approval(v_third_step, 'approved', 'Replacement payment approved');
   PERFORM set_config('request.jwt.claim.sub', v_finance_auth::text, true);
   PERFORM public.post_finance_journal_entry(v_journal_id);
