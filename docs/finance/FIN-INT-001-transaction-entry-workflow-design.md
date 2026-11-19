@@ -307,6 +307,6 @@ The deterministic mock RPC now enforces the same configuration scope boundaries 
 - New approval policies must use the requested branch scope or church-wide scope; church-wide policies require church-level finance management permission, while branch policies require finance management permission in that branch.
 - Existing approval policy versions, amount bands and approval steps are immutable through this configuration API. New bands and steps must belong to a policy/band created in the same save.
 
-Regression tests cover attempts by a branch Finance Manager to modify church-wide chart configuration or add a church-wide approval policy. Both operations must fail without changing persisted mock state.
+Regression tests cover attempts by a branch Finance Manager to modify church-wide chart configuration, add a church-wide approval policy, or create a financial account in another branch. These operations must fail without changing persisted mock state.
 
 These changes improve development-time authorization parity; the PostgreSQL RPC remains the production authorization boundary. No live Supabase migration or deployment was performed for this work.
