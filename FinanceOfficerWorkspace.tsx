@@ -954,7 +954,6 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
           )}
           {canViewFinance ? (
-            {/* Quick Action Buttons - Touch friendly 2-col on mobile, flex on desktop */}
             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
               <button
                 title="Open canonical receipt entry"
