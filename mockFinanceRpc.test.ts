@@ -256,6 +256,17 @@ describe('deterministic mock financial-document RPC', () => {
     expect(ctx.read().documents[0].status).toBe('rejected');
     expect(ctx.read().documents[0].journal_entry_id).toBeNull();
     expect(ctx.read().journals[0].source_type).toBe('financial_document_pending');
+
+    ctx.setUser('user-creator');
+    const posting = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: ctx.read().journals[0].id
+    });
+    expect(posting.error?.message).toContain('cannot be posted before approval');
+    expect(ctx.read().journals[0].status).toBe('draft');
+
+    const ledger = await ctx.rpc.rpc('get_finance_journals', { p_branch_id: 'branch-a' });
+    expect(ledger.error).toBeNull();
+    expect(ledger.data.account_balances).toHaveLength(0);
   });
 
   test('does not post an unapproved pending journal or include it in account balances', async () => {
