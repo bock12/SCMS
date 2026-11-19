@@ -3,7 +3,7 @@
 **Reviewed:** 2026-11-19  
 **Repository:** `bock12/SCMS`  
 **Branch:** `main`  
-**Reviewed head:** `e848a05a0229ff70f9966f37298af4479b0db8d2`
+**Reviewed head:** `86ae1c968018eb490b4819c626123b19b9e71986`
 
 ## Objective
 
@@ -41,14 +41,14 @@ A canonical payment must have an explicit, durable source relationship. Do not i
 The preferred database contract is a constrained source relationship on the canonical financial document (or a dedicated relation table if the resulting constraints are clearer):
 
 - One payment can be linked to at most one source.
-- A source can have at most one active canonical payment, enforced by a database unique constraint/index.
+- A source can have multiple partial canonical payments. A per-source idempotency key prevents duplicate creation attempts, while a row lock serializes payment creation and ensures posted amounts plus active payment reservations never exceed the approved amount. Rejected/cancelled payments release their reservations; a new attempt uses a new request key.
 - Event budget links must reference a durable `public.budgets.id` whose `budget_type = 'event'` and whose status is approved.
 - Department requisition links require a new durable requisition domain record and line-item representation before they can be supported. Existing localStorage requisition IDs must not be cast to UUIDs or treated as authoritative database identifiers.
 - Source and payment must have the same branch and currency. Amount must not exceed the approved source amount unless a separately approved variation model is introduced.
 - Only `payment` documents may carry these source links.
 - The source link is created atomically with the canonical payment and draft journal. If payment creation or approval submission fails, the source link, document and journal must all roll back.
 - Approval of the payment does not mark the source as disbursed and does not count as actual expenditure. A source can be shown as paid only after the payment document is approved and its journal is posted.
-- Retry behavior must be idempotent. Repeating a payment request for an already-linked source must return a safe conflict/already-linked result and must not create a second document or journal.
+- Retry behavior must be idempotent. Repeating the same source/request key returns the original payment document and journal reference without creating a second document, approval request or journal. A rejected payment remains in history but releases its reservation; a new attempt requires a new key.
 
 The payment creation RPC must verify the source's persisted approval state and permissions itself. Client-side checks against localStorage are not an authorization boundary.
 
@@ -90,7 +90,7 @@ The payment creation RPC must verify the source's persisted approval state and p
 - Missing, rejected, draft or otherwise unapproved source cannot create a payment.
 - Event source must resolve to an approved event budget; requisition source must resolve to an approved persisted requisition.
 - Source and payment branch/currency must match; payment amount must be positive and within approved amount.
-- Duplicate source payment is prevented under concurrent/retried requests.
+- Duplicate request keys are prevented under concurrent/retried requests; multiple partial payments are allowed only within the approved amount.
 - Payment creation and source linking are atomic with the balanced draft journal and approval request.
 - Approval and rejection preserve correct document/source states.
 - Approved-but-unposted journals do not contribute to source actuals.
@@ -238,3 +238,46 @@ Validation coverage is added in `eventBudgetMockRpc.test.ts` for submission, bra
 - No browser acceptance test was performed. No live Supabase migration or deployment was performed.
 
 **Next implementation boundary:** Add a source-requisition link to canonical financial documents and a secure requisition-payment creation RPC. Reserve pending payments against the approved amount, permit retry after rejected payments, and update the requisition to partially paid/paid only when the linked journal is actually posted. The payment must still pass its own approval workflow and journal-posting guard.
+
+
+## Slice 8 progress — requisition-to-payment integration
+
+**Database implementation**
+
+Migration `supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql` adds the canonical requisition-payment relationship:
+
+- Adds `financial_documents.source_requisition_id` with a restrictive FK to `department_requisitions.id`, and `source_request_key` for per-requisition idempotency.
+- Constraints permit the source link only on payment documents, require the source and request key together, and enforce a unique key per requisition. Multiple payment documents are intentionally supported for partial settlement.
+- `create_department_requisition_payment` locks the requisition row, requires the persisted requisition status and approval request to both be approved, enforces branch `manage_finances`, validates an optional member profile against the requisition branch, and prevents payments above the remaining approved amount.
+- Remaining amount is calculated from posted payments plus active payment reservations. Pending-approval and approved-but-unposted payments reserve funds; rejected/cancelled documents do not. A new key is required for a replacement attempt after rejection.
+- The routine reuses `create_financial_document_transaction`, so each payment gets its own canonical financial document, balanced draft journal and separate financial approval request. The source link is written in the same database transaction.
+- Repeating the same request key returns the original payment rather than creating another payment/journal. The requisition row lock serializes concurrent payment creation.
+- `get_department_requisition_payment_summary` is finance-permission scoped and returns payment history, posted paid amount, reserved amount, remaining amount and derived payment status. The paid calculation requires both a posted financial document and its linked posted journal.
+- The requisition's approval `status` remains independent and stays `approved`; the payment summary derives `unpaid`, `payment_pending`, `partially_paid` or `paid` from canonical payment/journal state. Approval is never overwritten by payment progress.
+
+**Mock, service and UI integration**
+
+- Added matching mock RPCs for requisition payment creation and payment summary, including idempotency, partial-payment reservations, overpayment protection and posted-only paid totals.
+- The mock journal-posting adapter now transitions an approved financial document to `posted` when its linked journal is posted, matching the database lifecycle.
+- Added typed methods in `requisitionService.ts` for payment creation and summary retrieval.
+- Added `DepartmentRequisitionPaymentWorkspace.tsx` to the Finance Officer workspace. It lists approved requisitions, loads finance configuration and payment summaries, and captures supplier/payee, amount, date, payment method, source financial account, expense category, optional fund and reference.
+- Payment creation is available only to profiles with `manage_finances`. The form enforces remaining balance client-side, while the RPC remains authoritative. It creates a separate payment approval workflow; the existing finance-document approval and journal workspace handle the later approval and posting steps.
+- The UI distinguishes posted paid amounts from pending/approved reservations and shows linked payment history. A requisition is not represented as paid merely because a payment was created or approved.
+
+**Regression coverage**
+
+- `supabase/tests/department_requisition_payment_integration.sql` covers separate payment approval, idempotent retries, pending reservations, overpayment denial, posted-only partial payment totals, rejection releasing a reservation, replacement payment with a new key, full settlement and the independent requisition approval status.
+- `mockFinanceRpc.test.ts` covers the same mock partial-payment lifecycle and posted-only paid amount.
+- The PostgreSQL test also verifies the payment RPC's authenticated-only execute grant, SECURITY DEFINER/empty search path hardening, and no direct authenticated finance-table DML through the existing workflow security checks.
+
+**Validation**
+
+- PostgreSQL 17 fresh-install/security workflow: [run 44633745214](https://github.com/bock12/SCMS/actions/runs/44633745214) — success. This applies the new migration and passes the requisition-payment integration test alongside existing finance, event-budget and requisition lifecycle tests.
+- SCMS Build Validation: [run 44633772115](https://github.com/bock12/SCMS/actions/runs/44633772115) — success. Bun automated tests and Vite production build passed for the mock adapter, service and Finance Officer UI integration.
+- No browser acceptance/runtime test was performed. No live Supabase migration replay, deployment or production data write was performed.
+
+**Remaining boundary**
+
+- The source-linked database and mock workflows are implemented and CI-validated. Browser-level testing of the full Finance Officer sequence (create payment → approve payment → post journal → refresh summary) remains outstanding.
+- Live Supabase remains untouched. The migration is in the repository's forward migration chain only; it has not been applied to the user's Supabase project.
+- The UI's payment summary is derived from canonical payment documents and posted journals. It intentionally does not rewrite the requisition's approval status.
