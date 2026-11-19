@@ -10,6 +10,7 @@ DECLARE
   v_other_manager_profile uuid := '99000000-0000-4000-8000-000000000004';
   v_finance_only_auth uuid := '99000000-0000-4000-8000-000000000005';
   v_finance_only_profile uuid := '99000000-0000-4000-8000-000000000006';
+  v_event_manager_role_id uuid := '99000000-0000-4000-8000-000000000008';
   v_event_id uuid := '99000000-0000-4000-8000-000000000007';
   v_period_id uuid := '96000000-0000-4000-8000-000000000009';
   v_expense_account_id uuid;
@@ -30,13 +31,19 @@ BEGIN
     (v_other_manager_profile, v_other_manager_auth, v_branch_id, 'Other', 'Manager', 'fin-int-002-other-manager@example.invalid'),
     (v_finance_only_profile, v_finance_only_auth, v_branch_id, 'Finance', 'Only', 'fin-int-002-finance-only@example.invalid');
 
+  INSERT INTO public.roles (id, name, description, is_system, is_active)
+  VALUES (v_event_manager_role_id, 'event_manager_test', 'Test-only least-privilege event manager role', false, true);
+
+  INSERT INTO public.role_permissions (role_id, permission_id)
+  SELECT v_event_manager_role_id, p.id
+  FROM public.permissions p
+  WHERE p.key IN ('manage_events', 'submit_event_budgets');
+
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
   )
-  SELECT actor.profile_id, r.id, 'branch', v_branch_id, now() - interval '1 day', true
-  FROM (VALUES (v_event_manager_profile), (v_other_manager_profile)) actor(profile_id)
-  CROSS JOIN public.roles r
-  WHERE r.name = 'pastor' AND r.is_active;
+  SELECT actor.profile_id, v_event_manager_role_id, 'branch', v_branch_id, now() - interval '1 day', true
+  FROM (VALUES (v_event_manager_profile), (v_other_manager_profile)) actor(profile_id);
 
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
@@ -65,8 +72,11 @@ BEGIN
 
   IF NOT private.has_permission('manage_events', v_branch_id)
      OR NOT private.has_permission('submit_event_budgets', v_branch_id)
-     OR private.has_permission('manage_finances', v_branch_id) THEN
-    RAISE EXCEPTION 'Event Manager must have event-budget submission permission without manage_finances';
+     OR private.has_permission('view_finances', v_branch_id)
+     OR private.has_permission('manage_finances', v_branch_id)
+     OR private.has_permission('approve_finances', v_branch_id)
+     OR private.has_permission('post_journals', v_branch_id) THEN
+    RAISE EXCEPTION 'Event Manager must have only event-budget submission capability, not finance access';
   END IF;
 
   v_options := public.get_event_budget_submission_options(v_event_id);
