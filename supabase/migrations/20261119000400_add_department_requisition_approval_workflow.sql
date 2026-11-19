@@ -346,11 +346,11 @@ begin
     requisition_id, line_number, item_name, quantity, unit_price
   )
   select
-    v_requisition_id, row_number() over (order by item.ordinality)::integer,
-    trim(item.item_name), item.quantity, item.unit_price
-  from jsonb_to_recordset(p_items) with ordinality as item(
-    item_name text, quantity numeric, unit_price numeric, ordinality bigint
-  );
+    v_requisition_id, item.ordinality::integer,
+    trim(item.value->>'item_name'),
+    (item.value->>'quantity')::numeric,
+    (item.value->>'unit_price')::numeric
+  from jsonb_array_elements(p_items) with ordinality as item(value, ordinality);
 
   insert into public.approval_requests (
     transaction_type, target_id, branch_id, policy_id, policy_version,
