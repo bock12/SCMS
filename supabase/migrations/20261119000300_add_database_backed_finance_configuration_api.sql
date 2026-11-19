@@ -214,15 +214,15 @@ begin
   end if;
 
   if p_configuration is null or jsonb_typeof(p_configuration) <> 'object'
-    or jsonb_typeof(p_configuration->'currencies') <> 'array'
-    or jsonb_typeof(p_configuration->'chartAccounts') <> 'array'
-    or jsonb_typeof(p_configuration->'financialAccounts') <> 'array'
-    or jsonb_typeof(p_configuration->'funds') <> 'array'
-    or jsonb_typeof(p_configuration->'financialYears') <> 'array'
-    or jsonb_typeof(p_configuration->'periods') <> 'array'
-    or jsonb_typeof(p_configuration->'approvalPolicies') <> 'array'
-    or jsonb_typeof(p_configuration->'approvalPolicyBands') <> 'array'
-    or jsonb_typeof(p_configuration->'approvalPolicySteps') <> 'array' then
+    or jsonb_typeof(p_configuration->'currencies') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'chartAccounts') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'financialAccounts') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'funds') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'financialYears') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'periods') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'approvalPolicies') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'approvalPolicyBands') is distinct from 'array'
+    or jsonb_typeof(p_configuration->'approvalPolicySteps') is distinct from 'array' then
     raise exception 'Finance configuration payload is incomplete';
   end if;
 
@@ -323,7 +323,7 @@ begin
   for v_item in select value from jsonb_array_elements(p_configuration->'currencies')
   loop
     v_code := upper(trim(v_item #>> '{}'));
-    if v_code !~ '^[A-Z]{3}$' then
+    if v_code is null or v_code !~ '^[A-Z]{3}$' then
       raise exception 'Currency codes must be unique three-letter codes';
     end if;
     insert into public.currencies (code, name, is_active)
@@ -369,7 +369,7 @@ begin
     v_normal_balance := coalesce(v_item->>'normal_balance',
       case when v_type in ('asset', 'expense') then 'debit' else 'credit' end);
 
-    if v_id is null or v_code = '' or v_name = ''
+    if v_id is null or v_code = '' or v_name = '' or v_type is null
       or v_type not in ('asset','liability','equity','income','expense')
       or v_normal_balance not in ('debit','credit') then
       raise exception 'Every chart account requires a UUID, code, name and valid account type and normal balance';
@@ -414,7 +414,7 @@ begin
     v_code := upper(trim(coalesce(v_item->>'code', '')));
     v_type := coalesce(v_item->>'fund_type', 'general');
 
-    if v_id is null or v_name = '' or v_code = ''
+    if v_id is null or v_name = '' or v_code = '' or v_type is null
       or v_type not in ('general','designated','restricted') then
       raise exception 'Every fund requires a UUID, code, name and valid fund type';
     end if;
@@ -449,7 +449,8 @@ begin
     v_end_date := (v_item->>'end_date')::date;
     v_status := coalesce(v_item->>'status', 'open');
 
-    if v_id is null or v_year_number not between 1900 and 9998
+    if v_id is null or v_year_number is null or v_start_date is null or v_end_date is null
+      or v_year_number not between 1900 and 9998
       or v_start_date <> make_date(v_year_number, 1, 1)
       or v_end_date <> make_date(v_year_number, 12, 31)
       or v_status not in ('open','closed') then
@@ -465,8 +466,11 @@ begin
         raise exception 'Existing financial years are immutable through finance configuration';
       end if;
     else
+      if v_status <> 'open' then
+        raise exception 'New financial years must be opened through the dedicated financial-year workflow';
+      end if;
       insert into public.financial_years (id, year_number, start_date, end_date, status)
-      values (v_id, v_year_number, v_start_date, v_end_date, v_status);
+      values (v_id, v_year_number, v_start_date, v_end_date, 'open');
     end if;
   end loop;
 
@@ -480,7 +484,7 @@ begin
     v_status := coalesce(v_item->>'status', 'open');
 
     if v_id is null or v_parent_id is null or v_name = ''
-      or v_start_date > v_end_date or v_status not in ('open','closed') then
+      or v_start_date is null or v_end_date is null or v_start_date > v_end_date or v_status not in ('open','closed') then
       raise exception 'Financial periods require a year, name, valid date range and status';
     end if;
 
@@ -523,8 +527,8 @@ begin
     v_type := v_item->>'account_type';
     v_currency := upper(trim(coalesce(v_item->>'currency_code', '')));
 
-    if v_id is null or v_parent_id is null or v_name = ''
-      or v_branch_id is distinct from p_branch_id
+    if v_id is null or v_parent_id is null or v_name = '' or v_type is null
+      or v_currency is null or v_branch_id is distinct from p_branch_id
       or v_type not in ('cash','bank','mobile_money','clearing')
       or not exists (select 1 from public.currencies c where c.code = v_currency and c.is_active)
       or not exists (
@@ -570,7 +574,7 @@ begin
     v_branch_id := nullif(v_item->>'branch_id', '')::uuid;
     v_version := (v_item->>'version')::integer;
 
-    if v_id is null or v_name = ''
+    if v_id is null or v_name = '' or v_policy_type is null
       or v_policy_type not in ('financial_document','budget')
       or v_version is null or v_version < 1
       or nullif(v_item->>'effective_from','') is null
@@ -657,6 +661,7 @@ begin
 
     if v_id is null or v_band_id is null or v_step_number is null or v_step_number < 1
       or v_required_approvals is null or v_required_approvals < 1
+      or v_permission_key is null or v_permission_key not in ('approve_finances','manage_finances','post_journals')
       or not exists (select 1 from public.permissions p where p.key = v_permission_key) then
       raise exception 'Approval steps require a valid band, order, permission and positive approval count';
     end if;
