@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, expandMockFinancePermissions, type MockFinanceState } from './mockFinanceRpc';
 
-function fixture() {
+function fixture(options: { churchFinance?: boolean } = {}) {
   const state: MockFinanceState = {
     ...createEmptyMockFinanceState(),
     profiles: [
@@ -11,6 +11,7 @@ function fixture() {
     ],
     permissions: [
       { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-a' },
+      ...(options.churchFinance ? [{ profile_id: 'creator', permission: 'manage_finances', branch_id: null }] : []),
       { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-a' },
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
@@ -386,7 +387,7 @@ describe('mock finance local persistence', () => {
 
 describe('canonical finance configuration RPCs', () => {
   test('validates, saves and reloads canonical setup independently of legacy giving data', async () => {
-    const ctx = fixture();
+    const ctx = fixture({ churchFinance: true });
     const configuration = {
       currencies: ['SLL', 'USD'], baseCurrencyCode: 'SLL',
       chartAccounts: [
@@ -427,7 +428,7 @@ describe('canonical finance configuration RPCs', () => {
   });
 
   test('enforces approval amount bands rather than flattening them into one unlimited policy', async () => {
-    const ctx = fixture();
+    const ctx = fixture({ churchFinance: true });
     const configuration = {
       currencies: ['SLL'], baseCurrencyCode: 'SLL',
       chartAccounts: [
@@ -531,9 +532,6 @@ describe('finance configuration authorization parity', () => {
     const loaded = await ctx.rpc.rpc('get_finance_configuration', { p_branch_id: 'branch-a' });
     expect(loaded.error).toBeNull();
     const changed = structuredClone(loaded.data);
-    changed.chartAccounts = changed.chartAccounts.map((account: any, index: number) => ({
-      ...account, code: String(1000 + index * 1000), name: `Account ${index + 1}`
-    }));
     changed.financialAccounts.push({
       id: 'cross-branch-account', branch_id: 'branch-b',
       chart_account_id: 'cash-chart', name: 'Other Branch Cash',
