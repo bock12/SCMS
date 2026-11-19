@@ -296,3 +296,17 @@ Validation:
 - [SCMS Build Validation #44558047739](https://github.com/bock12/SCMS/actions/runs/44558047739): passed automated tests and Vite production build.
 
 These checks use disposable CI PostgreSQL and the local development mock. The migration has **not** been applied to the live Supabase project; no live database was connected or changed. Browser acceptance testing is still outstanding.
+
+## Mock finance configuration permission parity
+
+The deterministic mock RPC now enforces the same configuration scope boundaries as the PostgreSQL configuration API:
+
+- Church-wide currencies, base currency, chart-of-accounts records and funds require church-level finance configuration permission.
+- Financial years and periods require church-level financial-period management permission.
+- Operational financial accounts remain branch-scoped and require finance management permission for the requested branch.
+- New approval policies must use the requested branch scope or church-wide scope; church-wide policies require church-level finance management permission, while branch policies require finance management permission in that branch.
+- Existing approval policy versions, amount bands and approval steps are immutable through this configuration API. New bands and steps must belong to a policy/band created in the same save.
+
+Regression tests cover attempts by a branch Finance Manager to modify church-wide chart configuration or add a church-wide approval policy. Both operations must fail without changing persisted mock state.
+
+These changes improve development-time authorization parity; the PostgreSQL RPC remains the production authorization boundary. No live Supabase migration or deployment was performed for this work.
