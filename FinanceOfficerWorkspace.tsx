@@ -2459,61 +2459,72 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* MOBILE & TABLET BOTTOM NAV BAR (Fixed at bottom on < lg screens) */}
       <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
-        <div className="grid grid-cols-5 gap-1 max-w-2xl mx-auto">
-          <button
-            onClick={() => setWorkspaceTab('ledger')}
-            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-              workspaceTab === 'ledger'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <PieChart size={18} />
-            <span className="mt-0.5 truncate w-full text-center">Ledger</span>
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('requisitions')}
-            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-              workspaceTab === 'requisitions'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <ShoppingCart size={18} />
-            <span className="mt-0.5 truncate w-full text-center">Proposals</span>
-            {pendingReqsCount > 0 && (
-              <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
-            )}
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('event_budgets')}
-            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-              workspaceTab === 'event_budgets'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Calendar size={18} />
-            <span className="mt-0.5 truncate w-full text-center">Budgets</span>
-            {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-              <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
-            )}
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('gateways')}
-            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-              workspaceTab === 'gateways'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Sliders size={18} />
-            <span className="mt-0.5 truncate w-full text-center">Gateways</span>
-          </button>
-        </div>
+        {canViewFinance ? (
+          <div className="grid grid-cols-5 gap-1 max-w-2xl mx-auto">
+            <button
+              onClick={() => setWorkspaceTab('ledger')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'ledger'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <PieChart size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Ledger</span>
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('requisitions')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'requisitions'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ShoppingCart size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Proposals</span>
+              {pendingReqsCount > 0 && (
+                <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
+              )}
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('event_budgets')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'event_budgets'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Calendar size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Budgets</span>
+              {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
+              )}
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('gateways')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'gateways'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Sliders size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Gateways</span>
+            </button>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto">
+            <button
+              onClick={() => setWorkspaceTab('requisitions')}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-extrabold bg-indigo-600 text-white"
+            >
+              <ShoppingCart size={18} /> Requisition Approvals
+            </button>
+          </div>
+        )}
       </nav>
     </div>
   );
