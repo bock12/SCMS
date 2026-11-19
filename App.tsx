@@ -4429,7 +4429,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               <tr>
                 <th>Item Name & Specifications</th>
                 <th style="text-align: center;">Quantity</th>
-                <th style="text-align: right;">Unit Price ({previewProposal.currency || reqBaseCurrency})</th>
+                <th style="text-align: right;">Unit Price (${req.currency || 'SLE'})</th>
                 <th style="text-align: right;">Line Total (${req.currency || 'SLE'})</th>
               </tr>
             </thead>
@@ -8338,7 +8338,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                           <th className="py-2.5 px-3 text-center w-10">#</th>
                           <th className="py-2.5 px-4">Item Description & Specifications</th>
                           <th className="py-2.5 px-3 text-center w-16">Qty</th>
-                          <th className="py-2.5 px-4 text-right">Unit Price (${req.currency || 'SLE'})</th>
+                          <th className="py-2.5 px-4 text-right">Unit Price ({previewProposal.currency || reqBaseCurrency})</th>
                           <th className="py-2.5 px-4 text-right">Line Subtotal ({previewProposal.currency || reqBaseCurrency})</th>
                         </tr>
                       </thead>
@@ -8390,7 +8390,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                     <div className="pt-2 border-t border-slate-700 flex justify-between items-center text-sm font-black">
                       <span className="text-amber-400 uppercase font-sans">Total Requested Budget:</span>
                       <span className="text-emerald-400 text-lg">
-                        SLE {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
+                        {previewProposal.currency || reqBaseCurrency} {previewProposal.items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.unit_price || 0)), 0).toLocaleString()}
                       </span>
                     </div>
                   </div>
