@@ -52,24 +52,6 @@ BEGIN
   INSERT INTO public.ministries (id, branch_id, name, entity_type, status)
   VALUES (v_ministry_id, v_branch_id, 'FIN-INT-002 Test Department', 'department', 'active');
 
-  INSERT INTO public.approval_policies (
-    id, name, transaction_type, branch_id, version, effective_from,
-    is_active, created_by_profile_id
-  ) VALUES (
-    v_policy_id, 'FIN-INT-002 Department Requisition Policy',
-    'requisition', v_branch_id, 1, '2020-01-01', true, v_submitter_profile
-  );
-
-  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
-  VALUES (v_band_id, v_policy_id, 0, NULL);
-
-  INSERT INTO public.approval_policy_steps (
-    band_id, step_number, required_permission_key, required_approvals,
-    prohibit_submitter_approval
-  ) VALUES
-    (v_band_id, 1, 'approve_requisitions', 1, true),
-    (v_band_id, 2, 'approve_requisitions', 1, true);
-
   IF NOT EXISTS (
     SELECT 1
     FROM public.profile_role_assignments pra
@@ -108,6 +90,24 @@ BEGIN
     IF SQLERRM = 'FIN_INT_002_EXPECTED_MISSING_POLICY_FAILURE' THEN RAISE; END IF;
     IF position('approval policy' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
   END;
+
+  INSERT INTO public.approval_policies (
+    id, name, transaction_type, branch_id, version, effective_from,
+    is_active, created_by_profile_id
+  ) VALUES (
+    v_policy_id, 'FIN-INT-002 Department Requisition Policy',
+    'requisition', v_branch_id, 1, '2020-01-01', true, v_submitter_profile
+  );
+
+  INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
+  VALUES (v_band_id, v_policy_id, 0, NULL);
+
+  INSERT INTO public.approval_policy_steps (
+    band_id, step_number, required_permission_key, required_approvals,
+    prohibit_submitter_approval
+  ) VALUES
+    (v_band_id, 1, 'approve_requisitions', 1, true),
+    (v_band_id, 2, 'approve_requisitions', 1, true);
 
   v_result := public.submit_department_requisition(
     v_branch_id, v_ministry_id, 'Department equipment request',
