@@ -1,4 +1,5 @@
 import { DepartmentRequisition, DepartmentFinancialStanding } from './types';
+import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'faithconnect_department_requisitions_v2';
 
@@ -312,3 +313,74 @@ export const getAllDepartmentFinancialStandings = (
   return Array.from(deptsSet).map(dept => getDepartmentFinancialStanding(dept, reqs));
 };
 
+
+
+type RequisitionRpcResponse<T> = {
+  data: T | null;
+  error: { message: string; code?: string } | null;
+};
+type RequisitionRpcClient = {
+  rpc: (name: string, args?: Record<string, unknown>) => Promise<RequisitionRpcResponse<any>>;
+};
+const defaultRequisitionRpcClient = supabase as unknown as RequisitionRpcClient;
+
+export interface SubmitDepartmentRequisitionInput {
+  branchId: string;
+  ministryId: string;
+  title: string;
+  description?: string;
+  requestedAmount: number;
+  currencyCode: string;
+  exchangeRateToBase: number;
+  priority: DepartmentRequisition['priority'];
+  neededByDate?: string | null;
+  vendorQuoteReference?: string | null;
+  items: Array<{ item_name: string; quantity: number; unit_price: number }>;
+}
+
+/** Loads only the current user's own requests and branch requests visible to authorized approvers. */
+export async function getDatabaseRequisitions(
+  branchId: string,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<DepartmentRequisition[]>> {
+  return client.rpc('get_department_requisitions', { p_branch_id: branchId });
+}
+
+/** Submits a durable requisition and its approval snapshot atomically. */
+export async function submitDatabaseRequisition(
+  input: SubmitDepartmentRequisitionInput,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<{
+  requisition_id: string; requisition_number: string; approval_request_id: string;
+  status: string; requested_amount: number; currency_code: string;
+}>> {
+  return client.rpc('submit_department_requisition', {
+    p_branch_id: input.branchId,
+    p_ministry_id: input.ministryId,
+    p_title: input.title,
+    p_description: input.description ?? null,
+    p_requested_amount: input.requestedAmount,
+    p_currency_code: input.currencyCode,
+    p_exchange_rate_to_base: input.exchangeRateToBase,
+    p_priority: input.priority,
+    p_needed_by_date: input.neededByDate ?? null,
+    p_vendor_quote_reference: input.vendorQuoteReference ?? null,
+    p_items: input.items
+  });
+}
+
+/** Records one approval/rejection decision through the shared approval engine. */
+export async function decideDatabaseRequisitionApproval(
+  requestStepId: string,
+  decision: 'approved' | 'rejected',
+  comments?: string,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<{
+  requisition_id: string; approval_request_id: string; approval_status: string; status: string;
+}>> {
+  return client.rpc('decide_department_requisition_approval', {
+    p_request_step_id: requestStepId,
+    p_decision: decision,
+    p_comments: comments ?? null
+  });
+}
