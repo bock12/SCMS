@@ -255,8 +255,9 @@ export function createMockFinanceRpc(
     const event = state.events.find(item => item.id === args.p_event_id);
     if (!event) return fail('Event does not exist in the local mock event store');
     const branchId = event.branch_id;
-    if (!branchId || !hasPermission(state, actor.id, 'manage_finances', branchId)) {
-      return fail('Insufficient permission to submit an event budget for this branch', '42501');
+    if (!branchId || !hasPermission(state, actor.id, 'manage_events', branchId) ||
+        !hasPermission(state, actor.id, 'submit_event_budgets', branchId)) {
+      return fail('Insufficient permission to submit an event budget for this event', '42501');
     }
     const period = state.periods.find(item => item.id === args.p_period_id &&
       item.status === 'open' && item.year_status === 'open');
@@ -354,6 +355,62 @@ export function createMockFinanceRpc(
     storage.save(state);
     return success({ budget_id: budgetId, approval_request_id: requestId, status: 'pending_approval',
       total_budget: total, currency_code: currency });
+  }
+
+  function getEventBudgetSubmissionOptions(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const event = state.events.find(item => item.id === args.p_event_id);
+    if (!event) return fail('Event does not exist in the local mock event store');
+    if (!hasPermission(state, actor.id, 'manage_events', event.branch_id) ||
+        !hasPermission(state, actor.id, 'submit_event_budgets', event.branch_id)) {
+      return fail('Insufficient permission to prepare an event budget for this event', '42501');
+    }
+    return success({
+      currencies: clone(state.currencies),
+      baseCurrencyCode: state.baseCurrencyCode,
+      chartAccounts: clone(state.chartAccounts.filter(account =>
+        account.is_active && account.account_type === 'expense' && !account.is_control_account)),
+      funds: clone(state.funds.filter(fund => fund.is_active)),
+      periods: clone(state.periods.filter(period => period.status === 'open' && period.year_status === 'open'))
+    });
+  }
+
+  function getMyEventBudgets(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const event = state.events.find(item => item.id === args.p_event_id);
+    if (!event) return fail('Event does not exist in the local mock event store');
+    if (!hasPermission(state, actor.id, 'manage_events', event.branch_id) ||
+        !hasPermission(state, actor.id, 'submit_event_budgets', event.branch_id)) {
+      return fail('Insufficient permission to view event budget submissions for this event', '42501');
+    }
+    const budgets = state.budgets.filter(budget => budget.budget_type === 'event' &&
+      budget.event_id === event.id && budget.branch_id === event.branch_id &&
+      budget.submitted_by_profile_id === actor.id).map(budget => {
+        const request = state.approvalRequests.find(item => item.id === budget.approval_request_id &&
+          item.transaction_type === 'budget' && item.target_id === budget.id);
+        const steps = request ? state.approvalSteps.filter(item => item.approval_request_id === request.id)
+          .sort((a, b) => Number(a.step_order) - Number(b.step_order)).map(step => ({
+            step_number: step.step_order,
+            required_approvals: step.required_approvals || 1,
+            status: step.status,
+            approvals_received: step.status === 'approved' ? Number(step.required_approvals || 1) : 0
+          })) : [];
+        return {
+          ...clone(budget),
+          lines: state.budgetLines.filter(line => line.budget_id === budget.id).map(clone),
+          approval_status: request?.status ?? null,
+          approval_steps: steps
+        };
+      });
+    return success({ budgets });
   }
 
   function decideEventBudgetApproval(args: Record<string, any>) {
@@ -831,6 +888,8 @@ export function createMockFinanceRpc(
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration();
         if (name === 'submit_event_budget_for_approval') return submitEventBudgetForApproval(args);
+        if (name === 'get_event_budget_submission_options') return getEventBudgetSubmissionOptions(args);
+        if (name === 'get_my_event_budgets') return getMyEventBudgets(args);
         if (name === 'decide_event_budget_approval') return decideEventBudgetApproval(args);
         if (name === 'create_event_budget_payment') return createEventBudgetPayment(args);
         if (name === 'get_event_budgets') return getEventBudgets(args);
