@@ -1589,7 +1589,6 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
                       </button>
                     </div>
                   </div>
-                  </div>
                 </div>
               );
             })}
