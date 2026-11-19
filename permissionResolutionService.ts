@@ -13,6 +13,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   approve_finances: 'Approve finances',
   post_journals: 'Post journals',
   manage_events: 'Manage events',
+  submit_event_budgets: 'Submit event budgets and view own submissions',
   manage_attendance: 'Manage attendance',
   manage_welfare: 'Manage welfare',
   view_audit_logs: 'View audit logs',
