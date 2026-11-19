@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
-import { getFinanceConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, saveFinanceConfiguration, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type RequisitionApprovalConfiguration } from './financeConfigurationService';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 
 interface FinanceConfigurationWorkspaceProps {
@@ -46,6 +46,12 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [policyMin, setPolicyMin] = useState('0');
   const [policyMax, setPolicyMax] = useState('');
   const [requiredApprovals, setRequiredApprovals] = useState('1');
+  const [requisitionConfiguration, setRequisitionConfiguration] = useState<RequisitionApprovalConfiguration>({ policies: [], bands: [], steps: [] });
+  const [requisitionPolicyName, setRequisitionPolicyName] = useState('Department Requisition Approval');
+  const [requisitionPolicyMin, setRequisitionPolicyMin] = useState('0');
+  const [requisitionPolicyMax, setRequisitionPolicyMax] = useState('');
+  const [requisitionSteps, setRequisitionSteps] = useState(['1', '1']);
+  const [savingRequisitionPolicy, setSavingRequisitionPolicy] = useState(false);
 
   const assetAccounts = useMemo(
     () => configuration.chartAccounts.filter(account => account.account_type === 'asset' && account.is_active),
@@ -55,9 +61,14 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const reload = async () => {
     setLoading(true);
     setError(null);
-    const configResult = await getFinanceConfiguration(branchId);
+    const [configResult, requisitionResult] = await Promise.all([
+      getFinanceConfiguration(branchId),
+      getRequisitionApprovalConfiguration(branchId)
+    ]);
     if (configResult.error) setError(configResult.error.message);
     else setConfiguration({ ...emptyConfiguration(), ...(configResult.data || {}) });
+    if (requisitionResult.error) setError(current => current || requisitionResult.error!.message);
+    else setRequisitionConfiguration(requisitionResult.data || { policies: [], bands: [], steps: [] });
     setLoading(false);
   };
 
@@ -152,6 +163,42 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     });
     setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
     setRequiredApprovals('1');
+  };
+
+  const addRequisitionApprovalStep = () =>
+    setRequisitionSteps(current => [...current, '1']);
+
+  const saveRequisitionPolicy = async () => {
+    const min = Number(requisitionPolicyMin);
+    const max = requisitionPolicyMax.trim() ? Number(requisitionPolicyMax) : null;
+    const steps = requisitionSteps.map((value, index) => ({
+      step_number: index + 1,
+      required_approvals: Number(value)
+    }));
+    if (!requisitionPolicyName.trim() || !Number.isFinite(min) || min < 0 ||
+        (max !== null && (!Number.isFinite(max) || max <= min)) ||
+        steps.some(step => !Number.isInteger(step.required_approvals) || step.required_approvals < 1)) {
+      setError('Enter a valid requisition policy name, amount band and positive approval count for every step.');
+      return;
+    }
+
+    setSavingRequisitionPolicy(true);
+    setError(null);
+    setNotice(null);
+    const result = await saveRequisitionApprovalPolicy(branchId, requisitionPolicyName, min, max, steps);
+    if (result.error) {
+      setError(result.error.message);
+    } else {
+      const refreshed = await getRequisitionApprovalConfiguration(branchId);
+      if (refreshed.error) setError(refreshed.error.message);
+      else setRequisitionConfiguration(refreshed.data || { policies: [], bands: [], steps: [] });
+      setNotice('Requisition approval policy saved. New requisitions will follow these ordered approval steps.');
+      setRequisitionPolicyName('Department Requisition Approval');
+      setRequisitionPolicyMin('0');
+      setRequisitionPolicyMax('');
+      setRequisitionSteps(['1', '1']);
+    }
+    setSavingRequisitionPolicy(false);
   };
 
   const save = async () => {
@@ -271,6 +318,43 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
             <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
           </div>
           <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <h3 className="font-black text-slate-900">Department requisition approval</h3>
+          <p className="mt-1 text-xs text-slate-500">Configure a separate, ordered approval policy for ministry and department funding requests. Every step requires the branch-scoped approve_requisitions permission and prohibits submitter approval.</p>
+          <div className="mt-3 space-y-2">
+            <label className={labelClass}>Policy name</label>
+            <input className={fieldClass} value={requisitionPolicyName} onChange={e => setRequisitionPolicyName(e.target.value)} placeholder="Department Requisition Approval" />
+            <div className="grid grid-cols-2 gap-2">
+              <input className={fieldClass} type="number" min="0" value={requisitionPolicyMin} onChange={e => setRequisitionPolicyMin(e.target.value)} placeholder="Minimum base amount" />
+              <input className={fieldClass} type="number" min="0" value={requisitionPolicyMax} onChange={e => setRequisitionPolicyMax(e.target.value)} placeholder="Maximum (blank = no limit)" />
+            </div>
+            <label className={labelClass}>Ordered approval steps</label>
+            {requisitionSteps.map((value, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-xs font-semibold text-slate-600">Step {index + 1}</span>
+                <input className={fieldClass} type="number" min="1" step="1" value={value}
+                  onChange={e => setRequisitionSteps(current => current.map((item, itemIndex) => itemIndex === index ? e.target.value : item))}
+                  aria-label={`Required approvals for step ${index + 1}`} />
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={buttonClass} onClick={addRequisitionApprovalStep}><Plus size={14} /> Add approval step</button>
+              <button type="button" className={buttonClass} disabled={savingRequisitionPolicy} onClick={() => void saveRequisitionPolicy()}>
+                <Save size={14} /> {savingRequisitionPolicy ? 'Saving…' : 'Save requisition policy'}
+              </button>
+            </div>
+          </div>
+          <ul className="mt-3 space-y-1 text-xs text-slate-600">
+            {requisitionConfiguration.policies.map(policy => {
+              const policyBands = requisitionConfiguration.bands.filter(band => band.policy_id === policy.id);
+              const stepCount = policyBands.reduce((count, band) =>
+                count + requisitionConfiguration.steps.filter(step => step.band_id === band.id).length, 0);
+              return <li key={policy.id}>{policy.name} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {stepCount} approval step(s) · {policy.is_active ? 'Active' : 'Inactive'}</li>;
+            })}
+            {requisitionConfiguration.policies.length === 0 && <li className="text-slate-500">No requisition approval policy is configured yet. Requisition submission will remain unavailable until one is saved.</li>}
+          </ul>
         </div>
       </section>
 
