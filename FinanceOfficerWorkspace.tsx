@@ -31,8 +31,10 @@ const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'ev
 
 export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
-  const canAccessFinance = hasEffectivePermission(financePermissions, 'view_finances')
+  const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
     || hasEffectivePermission(financePermissions, 'manage_finances');
+  const canApproveRequisitions = hasEffectivePermission(financePermissions, 'approve_requisitions');
+  const canAccessFinance = canViewFinance || canApproveRequisitions;
   const location = useLocation();
   const navigate = useNavigate();
   const resolveTabFromSearch = (search: string): FinanceWorkspaceTab => {
@@ -49,9 +51,14 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   }, [location.search]);
 
   const setWorkspaceTab = (tab: FinanceWorkspaceTab) => {
+    if (!canViewFinance && tab !== 'requisitions') return;
     setWorkspaceTabState(tab);
     navigate(`/portal/finance?tab=${tab}`, { replace: true });
   };
+  useEffect(() => {
+    if (canApproveRequisitions && !canViewFinance) setWorkspaceTabState('requisitions');
+  }, [canApproveRequisitions, canViewFinance]);
+
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
@@ -931,7 +938,7 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 flex items-center gap-1">
                 <ShieldCheck size={12} className="text-amber-700" />
-                Finance Officer Console
+                {canViewFinance ? 'Finance Officer Console' : 'Requisition Approval Console'}
               </span>
               <span className="text-xs text-slate-400 font-semibold">• Base currency: configured in Accounting Setup</span>
             </div>
@@ -946,120 +953,132 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
               Finance ledger unavailable: {ledgerError}. No demo records have been substituted.
             </div>
           )}
-          {/* Quick Action Buttons - Touch friendly 2-col on mobile, flex on desktop */}
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
-            <button
-              title="Open canonical receipt entry"
-              onClick={() => setWorkspaceTab('setup')}
-              className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
-            >
-              <Plus size={16} />
-              <span>Record Income</span>
-            </button>
+          {canViewFinance ? (
+            {/* Quick Action Buttons - Touch friendly 2-col on mobile, flex on desktop */}
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
+              <button
+                title="Open canonical receipt entry"
+                onClick={() => setWorkspaceTab('setup')}
+                className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              >
+                <Plus size={16} />
+                <span>Record Income</span>
+              </button>
+  
+              <button
+                title="Open canonical payment entry"
+                onClick={() => setWorkspaceTab('setup')}
+                className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              >
+                <Plus size={16} />
+                <span>Record Expense</span>
+              </button>
+  
+              <button
+                onClick={() => setWorkspaceTab('ledger')}
+                className="col-span-2 sm:col-span-1 px-3.5 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              >
+                <Printer size={16} />
+                <span>Open Posted Reports</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
 
-            <button
-              title="Open canonical payment entry"
-              onClick={() => setWorkspaceTab('setup')}
-              className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
-            >
-              <Plus size={16} />
-              <span>Record Expense</span>
-            </button>
-
+        {canViewFinance ? (
+          <div className="hidden lg:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 pb-1 -mx-1 px-1">
             <button
               onClick={() => setWorkspaceTab('ledger')}
-              className="col-span-2 sm:col-span-1 px-3.5 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                workspaceTab === 'ledger'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
             >
-              <Printer size={16} />
-              <span>Open Posted Reports</span>
+              <PieChart size={15} />
+              <span>Journal Ledger</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('requisitions')}
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
+                workspaceTab === 'requisitions'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ShoppingCart size={15} />
+              <span>Ministry Proposals</span>
+              {pendingReqsCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
+                  {pendingReqsCount}
+                </span>
+              )}
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('event_budgets')}
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
+                workspaceTab === 'event_budgets'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Calendar size={15} />
+              <span>Event Budgets</span>
+              {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
+                  {eventBudgets.filter(b => b.status === 'pending_approval').length}
+                </span>
+              )}
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('setup')}
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                workspaceTab === 'setup'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Landmark size={15} />
+              <span>Accounting Setup</span>
+            </button>
+            <button
+              onClick={() => setWorkspaceTab('setup')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'setup'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Landmark size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Setup</span>
+            </button>
+  
+            <button
+              onClick={() => setWorkspaceTab('gateways')}
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                workspaceTab === 'gateways'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Sliders size={15} />
+              <span>Gateways & Funds</span>
             </button>
           </div>
-        </div>
-
-        {/* Workspace Sub Navigation Tabs - Desktop view (hidden lg:flex) */}
-        <div className="hidden lg:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 pb-1 -mx-1 px-1">
-          <button
-            onClick={() => setWorkspaceTab('ledger')}
-            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
-              workspaceTab === 'ledger'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <PieChart size={15} />
-            <span>Journal Ledger</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('requisitions')}
-            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
-              workspaceTab === 'requisitions'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <ShoppingCart size={15} />
-            <span>Ministry Proposals</span>
-            {pendingReqsCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
-                {pendingReqsCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('event_budgets')}
-            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
-              workspaceTab === 'event_budgets'
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Calendar size={15} />
-            <span>Event Budgets</span>
-            {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
-                {eventBudgets.filter(b => b.status === 'pending_approval').length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('setup')}
-            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
-              workspaceTab === 'setup'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Landmark size={15} />
-            <span>Accounting Setup</span>
-          </button>
-          <button
-            onClick={() => setWorkspaceTab('setup')}
-            className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-              workspaceTab === 'setup'
-                ? 'bg-indigo-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Landmark size={18} />
-            <span className="mt-0.5 truncate w-full text-center">Setup</span>
-          </button>
-
-          <button
-            onClick={() => setWorkspaceTab('gateways')}
-            className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
-              workspaceTab === 'gateways'
-                ? 'bg-amber-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Sliders size={15} />
-            <span>Gateways & Funds</span>
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-center pt-1">
+            <button
+              onClick={() => setWorkspaceTab('requisitions')}
+              className="px-4 py-2.5 rounded-xl text-xs font-black bg-indigo-600 text-white"
+            >
+              <ShoppingCart size={15} /> Requisition Approvals
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --- WORKSPACE TAB 1: FINANCIAL LEDGER & REPORTS --- */}
