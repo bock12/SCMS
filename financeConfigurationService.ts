@@ -62,3 +62,41 @@ export async function saveFinanceConfiguration(
     p_configuration: configuration
   });
 }
+
+export interface RequisitionApprovalConfiguration {
+  policies: Array<{
+    id: string; name: string; transaction_type: 'requisition'; branch_id: string | null;
+    version: number; effective_from: string; effective_to?: string | null; is_active: boolean;
+  }>;
+  bands: Array<{
+    id: string; policy_id: string; min_amount_base: number; max_amount_base: number | null;
+  }>;
+  steps: Array<{
+    id: string; band_id: string; step_number: number; required_permission_key: 'approve_requisitions';
+    required_approvals: number; prohibit_submitter_approval: boolean;
+  }>;
+}
+
+export async function getRequisitionApprovalConfiguration(
+  branchId: string | null = null,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<RequisitionApprovalConfiguration>> {
+  return client.rpc('get_requisition_approval_configuration', { p_branch_id: branchId });
+}
+
+export async function saveRequisitionApprovalPolicy(
+  branchId: string | null,
+  name: string,
+  minAmountBase: number,
+  maxAmountBase: number | null,
+  steps: Array<{ step_number: number; required_approvals: number }>,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<{ policy_id: string; band_id: string; step_count: number; version: number }>> {
+  return client.rpc('save_requisition_approval_policy', {
+    p_branch_id: branchId,
+    p_name: name,
+    p_min_amount_base: minAmountBase,
+    p_max_amount_base: maxAmountBase,
+    p_steps: steps
+  });
+}
