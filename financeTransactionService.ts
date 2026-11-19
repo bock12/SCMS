@@ -51,10 +51,10 @@ const defaultRpcClient = supabase as unknown as RpcClient;
  * Typed boundary for the secure database transaction RPC.
  *
  * This deliberately does not write to localStorage or emulate accounting
- * balances. The current mock client does not implement these finance RPCs,
- * and therefore fails closed until its deterministic finance adapter and
- * lifecycle tests are ready. A configured Supabase client can be injected
- * by a future integration layer without changing callers.
+ * balances. The browser mock client routes these calls to the isolated,
+ * deterministic canonical-finance adapter; a configured Supabase client can
+ * be injected without changing callers. Legacy FinancialRecord data is not
+ * read or written by this service.
  */
 export async function createFinancialDocumentTransaction(
   input: CreateFinancialDocumentTransactionInput,
