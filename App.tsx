@@ -1071,6 +1071,7 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
         if (evData && Array.isArray(evData)) {
           const allEvents = (evData as ChurchEvent[]).filter(ev => ev.status !== 'cancelled');
           const now = new Date();
+          const nowTime = now.getTime();
           const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
           const horizonEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 180, 23, 59, 59, 999);
 
@@ -1078,7 +1079,7 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
             generateEventOccurrences(ev, startOfToday, horizonEnd)
           );
           const resolvedOccurrences = resolveOccurrencePreemption(rawOccurrences).filter(
-            occ => occ.status !== 'cancelled' && new Date(occ.end_time || occ.start_time).getTime() >= startOfToday.getTime()
+            occ => occ.status !== 'cancelled' && new Date(occ.end_time || occ.start_time).getTime() >= nowTime
           );
 
           const eventMap = new Map(allEvents.map(ev => [ev.id, ev]));
@@ -1100,8 +1101,8 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
           // Include upcoming one-time/annual events beyond the 180-day horizon if fewer than 3 found
           allEvents.forEach(ev => {
             if (soonestByEventId.has(ev.id)) return;
-            const st = new Date(ev.start_time);
-            if (!Number.isNaN(st.getTime()) && st.getTime() >= startOfToday.getTime()) {
+            const endDt = new Date(ev.end_time || ev.start_time);
+            if (!Number.isNaN(endDt.getTime()) && endDt.getTime() >= nowTime) {
               soonestByEventId.set(ev.id, {
                 event: ev,
                 nextStartTime: ev.start_time,

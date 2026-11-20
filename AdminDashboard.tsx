@@ -11,9 +11,9 @@ import { EventSurveysAdminTab } from './EventSurveysAdminTab';
 import { getCustomRoles, getRoleAssignments } from './roleService';
 import { hasEffectivePermission, hasAnyEffectivePermission, ADMIN_DASHBOARD_PERMISSION_KEYS, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
-import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption } from './eventAccountService';
+import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption, getEventTemporalStatus } from './eventAccountService';
 import { LocationMap } from './LocationMap';
-import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation } from './churchProfileService';
+import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation, getNetworkApproximateLocation, GpsAccessError, searchLocationByQuery, parseCoordinatesInput, type PlaceSearchResult } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { getProfileRoleData, assignProfileRole, deactivateProfileRoleAssignment, type SystemRole, type ProfileRoleAssignment } from './profileRoleAssignmentService';
 import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember, ensureMinistryLeaderInRoster } from './ministryMemberService';
@@ -5570,6 +5570,13 @@ const ChurchSettingsTab = () => {
   const [newServiceTime, setNewServiceTime] = useState('');
   const [showPresetLogoPicker, setShowPresetLogoPicker] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [profileGpsStatus, setProfileGpsStatus] = useState<{
+    tone: 'success' | 'warning' | 'error';
+    message: string;
+    sourceLabel?: string;
+    canFallbackNetwork?: boolean;
+    policyBlocked?: boolean;
+  } | null>(null);
 
   // Mobile Money Provider Form State (Add / Edit)
   const [editingGatewayId, setEditingGatewayId] = useState<string | null>(null);
@@ -5634,6 +5641,7 @@ const ChurchSettingsTab = () => {
 
   const handleGetCurrentGps = async () => {
     setGpsLoading(true);
+    setProfileGpsStatus(null);
     try {
       const loc = await getCurrentGpsLocation();
       setProfileData(prev => ({
@@ -5641,15 +5649,60 @@ const ChurchSettingsTab = () => {
         latitude: loc.lat,
         longitude: loc.lng
       }));
-      setGpsLoading(false);
-      showToast(
-        loc.source === 'device'
-          ? 'Acquired exact GPS coordinates from your device.'
-          : 'Acquired regional GPS coordinates from network location.'
-      );
+      if (loc.source === 'device') {
+        const msg = loc.accuracy
+          ? `Device GPS locked (±${loc.accuracy}m accuracy). Map preview updated.`
+          : 'Acquired exact GPS coordinates from your device.';
+        setProfileGpsStatus({
+          tone: 'success',
+          message: msg,
+          sourceLabel: loc.accuracy ? `Device GPS (±${loc.accuracy}m)` : 'Device GPS'
+        });
+        showToast(msg);
+      } else {
+        const msg = loc.warning || 'Acquired approximate network location.';
+        setProfileGpsStatus({
+          tone: 'warning',
+          message: msg,
+          sourceLabel: 'Network Location'
+        });
+        showToast(msg);
+      }
     } catch (err: any) {
+      const isDeniedOrPolicy =
+        err instanceof GpsAccessError &&
+        (err.code === 'PERMISSION_DENIED' || err.code === 'POLICY_BLOCKED');
+      const isPolicyBlocked = err instanceof GpsAccessError && err.code === 'POLICY_BLOCKED';
+      const msg = err?.message || 'Could not retrieve device GPS coordinates.';
+      setProfileGpsStatus({
+        tone: 'error',
+        message: msg,
+        canFallbackNetwork: isDeniedOrPolicy || err instanceof GpsAccessError,
+        policyBlocked: isPolicyBlocked
+      });
+      showError(msg);
+    } finally {
       setGpsLoading(false);
-      showError(`Could not retrieve GPS coordinates: ${err?.message || 'Access denied'}`);
+    }
+  };
+
+  const handleProfileNetworkFallback = async () => {
+    setGpsLoading(true);
+    try {
+      const loc = await getNetworkApproximateLocation();
+      setProfileData(prev => ({ ...prev, latitude: loc.lat, longitude: loc.lng }));
+      setProfileGpsStatus({
+        tone: 'warning',
+        message: loc.warning || 'Using approximate network (IP) location.',
+        sourceLabel: 'Network Location'
+      });
+      showToast('Applied approximate network location. Verify the pin on the map.');
+    } catch (err: any) {
+      const msg = err?.message || 'Network location fallback failed.';
+      setProfileGpsStatus({ tone: 'error', message: msg });
+      showError(msg);
+    } finally {
+      setGpsLoading(false);
     }
   };
 
@@ -6298,9 +6351,56 @@ const ChurchSettingsTab = () => {
                     className="min-h-[38px] px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-2 shrink-0 text-xs whitespace-nowrap"
                   >
                     {gpsLoading ? <RefreshCw size={14} className="animate-spin text-emerald-600" /> : <Compass size={14} className="text-emerald-600" />}
-                    <span>Use Device GPS</span>
+                    <span>{gpsLoading ? 'Locating...' : 'Use Device GPS'}</span>
                   </button>
                 </div>
+
+                {profileGpsStatus && (
+                  <div
+                    role="status"
+                    className={`px-3 py-2.5 rounded-xl border text-[11px] font-medium space-y-2 ${
+                      profileGpsStatus.tone === 'success'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : profileGpsStatus.tone === 'warning'
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : 'bg-rose-50 border-rose-200 text-rose-800'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span>{profileGpsStatus.message}</span>
+                      <button
+                        type="button"
+                        onClick={() => setProfileGpsStatus(null)}
+                        aria-label="Dismiss GPS status"
+                        className="text-current opacity-70 hover:opacity-100 cursor-pointer shrink-0"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    {profileGpsStatus.canFallbackNetwork && (
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={handleProfileNetworkFallback}
+                          className="px-2.5 py-1 rounded-lg bg-white border border-rose-200 text-rose-900 hover:bg-rose-100 font-bold text-[11px] cursor-pointer transition-colors"
+                        >
+                          Use Approx. Network Location
+                        </button>
+                        {profileGpsStatus.policyBlocked && (
+                          <a
+                            href={typeof window !== 'undefined' ? window.location.href : '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 hover:bg-slate-50 font-bold text-[11px] inline-flex items-center gap-1"
+                          >
+                            <span>Open in New Tab</span>
+                            <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -6308,9 +6408,18 @@ const ChurchSettingsTab = () => {
                     <input
                       type="number"
                       step="any"
+                      min={-90}
+                      max={90}
                       required
-                      value={profileData.latitude}
-                      onChange={e => setProfileData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                      value={Number.isFinite(profileData.latitude) ? profileData.latitude : ''}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const parsed = Number(raw);
+                        if (raw === '' || raw === '-') return;
+                        if (Number.isFinite(parsed) && Math.abs(parsed) <= 90) {
+                          setProfileData(prev => ({ ...prev, latitude: parsed }));
+                        }
+                      }}
                       className="w-full min-h-[42px] px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
@@ -6320,9 +6429,18 @@ const ChurchSettingsTab = () => {
                     <input
                       type="number"
                       step="any"
+                      min={-180}
+                      max={180}
                       required
-                      value={profileData.longitude}
-                      onChange={e => setProfileData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                      value={Number.isFinite(profileData.longitude) ? profileData.longitude : ''}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const parsed = Number(raw);
+                        if (raw === '' || raw === '-') return;
+                        if (Number.isFinite(parsed) && Math.abs(parsed) <= 180) {
+                          setProfileData(prev => ({ ...prev, longitude: parsed }));
+                        }
+                      }}
                       className="w-full min-h-[42px] px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold text-sm sm:text-xs text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
@@ -6335,6 +6453,11 @@ const ChurchSettingsTab = () => {
                         if (!isNaN(idx) && PRESET_GPS_LOCATIONS[idx]) {
                           const p = PRESET_GPS_LOCATIONS[idx];
                           setProfileData(prev => ({ ...prev, latitude: p.lat, longitude: p.lng }));
+                          setProfileGpsStatus({
+                            tone: 'success',
+                            message: `Pinned preset location "${p.name}".`,
+                            sourceLabel: 'Campus Preset'
+                          });
                           showToast(`Set GPS location to "${p.name}".`);
                         }
                       }}
@@ -6358,7 +6481,8 @@ const ChurchSettingsTab = () => {
                     longitude={profileData.longitude}
                     title={profileData.name}
                     subtitle={`${profileData.address}, ${profileData.city}`}
-                    height="240px"
+                    sourceLabel={profileGpsStatus?.sourceLabel}
+                    height="260px"
                   />
                 </div>
               </div>
@@ -7022,6 +7146,19 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
   const [formLocation, setFormLocation] = useState('Grace Cathedral Main Sanctuary');
   const [formLatitude, setFormLatitude] = useState<number>(8.484);
   const [formLongitude, setFormLongitude] = useState<number>(-13.229);
+  const [formLatInput, setFormLatInput] = useState<string>('8.484');
+  const [formLngInput, setFormLngInput] = useState<string>('-13.229');
+  const [eventGpsLoading, setEventGpsLoading] = useState(false);
+  const [eventGpsStatus, setEventGpsStatus] = useState<{
+    tone: 'success' | 'warning' | 'error';
+    message: string;
+    sourceLabel?: string;
+    canFallbackNetwork?: boolean;
+    policyBlocked?: boolean;
+  } | null>(null);
+  const [venueSearchQuery, setVenueSearchQuery] = useState('');
+  const [venueSearching, setVenueSearching] = useState(false);
+  const [venueSearchResults, setVenueSearchResults] = useState<PlaceSearchResult[]>([]);
   const [formIsVirtual, setFormIsVirtual] = useState(false);
   const [formVirtualLink, setFormVirtualLink] = useState('');
   const [formOrganizer, setFormOrganizer] = useState('Grace Cathedral Pastoral Team');
@@ -7152,6 +7289,11 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
     setFormLocation('Grace Cathedral Main Sanctuary');
     setFormLatitude(8.484);
     setFormLongitude(-13.229);
+    setFormLatInput('8.484');
+    setFormLngInput('-13.229');
+    setEventGpsStatus(null);
+    setVenueSearchQuery('');
+    setVenueSearchResults([]);
     setFormIsVirtual(false);
     setFormVirtualLink('');
     setFormOrganizer('Grace Cathedral Pastoral Team');
@@ -7187,8 +7329,15 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
     setFormStartTime(formatDt(evt.start_time));
     setFormEndTime(formatDt(evt.end_time));
     setFormLocation(evt.location || 'Grace Cathedral Sanctuary');
-    setFormLatitude(evt.latitude ?? 8.484);
-    setFormLongitude(evt.longitude ?? -13.229);
+    const initLat = evt.latitude ?? 8.484;
+    const initLng = evt.longitude ?? -13.229;
+    setFormLatitude(initLat);
+    setFormLongitude(initLng);
+    setFormLatInput(String(initLat));
+    setFormLngInput(String(initLng));
+    setEventGpsStatus(null);
+    setVenueSearchQuery('');
+    setVenueSearchResults([]);
     setFormIsVirtual(!!evt.is_virtual);
     setFormVirtualLink(evt.virtual_link || '');
     setFormOrganizer(evt.organizer_name || 'Grace Cathedral Leadership');
@@ -7265,6 +7414,13 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
       ? parsedEnd.toISOString()
       : new Date(new Date(startIso).getTime() + 7200000).toISOString();
 
+    const parsedLatInput = formLatInput.trim() !== '' ? Number(formLatInput) : Number(formLatitude);
+    const parsedLngInput = formLngInput.trim() !== '' ? Number(formLngInput) : Number(formLongitude);
+    const finalLatitude =
+      Number.isFinite(parsedLatInput) && Math.abs(parsedLatInput) <= 90 ? parsedLatInput : Number(formLatitude);
+    const finalLongitude =
+      Number.isFinite(parsedLngInput) && Math.abs(parsedLngInput) <= 180 ? parsedLngInput : Number(formLongitude);
+
     const payload = {
       title: formTitle.trim(),
       category: formCategory,
@@ -7272,8 +7428,8 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
       start_time: startIso,
       end_time: endIso,
       location: formLocation.trim() || 'Main Sanctuary',
-      latitude: Number(formLatitude),
-      longitude: Number(formLongitude),
+      latitude: finalLatitude,
+      longitude: finalLongitude,
       is_virtual: formIsVirtual,
       virtual_link: formIsVirtual ? formVirtualLink.trim() : '',
       organizer_name: formOrganizer.trim() || 'Grace Cathedral Pastoral Team',
@@ -7509,16 +7665,31 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
         const timeStr = `${startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - ${endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
         const evtRegs = registrations.filter(r => r.event_id === evt.id);
         const registeredCount = evt.registered_count || evtRegs.length;
+        const isOneTime = !evt.recurrence || evt.recurrence === 'one_time';
+        const evtTemporal = evt.status === 'cancelled'
+          ? 'upcoming'
+          : getEventTemporalStatus(evt.start_time, evt.end_time, Date.now(), evt.status);
+        const isPastOneTime = isOneTime && evt.status !== 'cancelled' && evtTemporal === 'past';
+        const isLiveNow = evt.status !== 'cancelled' && evtTemporal === 'ongoing';
 
         return (
-          <div key={evt.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between group">
+          <div
+            key={evt.id}
+            className={`rounded-3xl border overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between group ${
+              isPastOneTime
+                ? 'bg-slate-50/75 border-slate-200/90 opacity-85 hover:opacity-100'
+                : 'bg-white border-slate-200'
+            }`}
+          >
             <div>
               {/* Banner Image Header */}
               <div className="relative h-40 sm:h-44 w-full bg-slate-900 overflow-hidden">
                 <img
                   src={evt.featured_image || defaultBannerPresets[0].url}
                   alt={evt.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ${
+                    isPastOneTime ? 'grayscale opacity-65' : ''
+                  }`}
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/30 to-transparent" />
@@ -7539,19 +7710,26 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                     })()}
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    evt.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
+                    isLiveNow ? 'bg-rose-600 text-white animate-pulse' :
+                    isPastOneTime ? 'bg-slate-700 text-slate-200' :
                     evt.status === 'upcoming' ? 'bg-emerald-500 text-white' :
-                    evt.status === 'ongoing' ? 'bg-rose-600 text-white animate-pulse' :
-                    evt.status === 'completed' ? 'bg-slate-700 text-slate-200' :
-                    'bg-rose-100 text-rose-800'
+                    'bg-slate-700 text-slate-200'
                   }`}>
-                    {evt.status}
+                    {evt.status === 'cancelled'
+                      ? 'cancelled'
+                      : isLiveNow
+                      ? 'Happening Now'
+                      : isPastOneTime
+                      ? 'Ended'
+                      : evt.status}
                   </span>
                 </div>
 
                 <div className="absolute bottom-3 left-3 right-3 text-white">
-                  <div className="flex items-center gap-1.5 text-amber-300 text-[11px] font-bold">
+                  <div className={`flex items-center gap-1.5 text-[11px] font-bold ${isPastOneTime ? 'text-slate-300' : 'text-amber-300'}`}>
                     <CalendarIcon size={13} />
-                    <span>{dateStr}</span>
+                    <span>{isPastOneTime ? `Ended · ${dateStr}` : dateStr}</span>
                   </div>
                 </div>
               </div>
@@ -7794,13 +7972,31 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                     </span>
                   </td>
                   <td className="p-4 whitespace-nowrap">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                      evt.status === 'upcoming' ? 'bg-emerald-100 text-emerald-800' :
-                      evt.status === 'ongoing' ? 'bg-rose-100 text-rose-800' :
-                      'bg-slate-100 text-slate-700'
-                    }`}>
-                      {evt.status}
-                    </span>
+                    {(() => {
+                      const isOneTime = !evt.recurrence || evt.recurrence === 'one_time';
+                      const evtTemporal = evt.status === 'cancelled'
+                        ? 'upcoming'
+                        : getEventTemporalStatus(evt.start_time, evt.end_time, Date.now(), evt.status);
+                      const isPastOneTime = isOneTime && evt.status !== 'cancelled' && evtTemporal === 'past';
+                      const isLiveNow = evt.status !== 'cancelled' && evtTemporal === 'ongoing';
+                      return (
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                          evt.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
+                          isLiveNow ? 'bg-rose-100 text-rose-800' :
+                          isPastOneTime ? 'bg-slate-100 text-slate-600' :
+                          evt.status === 'upcoming' ? 'bg-emerald-100 text-emerald-800' :
+                          'bg-slate-100 text-slate-700'
+                        }`}>
+                          {evt.status === 'cancelled'
+                            ? 'cancelled'
+                            : isLiveNow
+                            ? 'Live Now'
+                            : isPastOneTime
+                            ? 'Ended'
+                            : evt.status}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="p-4 text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1">
@@ -7936,11 +8132,19 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
             return s.getFullYear() === year && s.getMonth() === month && s.getDate() === dayNum;
           }) : [];
 
+          const cellDateKey = `${cellDate.getFullYear()}-${String(cellDate.getMonth() + 1).padStart(2, '0')}-${String(cellDate.getDate()).padStart(2, '0')}`;
+          const todayKeyStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          const isPastCell = isCurrentMonth && cellDateKey < todayKeyStr;
+
           return (
             <div
               key={index}
               className={`min-h-[90px] sm:min-h-[120px] p-1.5 sm:p-2 flex flex-col justify-between transition-colors ${
-                isCurrentMonth ? 'bg-white hover:bg-slate-50/80' : 'bg-slate-50/60 text-slate-300'
+                !isCurrentMonth
+                  ? 'bg-slate-50/60 text-slate-300'
+                  : isPastCell
+                  ? 'bg-slate-50/75 hover:bg-slate-100/70'
+                  : 'bg-white hover:bg-slate-50/80'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -7948,7 +8152,11 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                   className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
                     isTodayCell 
                       ? 'bg-indigo-600 text-white shadow-xs' 
-                      : isCurrentMonth ? 'text-slate-800' : 'text-slate-300'
+                      : !isCurrentMonth
+                      ? 'text-slate-300'
+                      : isPastCell
+                      ? 'text-slate-400'
+                      : 'text-slate-800'
                   }`}
                 >
                   {dayNum}
@@ -7967,16 +8175,24 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
 
               {/* Day Events Pills */}
               <div className="space-y-1 mt-1 flex-1 overflow-y-auto max-h-[80px]">
-                {cellEvts.map(evt => (
-                  <div
-                    key={evt.id}
-                    onClick={() => setWorkspaceEvent(evt)}
-                    className={`p-1 px-1.5 rounded-lg border text-[10px] font-bold truncate cursor-pointer transition-all hover:scale-[1.02] shadow-2xs ${getCategoryBadgeStyle(evt.category)}`}
-                    title={`${evt.title} (${new Date(evt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}) - Click to open Event Workspace`}
-                  >
-                    <span className="block truncate">{evt.title}</span>
-                  </div>
-                ))}
+                {cellEvts.map(evt => {
+                  const evtTemporal = getEventTemporalStatus(evt.start_time, evt.end_time, Date.now(), evt.status);
+                  const isPastEvt = evtTemporal === 'past';
+                  return (
+                    <div
+                      key={evt.id}
+                      onClick={() => setWorkspaceEvent(evt)}
+                      className={`p-1 px-1.5 rounded-lg border text-[10px] font-bold truncate cursor-pointer transition-all hover:scale-[1.02] shadow-2xs ${
+                        isPastEvt
+                          ? 'bg-slate-100 text-slate-500 border-slate-200 opacity-75'
+                          : getCategoryBadgeStyle(evt.category)
+                      }`}
+                      title={`${evt.title} (${new Date(evt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})${isPastEvt ? ' · Ended' : ''} - Click to open Event Workspace`}
+                    >
+                      <span className="block truncate">{evt.title}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -8179,6 +8395,7 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
               <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5">
                 {gridCells.map((cell, idx) => {
                   const isToday = cell.dateStr === todayStr;
+                  const isPastCell = cell.isCurrentMonth && cell.dateStr < todayStr;
                   const isSelected = cell.dateStr === activeSelectedDate;
 
                   return (
@@ -8192,6 +8409,8 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                           ? 'bg-indigo-50/40 border-indigo-500 ring-2 ring-indigo-500/30 shadow-xs'
                           : isToday
                           ? 'bg-amber-50/40 border-amber-300'
+                          : isPastCell
+                          ? 'bg-slate-50/75 border-slate-100 hover:border-slate-300'
                           : 'bg-white border-slate-200 hover:border-indigo-300 hover:bg-slate-50/80'
                       }`}
                     >
@@ -8202,15 +8421,17 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                             ? 'bg-amber-500 text-slate-950 px-2 py-0.5 rounded-lg shadow-2xs'
                             : isSelected
                             ? 'bg-indigo-600 text-white px-2 py-0.5 rounded-lg shadow-2xs'
-                            : cell.isCurrentMonth
-                            ? 'text-slate-800'
-                            : 'text-slate-400'
+                            : !cell.isCurrentMonth || isPastCell
+                            ? 'text-slate-400'
+                            : 'text-slate-800'
                         }`}>
                           {cell.dayNum}
                         </span>
 
                         {cell.events.length > 0 && (
-                          <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800">
+                          <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                            isPastCell ? 'bg-slate-200 text-slate-600' : 'bg-indigo-100 text-indigo-800'
+                          }`}>
                             {cell.events.length}
                           </span>
                         )}
@@ -8220,12 +8441,20 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                       <div className="space-y-1 my-1 overflow-hidden flex-1">
                         {cell.events.slice(0, 2).map((occ) => {
                           const timeFormatted = new Date(occ.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          const occTemporal = getEventTemporalStatus(occ.start_time, occ.end_time, Date.now(), occ.status);
+                          const isPastOcc = occTemporal === 'past' && occ.status !== 'cancelled';
+                          const isLiveOcc = occTemporal === 'ongoing' && occ.status !== 'cancelled';
                           return (
                             <div
                               key={occ.id}
+                              title={`${occ.event_title}${isPastOcc ? ' (Ended)' : isLiveOcc ? ' (Happening Now)' : ''}`}
                               className={`p-1 px-1.5 rounded-lg text-[10px] font-bold border truncate flex items-center justify-between gap-1 transition-transform hover:scale-[1.02] ${
                                 occ.status === 'cancelled'
                                   ? 'line-through opacity-50 bg-rose-50 text-rose-800 border-rose-200'
+                                  : isPastOcc
+                                  ? 'bg-slate-100 text-slate-500 border-slate-200 opacity-75'
+                                  : isLiveOcc
+                                  ? 'bg-emerald-50 text-emerald-900 border-emerald-300 ring-1 ring-emerald-300/60'
                                   : occ.is_combined_service
                                   ? 'bg-amber-100 text-amber-950 border-amber-300 font-extrabold'
                                   : getCategoryBadgeStyle(occ.category || 'Worship Service')
@@ -8238,7 +8467,11 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                         })}
 
                         {cell.events.length > 2 && (
-                          <div className="text-[9px] font-extrabold text-indigo-600 text-center bg-indigo-50 rounded py-0.5 border border-indigo-100">
+                          <div className={`text-[9px] font-extrabold text-center rounded py-0.5 border ${
+                            isPastCell
+                              ? 'text-slate-500 bg-slate-100 border-slate-200'
+                              : 'text-indigo-600 bg-indigo-50 border-indigo-100'
+                          }`}>
                             +{cell.events.length - 2} more
                           </div>
                         )}
@@ -8287,27 +8520,41 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                   {selectedDayEvents.map(occ => {
                     const parentEvt = events.find(e => e.id === occ.event_id);
                     const occDateObj = new Date(occ.start_time);
-                    const isPast = occDateObj.getTime() < Date.now();
+                    const occTemporal = getEventTemporalStatus(occ.start_time, occ.end_time, Date.now(), occ.status);
+                    const isPast = occTemporal === 'past' && occ.status !== 'cancelled';
+                    const isLive = occTemporal === 'ongoing' && occ.status !== 'cancelled';
 
                     return (
                       <div
                         key={occ.id}
-                        className={`bg-white rounded-3xl border p-5 shadow-xs flex flex-col justify-between space-y-3 transition-all ${
-                          occ.status === 'cancelled' ? 'border-rose-200 bg-rose-50/20' :
-                          occ.is_modified ? 'border-purple-300 bg-purple-50/20' : 'border-slate-200 hover:border-indigo-300'
+                        className={`rounded-3xl border p-5 shadow-xs flex flex-col justify-between space-y-3 transition-all ${
+                          occ.status === 'cancelled' ? 'border-rose-200 bg-rose-50/20 opacity-75' :
+                          isPast ? 'border-slate-200 bg-slate-50/75 opacity-80' :
+                          isLive ? 'border-emerald-300 bg-emerald-50/30' :
+                          occ.is_modified ? 'border-purple-300 bg-purple-50/20' : 'bg-white border-slate-200 hover:border-indigo-300'
                         }`}
                       >
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="px-2.5 py-1 bg-slate-900 text-amber-300 font-mono text-[11px] font-black rounded-lg">
+                            <span className={`px-2.5 py-1 font-mono text-[11px] font-black rounded-lg ${
+                              isPast ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-amber-300'
+                            }`}>
                               {occ.occurrence_date}
                             </span>
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
                               occ.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
+                              isPast ? 'bg-slate-200 text-slate-600' :
+                              isLive ? 'bg-rose-100 text-rose-800' :
                               occ.status === 'rescheduled' ? 'bg-purple-100 text-purple-900' :
-                              isPast ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                              'bg-emerald-100 text-emerald-800'
                             }`}>
-                              {occ.status}
+                              {occ.status === 'cancelled'
+                                ? 'cancelled'
+                                : isPast
+                                ? 'Ended'
+                                : isLive
+                                ? 'Happening Now'
+                                : occ.status}
                             </span>
                           </div>
 
@@ -8421,27 +8668,41 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                 {filteredOccs.map(occ => {
                   const parentEvt = events.find(e => e.id === occ.event_id);
                   const occDateObj = new Date(occ.start_time);
-                  const isPast = occDateObj.getTime() < Date.now();
+                  const occTemporal = getEventTemporalStatus(occ.start_time, occ.end_time, Date.now(), occ.status);
+                  const isPast = occTemporal === 'past' && occ.status !== 'cancelled';
+                  const isLive = occTemporal === 'ongoing' && occ.status !== 'cancelled';
 
                   return (
                     <div
                       key={occ.id}
-                      className={`bg-white rounded-3xl border p-5 shadow-xs flex flex-col justify-between space-y-3 transition-all ${
-                        occ.status === 'cancelled' ? 'border-rose-200 bg-rose-50/20' :
-                        occ.is_modified ? 'border-purple-300 bg-purple-50/20' : 'border-slate-200 hover:border-indigo-300'
+                      className={`rounded-3xl border p-5 shadow-xs flex flex-col justify-between space-y-3 transition-all ${
+                        occ.status === 'cancelled' ? 'border-rose-200 bg-rose-50/20 opacity-75' :
+                        isPast ? 'border-slate-200 bg-slate-50/75 opacity-80' :
+                        isLive ? 'border-emerald-300 bg-emerald-50/30' :
+                        occ.is_modified ? 'border-purple-300 bg-purple-50/20' : 'bg-white border-slate-200 hover:border-indigo-300'
                       }`}
                     >
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="px-2.5 py-1 bg-slate-900 text-amber-300 font-mono text-[11px] font-black rounded-lg">
+                          <span className={`px-2.5 py-1 font-mono text-[11px] font-black rounded-lg ${
+                            isPast ? 'bg-slate-200 text-slate-600' : 'bg-slate-900 text-amber-300'
+                          }`}>
                             {occ.occurrence_date}
                           </span>
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
                             occ.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
+                            isPast ? 'bg-slate-200 text-slate-600' :
+                            isLive ? 'bg-rose-100 text-rose-800' :
                             occ.status === 'rescheduled' ? 'bg-purple-100 text-purple-900' :
-                            isPast ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                            'bg-emerald-100 text-emerald-800'
                           }`}>
-                            {occ.status}
+                            {occ.status === 'cancelled'
+                              ? 'cancelled'
+                              : isPast
+                              ? 'Ended'
+                              : isLive
+                              ? 'Happening Now'
+                              : occ.status}
                           </span>
                         </div>
 
@@ -9049,49 +9310,341 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
 
                 {/* Event Location GPS Configuration & Map Preview */}
                 <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                    <span className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
-                      <MapPin size={15} className="text-indigo-600" />
-                      <span>Venue GPS Map Coordinates</span>
-                    </span>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div>
+                      <span className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                        <MapPin size={15} className="text-indigo-600" />
+                        <span>Venue GPS Map Coordinates</span>
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Use device GPS, search an address, paste Google Maps coordinates, or select a campus preset.
+                      </p>
+                    </div>
                     <button
                       type="button"
+                      disabled={eventGpsLoading}
                       onClick={async () => {
+                        setEventGpsLoading(true);
+                        setEventGpsStatus(null);
                         try {
                           const loc = await getCurrentGpsLocation();
                           setFormLatitude(loc.lat);
                           setFormLongitude(loc.lng);
+                          setFormLatInput(String(loc.lat));
+                          setFormLngInput(String(loc.lng));
+                          if (loc.source === 'device') {
+                            setEventGpsStatus({
+                              tone: 'success',
+                              message: loc.accuracy
+                                ? `Device GPS locked (±${loc.accuracy}m accuracy). Map preview updated.`
+                                : 'Device GPS coordinates acquired and pinned on map.',
+                              sourceLabel: loc.accuracy ? `Device GPS (±${loc.accuracy}m)` : 'Device GPS'
+                            });
+                          } else {
+                            setEventGpsStatus({
+                              tone: 'warning',
+                              message:
+                                loc.warning ||
+                                'Using approximate network location. Verify the pin or search the exact venue.',
+                              sourceLabel: 'Network Location'
+                            });
+                          }
                         } catch (err: any) {
-                          alert(`GPS location error: ${err?.message || 'Access denied'}`);
+                          const isDeniedOrPolicy =
+                            err instanceof GpsAccessError &&
+                            (err.code === 'PERMISSION_DENIED' || err.code === 'POLICY_BLOCKED');
+                          const isPolicyBlocked = err instanceof GpsAccessError && err.code === 'POLICY_BLOCKED';
+                          setEventGpsStatus({
+                            tone: 'error',
+                            message:
+                              err?.message ||
+                              'Location access was denied. Use the place search bar or paste coordinates below.',
+                            canFallbackNetwork: isDeniedOrPolicy || err instanceof GpsAccessError,
+                            policyBlocked: isPolicyBlocked
+                          });
+                        } finally {
+                          setEventGpsLoading(false);
                         }
                       }}
-                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-xl text-[11px] border border-emerald-200 transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                      className="min-h-[38px] px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60 text-emerald-800 font-bold rounded-xl text-[11px] border border-emerald-200 transition-all cursor-pointer inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                     >
-                      <Compass size={13} />
-                      <span>Use Device GPS</span>
+                      {eventGpsLoading ? (
+                        <RefreshCw size={13} className="animate-spin text-emerald-700" />
+                      ) : (
+                        <Compass size={13} className="text-emerald-700" />
+                      )}
+                      <span>{eventGpsLoading ? 'Locating...' : 'Use Device GPS'}</span>
                     </button>
+                  </div>
+
+                  {eventGpsStatus && (
+                    <div
+                      role="status"
+                      className={`px-3 py-2.5 rounded-xl border text-[11px] font-medium space-y-2 ${
+                        eventGpsStatus.tone === 'success'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          : eventGpsStatus.tone === 'warning'
+                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span>{eventGpsStatus.message}</span>
+                        <button
+                          type="button"
+                          onClick={() => setEventGpsStatus(null)}
+                          aria-label="Dismiss GPS status"
+                          className="text-current opacity-70 hover:opacity-100 cursor-pointer shrink-0"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                      {eventGpsStatus.canFallbackNetwork && (
+                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setEventGpsLoading(true);
+                              try {
+                                const loc = await getNetworkApproximateLocation();
+                                setFormLatitude(loc.lat);
+                                setFormLongitude(loc.lng);
+                                setFormLatInput(String(loc.lat));
+                                setFormLngInput(String(loc.lng));
+                                setEventGpsStatus({
+                                  tone: 'warning',
+                                  message: loc.warning || 'Using approximate network location.',
+                                  sourceLabel: 'Network Location'
+                                });
+                              } catch (fallbackErr: any) {
+                                setEventGpsStatus({
+                                  tone: 'error',
+                                  message: fallbackErr?.message || 'Network location fallback failed.'
+                                });
+                              } finally {
+                                setEventGpsLoading(false);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-rose-200 text-rose-900 hover:bg-rose-100 font-bold text-[11px] cursor-pointer transition-colors"
+                          >
+                            Use Approx. Network Location
+                          </button>
+                          {eventGpsStatus.policyBlocked && (
+                            <a
+                              href={typeof window !== 'undefined' ? window.location.href : '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 hover:bg-slate-50 font-bold text-[11px] inline-flex items-center gap-1"
+                            >
+                              <span>Open in New Tab</span>
+                              <ExternalLink size={11} />
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Quick Place Search or Paste Coordinates / Google Maps URL */}
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-600 block">
+                      Find Address / Venue or Paste Google Maps Coordinates
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="relative flex-1">
+                        <Search
+                          size={14}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                        />
+                        <input
+                          type="text"
+                          value={venueSearchQuery}
+                          onChange={e => setVenueSearchQuery(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const triggerSearch = async () => {
+                                const parsed = parseCoordinatesInput(venueSearchQuery);
+                                if (parsed) {
+                                  setFormLatitude(parsed.lat);
+                                  setFormLongitude(parsed.lng);
+                                  setFormLatInput(String(parsed.lat));
+                                  setFormLngInput(String(parsed.lng));
+                                  setVenueSearchResults([]);
+                                  setEventGpsStatus({
+                                    tone: 'success',
+                                    message: `Pinned coordinates ${parsed.lat}, ${parsed.lng} on the map preview.`,
+                                    sourceLabel: 'Custom Coordinates'
+                                  });
+                                  return;
+                                }
+                                if (!venueSearchQuery.trim()) return;
+                                setVenueSearching(true);
+                                setEventGpsStatus(null);
+                                try {
+                                  const hits = await searchLocationByQuery(venueSearchQuery);
+                                  setVenueSearchResults(hits);
+                                  if (hits.length === 0) {
+                                    setEventGpsStatus({
+                                      tone: 'warning',
+                                      message: `No matching map results found for "${venueSearchQuery}". Try adding city/country or pasting coordinates.`
+                                    });
+                                  }
+                                } catch (searchErr: any) {
+                                  setEventGpsStatus({
+                                    tone: 'error',
+                                    message: searchErr?.message || 'Unable to search map locations right now.'
+                                  });
+                                } finally {
+                                  setVenueSearching(false);
+                                }
+                              };
+                              void triggerSearch();
+                            }
+                          }}
+                          placeholder="e.g. Circular Road, Freetown or 8.484, -13.229"
+                          className="w-full min-h-[40px] pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={venueSearching || !venueSearchQuery.trim()}
+                        onClick={async () => {
+                          const parsed = parseCoordinatesInput(venueSearchQuery);
+                          if (parsed) {
+                            setFormLatitude(parsed.lat);
+                            setFormLongitude(parsed.lng);
+                            setFormLatInput(String(parsed.lat));
+                            setFormLngInput(String(parsed.lng));
+                            setVenueSearchResults([]);
+                            setEventGpsStatus({
+                              tone: 'success',
+                              message: `Pinned coordinates ${parsed.lat}, ${parsed.lng} on the map preview.`,
+                              sourceLabel: 'Custom Coordinates'
+                            });
+                            return;
+                          }
+                          setVenueSearching(true);
+                          setEventGpsStatus(null);
+                          try {
+                            const hits = await searchLocationByQuery(venueSearchQuery);
+                            setVenueSearchResults(hits);
+                            if (hits.length === 0) {
+                              setEventGpsStatus({
+                                tone: 'warning',
+                                message: `No matching map results found for "${venueSearchQuery}". Try adding city/country or pasting coordinates.`
+                              });
+                            }
+                          } catch (searchErr: any) {
+                            setEventGpsStatus({
+                              tone: 'error',
+                              message: searchErr?.message || 'Unable to search map locations right now.'
+                            });
+                          } finally {
+                            setVenueSearching(false);
+                          }
+                        }}
+                        className="min-h-[40px] px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs cursor-pointer transition-colors whitespace-nowrap shrink-0 inline-flex items-center justify-center gap-1.5"
+                      >
+                        {venueSearching ? <RefreshCw size={13} className="animate-spin" /> : <MapPin size={13} />}
+                        <span>{venueSearching ? 'Searching...' : 'Find on Map'}</span>
+                      </button>
+                    </div>
+
+                    {venueSearchResults.length > 0 && (
+                      <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 divide-y divide-indigo-100 max-h-40 overflow-y-auto">
+                        {venueSearchResults.map((hit, idx) => (
+                          <button
+                            key={`${hit.lat}-${hit.lng}-${idx}`}
+                            type="button"
+                            onClick={() => {
+                              setFormLatitude(hit.lat);
+                              setFormLongitude(hit.lng);
+                              setFormLatInput(String(hit.lat));
+                              setFormLngInput(String(hit.lng));
+                              setVenueSearchResults([]);
+                              const shortLabel = hit.displayName.split(',').slice(0, 3).join(',').trim();
+                              if (shortLabel) {
+                                setFormLocation(shortLabel);
+                              }
+                              setEventGpsStatus({
+                                tone: 'success',
+                                message: `Pinned "${hit.displayName.split(',').slice(0, 2).join(', ')}" on map.`,
+                                sourceLabel: 'Verified Place'
+                              });
+                            }}
+                            className="w-full px-3 py-2 text-left hover:bg-indigo-50 transition-colors cursor-pointer flex items-start justify-between gap-2"
+                          >
+                            <span className="text-[11px] font-semibold text-slate-800 leading-snug">
+                              {hit.displayName}
+                            </span>
+                            <span className="text-[10px] font-mono text-indigo-700 shrink-0 tabular-nums">
+                              {hit.lat.toFixed(4)}, {hit.lng.toFixed(4)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="font-bold text-slate-600 block mb-1">Latitude (° N/S)</label>
                       <input
-                        type="number"
-                        step="any"
-                        value={formLatitude}
-                        onChange={e => setFormLatitude(parseFloat(e.target.value) || 0)}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold"
+                        type="text"
+                        inputMode="decimal"
+                        value={formLatInput}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormLatInput(val);
+                          const parsed = Number(val);
+                          if (
+                            val.trim() !== '' &&
+                            val !== '-' &&
+                            !val.endsWith('.') &&
+                            Number.isFinite(parsed) &&
+                            Math.abs(parsed) <= 90
+                          ) {
+                            setFormLatitude(parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const parsed = Number(formLatInput);
+                          if (!Number.isFinite(parsed) || Math.abs(parsed) > 90 || formLatInput.trim() === '') {
+                            setFormLatInput(String(formLatitude));
+                          }
+                        }}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold tabular-nums focus:bg-white focus:border-indigo-500 outline-none"
                       />
                     </div>
 
                     <div>
                       <label className="font-bold text-slate-600 block mb-1">Longitude (° E/W)</label>
                       <input
-                        type="number"
-                        step="any"
-                        value={formLongitude}
-                        onChange={e => setFormLongitude(parseFloat(e.target.value) || 0)}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold"
+                        type="text"
+                        inputMode="decimal"
+                        value={formLngInput}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormLngInput(val);
+                          const parsed = Number(val);
+                          if (
+                            val.trim() !== '' &&
+                            val !== '-' &&
+                            !val.endsWith('.') &&
+                            Number.isFinite(parsed) &&
+                            Math.abs(parsed) <= 180
+                          ) {
+                            setFormLongitude(parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const parsed = Number(formLngInput);
+                          if (!Number.isFinite(parsed) || Math.abs(parsed) > 180 || formLngInput.trim() === '') {
+                            setFormLngInput(String(formLongitude));
+                          }
+                        }}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold tabular-nums focus:bg-white focus:border-indigo-500 outline-none"
                       />
                     </div>
 
@@ -9104,6 +9657,23 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                             const p = PRESET_GPS_LOCATIONS[idx];
                             setFormLatitude(p.lat);
                             setFormLongitude(p.lng);
+                            setFormLatInput(String(p.lat));
+                            setFormLngInput(String(p.lng));
+                            setVenueSearchResults([]);
+                            if (
+                              !formLocation.trim() ||
+                              formLocation === 'Grace Cathedral Main Sanctuary' ||
+                              formLocation === 'Grace Cathedral Sanctuary' ||
+                              formLocation === 'Main Sanctuary' ||
+                              PRESET_GPS_LOCATIONS.some(preset => preset.name === formLocation)
+                            ) {
+                              setFormLocation(p.name);
+                            }
+                            setEventGpsStatus({
+                              tone: 'success',
+                              message: `Pinned preset campus "${p.name}".`,
+                              sourceLabel: 'Campus Preset'
+                            });
                           }
                         }}
                         className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 cursor-pointer"
@@ -9124,7 +9694,8 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                       longitude={formLongitude}
                       title={formTitle || 'Event Venue'}
                       subtitle={formLocation}
-                      height="180px"
+                      sourceLabel={eventGpsStatus?.sourceLabel}
+                      height="260px"
                     />
                   </div>
                 </div>

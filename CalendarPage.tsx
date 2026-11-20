@@ -13,10 +13,12 @@ import {
   Download,
   ExternalLink,
   Filter,
+  History,
   Landmark,
   MapPin,
   Printer,
   QrCode,
+  Radio,
   RotateCcw,
   Search,
   Users,
@@ -28,9 +30,11 @@ import {
   formatLocalDateKey,
   generateEventOccurrences,
   getEventAccount,
+  getEventTemporalStatus,
   getRecurrenceBadge,
   resolveOccurrencePreemption
 } from './eventAccountService';
+import { LocationMap } from './LocationMap';
 import type { ChurchEvent, EventOccurrence, EventRegistration, Profile } from './types';
 
 interface CalendarPageProps {
@@ -80,6 +84,28 @@ const MONTH_NAMES = [
 ];
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function getEventCoordinates(evt: ChurchEvent): { lat: number; lng: number } | null {
+  if (evt.latitude === null || evt.latitude === undefined || (evt.latitude as unknown) === '') {
+    return null;
+  }
+  if (evt.longitude === null || evt.longitude === undefined || (evt.longitude as unknown) === '') {
+    return null;
+  }
+  const lat = Number(evt.latitude);
+  const lng = Number(evt.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+function getGoogleMapsHref(evt: ChurchEvent, fallbackLoc: string): string {
+  const coords = getEventCoordinates(evt);
+  if (coords) {
+    return `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fallbackLoc)}`;
+}
 
 function toLocalDateKey(input: Date | string): string {
   const dt = typeof input === 'string' ? new Date(input) : input;
@@ -156,8 +182,14 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncTick, setSyncTick] = useState(0);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  const today = useMemo(() => new Date(), []);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const today = useMemo(() => new Date(nowMs), [nowMs]);
   const todayKey = useMemo(() => toLocalDateKey(today), [today]);
 
   const [viewMode, setViewMode] = useState<'calendar' | 'agenda' | 'week'>('calendar');
@@ -177,6 +209,12 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
   const [showQRPass, setShowQRPass] = useState<{ event: ChurchEvent; reg: EventRegistration; occurrence?: EventOccurrence } | null>(null);
   const [selectedEventDetail, setSelectedEventDetail] = useState<{ event: ChurchEvent; occurrence?: EventOccurrence } | null>(null);
+  const [selectedMapLocation, setSelectedMapLocation] = useState<{
+    event: ChurchEvent;
+    locationName: string;
+    occurrence?: EventOccurrence;
+  } | null>(null);
+  const [showDetailMap, setShowDetailMap] = useState<boolean>(true);
 
   const dayScheduleRef = useRef<HTMLElement | null>(null);
   const appliedDeepLinkRef = useRef<string | null>(null);
@@ -192,17 +230,24 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   }, [toastMessage]);
 
   useEffect(() => {
+    if (selectedEventDetail) {
+      setShowDetailMap(true);
+    }
+  }, [selectedEventDetail?.event.id]);
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (showQRPass) setShowQRPass(null);
+        else if (selectedMapLocation) setSelectedMapLocation(null);
         else if (selectedEventDetail) setSelectedEventDetail(null);
       }
     };
-    if (showQRPass || selectedEventDetail) {
+    if (showQRPass || selectedEventDetail || selectedMapLocation) {
       document.addEventListener('keydown', onKeyDown);
       return () => document.removeEventListener('keydown', onKeyDown);
     }
-  }, [showQRPass, selectedEventDetail]);
+  }, [showQRPass, selectedEventDetail, selectedMapLocation]);
 
   const fetchEvents = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -221,6 +266,16 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         if (!prev) return null;
         const fresh = loadedEvents.find(e => e.id === prev.event.id && e.status !== 'cancelled');
         return fresh ? { event: fresh, occurrence: prev.occurrence } : null;
+      });
+      setSelectedMapLocation(prev => {
+        if (!prev) return null;
+        const fresh = loadedEvents.find(e => e.id === prev.event.id && e.status !== 'cancelled');
+        if (!fresh) return null;
+        return {
+          event: fresh,
+          locationName: prev.occurrence?.override_location || prev.occurrence?.location || fresh.location,
+          occurrence: prev.occurrence
+        };
       });
     } catch (err) {
       console.error('Unable to load events:', err);
@@ -471,14 +526,14 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     [activeEvents]
   );
 
-  // Upcoming horizon occurrences (today -> +180 days) so each program knows its real next date
+  // Upcoming horizon occurrences (now -> +180 days) so each program knows its real next upcoming/live date
   const nextOccurrenceByEventId = useMemo(() => {
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
     const horizonEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 180, 23, 59, 59, 999);
 
     const raw = activeEvents.flatMap(ev => generateEventOccurrences(ev, startOfToday, horizonEnd));
     const resolved = resolveOccurrencePreemption(raw).filter(
-      occ => occ.status !== 'cancelled' && new Date(occ.end_time || occ.start_time).getTime() >= startOfToday.getTime()
+      occ => occ.status !== 'cancelled' && new Date(occ.end_time || occ.start_time).getTime() >= nowMs
     );
 
     const map = new Map<string, EventOccurrence>();
@@ -489,22 +544,29 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
       }
     });
     return map;
-  }, [activeEvents, today, syncTick]);
+  }, [activeEvents, today, nowMs, syncTick]);
 
-  // Sort Upcoming Program Roster by soonest upcoming occurrence first (then past one-time)
+  // Sort Program Roster: ongoing & upcoming soonest-first, followed by recently passed one-time events
   const orderedFilteredEvents = useMemo(() => {
-    const startOfTodayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0).getTime();
     return [...filteredEvents].sort((a, b) => {
       const nextA = nextOccurrenceByEventId.get(a.id);
       const nextB = nextOccurrenceByEventId.get(b.id);
+      const temporalA = nextA
+        ? getEventTemporalStatus(nextA.start_time, nextA.end_time, nowMs, nextA.status)
+        : getEventTemporalStatus(a.start_time, a.end_time, nowMs, a.status);
+      const temporalB = nextB
+        ? getEventTemporalStatus(nextB.start_time, nextB.end_time, nowMs, nextB.status)
+        : getEventTemporalStatus(b.start_time, b.end_time, nowMs, b.status);
+
+      const isActiveA = temporalA !== 'past';
+      const isActiveB = temporalB !== 'past';
+      if (isActiveA !== isActiveB) return isActiveA ? -1 : 1;
+
       const timeA = new Date(nextA?.start_time || a.start_time).getTime();
       const timeB = new Date(nextB?.start_time || b.start_time).getTime();
-      const isUpcomingA = timeA >= startOfTodayMs;
-      const isUpcomingB = timeB >= startOfTodayMs;
-      if (isUpcomingA !== isUpcomingB) return isUpcomingA ? -1 : 1;
-      return timeA - timeB;
+      return isActiveA ? timeA - timeB : timeB - timeA;
     });
-  }, [filteredEvents, nextOccurrenceByEventId, today]);
+  }, [filteredEvents, nextOccurrenceByEventId, nowMs]);
 
   const year = currentMonthDate.getFullYear();
   const month = currentMonthDate.getMonth();
@@ -697,12 +759,20 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   }, [weekDays]);
 
   const featuredEvent = useMemo(() => {
-    const upcomingSorted = orderedFilteredEvents.length > 0 ? orderedFilteredEvents : activeEvents;
+    const sourcePool = orderedFilteredEvents.length > 0 ? orderedFilteredEvents : activeEvents;
+    const upcomingPool = sourcePool.filter(e => {
+      const nextOcc = nextOccurrenceByEventId.get(e.id);
+      const temporal = nextOcc
+        ? getEventTemporalStatus(nextOcc.start_time, nextOcc.end_time, nowMs, nextOcc.status)
+        : getEventTemporalStatus(e.start_time, e.end_time, nowMs, e.status);
+      return temporal !== 'past';
+    });
+    const preferredPool = upcomingPool.length > 0 ? upcomingPool : sourcePool;
     return (
-      upcomingSorted.find(e => e.category === 'Conference' || e.is_combined_service || e.registration_required) ||
-      upcomingSorted[0]
+      preferredPool.find(e => e.category === 'Conference' || e.is_combined_service || e.registration_required) ||
+      preferredPool[0]
     );
-  }, [orderedFilteredEvents, activeEvents]);
+  }, [orderedFilteredEvents, activeEvents, nextOccurrenceByEventId, nowMs]);
 
   const hasActiveFilters =
     search.trim().length > 0 ||
@@ -717,10 +787,38 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     setOnlyMyRsvps(false);
   };
 
-  const renderEventActionButton = (evt: ChurchEvent, fullWidth = false) => {
+  const renderEventActionButton = (
+    evt: ChurchEvent,
+    fullWidth = false,
+    occurrence?: EventOccurrence
+  ) => {
     const userReg = getEventUserReg(evt);
     const isFull = (evt.registered_count || 0) >= (evt.max_attendees || 9999);
     const isBusy = busyEventId === evt.id;
+
+    const effectiveOcc = occurrence || nextOccurrenceByEventId.get(evt.id);
+    const temporal = effectiveOcc
+      ? getEventTemporalStatus(effectiveOcc.start_time, effectiveOcc.end_time, nowMs, effectiveOcc.status)
+      : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
+
+    if (temporal === 'past') {
+      return (
+        <button
+          type="button"
+          disabled
+          className={`${fullWidth ? 'w-full' : ''} min-h-[44px] sm:min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200 flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-not-allowed`}
+        >
+          <History size={15} />
+          <span>
+            {userReg
+              ? 'Reserved · Ended'
+              : occurrence
+              ? 'Session Ended'
+              : 'Event Ended'}
+          </span>
+        </button>
+      );
+    }
 
     return (
       <button
@@ -876,6 +974,9 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         const featStart = featNextOcc?.start_time || featuredEvent.start_time;
         const featEnd = featNextOcc?.end_time || featuredEvent.end_time;
         const featLoc = featNextOcc?.override_location || featNextOcc?.location || featuredEvent.location;
+        const featTemporal = getEventTemporalStatus(featStart, featEnd, nowMs, featNextOcc?.status || featuredEvent.status);
+        const featIsPast = featTemporal === 'past';
+        const featIsLive = featTemporal === 'ongoing';
         const maxAtt = featuredEvent.max_attendees || 350;
         const regCount = featuredEvent.registered_count || 0;
         const isFull = regCount >= maxAtt;
@@ -889,12 +990,12 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         );
 
         return (
-          <section className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-slate-900 text-white border border-slate-800">
+          <section className={`relative rounded-2xl sm:rounded-3xl overflow-hidden bg-slate-900 text-white border border-slate-800 ${featIsPast ? 'opacity-90' : ''}`}>
             <div className="absolute inset-0">
               <EventCoverImage
                 src={featuredEvent.featured_image}
                 title={featuredEvent.title}
-                className="opacity-35"
+                className={featIsPast ? 'opacity-25 grayscale' : 'opacity-35'}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/40" />
             </div>
@@ -904,7 +1005,19 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               <div className="lg:col-span-7 xl:col-span-8 flex flex-col justify-between gap-4 min-w-0">
                 <div className="space-y-2.5">
                   <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-amber-200">
-                    <span className="font-bold text-amber-300">Featured Program</span>
+                    {featIsLive ? (
+                      <span className="inline-flex items-center gap-1.5 font-bold text-rose-300">
+                        <Radio size={13} className="animate-pulse" />
+                        Happening Now
+                      </span>
+                    ) : featIsPast ? (
+                      <span className="inline-flex items-center gap-1.5 font-bold text-slate-300">
+                        <History size={13} />
+                        Past Program · Ended
+                      </span>
+                    ) : (
+                      <span className="font-bold text-amber-300">Featured Program</span>
+                    )}
                     <span aria-hidden="true" className="text-slate-400">·</span>
                     <span className="text-slate-200">{rec.label}</span>
                     <span aria-hidden="true" className="text-slate-400">·</span>
@@ -915,7 +1028,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         year: 'numeric'
                       })}
                     </span>
-                    {isFull && (
+                    {!featIsPast && isFull && (
                       <>
                         <span aria-hidden="true" className="text-slate-400">·</span>
                         <span className="text-rose-300 font-semibold">Waitlist Open</span>
@@ -966,44 +1079,59 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                   <div className="h-2 w-full rounded-full bg-white/15 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${
-                        isFull ? 'bg-amber-400' : 'bg-emerald-400'
+                        featIsPast ? 'bg-slate-400' : isFull ? 'bg-amber-400' : 'bg-emerald-400'
                       }`}
                       style={{ width: `${fillPct}%` }}
                     />
                   </div>
                   <p className="text-[11px] text-slate-300 tabular-nums">
-                    {isFull ? 'Main capacity reached — waitlist active' : `${maxAtt - regCount} seats remaining`}
+                    {featIsPast
+                      ? 'This program date has concluded'
+                      : isFull
+                      ? 'Main capacity reached — waitlist active'
+                      : `${maxAtt - regCount} seats remaining`}
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <button
-                    type="button"
-                    disabled={busyEventId === featuredEvent.id}
-                    onClick={() => handleRSVPToggle(featuredEvent)}
-                    className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
-                      featReg
-                        ? featReg.status === 'waitlist'
-                          ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                          : 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                        : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
-                    }`}
-                  >
-                    {featReg ? (
-                      featReg.status === 'waitlist' ? <Clock size={16} /> : <CheckCircle2 size={16} />
-                    ) : (
-                      <CalendarCheck size={16} />
-                    )}
-                    <span>
-                      {featReg
-                        ? featReg.status === 'waitlist'
-                          ? 'Waitlisted (Cancel)'
-                          : 'Reserved (Cancel)'
-                        : isFull
-                        ? 'Join Waitlist'
-                        : 'Reserve Seat'}
-                    </span>
-                  </button>
+                  {featIsPast ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold bg-white/15 text-slate-300 border border-white/15 flex items-center justify-center gap-2 whitespace-nowrap cursor-not-allowed"
+                    >
+                      <History size={16} />
+                      <span>{featReg ? 'Reserved · Event Ended' : 'Event Ended'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busyEventId === featuredEvent.id}
+                      onClick={() => handleRSVPToggle(featuredEvent)}
+                      className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
+                        featReg
+                          ? featReg.status === 'waitlist'
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                            : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                          : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                      }`}
+                    >
+                      {featReg ? (
+                        featReg.status === 'waitlist' ? <Clock size={16} /> : <CheckCircle2 size={16} />
+                      ) : (
+                        <CalendarCheck size={16} />
+                      )}
+                      <span>
+                        {featReg
+                          ? featReg.status === 'waitlist'
+                            ? 'Waitlisted (Cancel)'
+                            : 'Reserved (Cancel)'
+                          : isFull
+                          ? 'Join Waitlist'
+                          : 'Reserve Seat'}
+                      </span>
+                    </button>
+                  )}
 
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -1205,6 +1333,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                 const dateObj = new Date(year, month, dayNum);
                 const dateKey = toLocalDateKey(dateObj);
                 const isToday = dateKey === todayKey;
+                const isPastDay = dateKey < todayKey;
                 const isSelected = dateKey === selectedDateKey;
                 const dayEntries = (monthOccurrencesByDate.get(dateKey) || []).filter(
                   item => item.occ.status !== 'cancelled'
@@ -1221,12 +1350,14 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         dayScheduleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                       }
                     }}
-                    aria-label={`${formatReadableDate(dateKey)}, ${dayEntries.length} events`}
+                    aria-label={`${formatReadableDate(dateKey)}, ${dayEntries.length} events${isPastDay ? ', past date' : ''}`}
                     className={`min-h-[54px] sm:min-h-[84px] lg:min-h-[96px] rounded-xl border p-1 sm:p-1.5 flex flex-col justify-between text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                       isSelected
                         ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500'
                         : isToday
-                        ? 'bg-slate-50 border-indigo-300'
+                        ? 'bg-indigo-50/40 border-indigo-300'
+                        : isPastDay
+                        ? 'bg-slate-50/75 border-slate-100 hover:border-slate-300'
                         : hasEvents
                         ? 'bg-white border-slate-200 hover:border-indigo-300'
                         : 'bg-slate-50/40 border-slate-100 hover:bg-slate-50'
@@ -1239,13 +1370,19 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                             ? 'bg-indigo-600 text-white'
                             : isSelected
                             ? 'text-indigo-900'
+                            : isPastDay
+                            ? 'text-slate-400 font-semibold'
                             : 'text-slate-800'
                         }`}
                       >
                         {dayNum}
                       </span>
                       {hasEvents && (
-                        <span className="hidden sm:inline-block text-[11px] font-bold text-indigo-700 tabular-nums pr-0.5">
+                        <span
+                          className={`hidden sm:inline-block text-[11px] font-bold tabular-nums pr-0.5 ${
+                            isPastDay ? 'text-slate-400' : 'text-indigo-700'
+                          }`}
+                        >
                           {dayEntries.length}
                         </span>
                       )}
@@ -1257,11 +1394,22 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         {dayEntries.slice(0, 3).map(({ occ, event }) => {
                           const reg = getEventUserReg(event);
                           const isSpecial = occ.is_combined_service || event.is_combined_service;
+                          const temporal = getEventTemporalStatus(occ.start_time, occ.end_time, nowMs, occ.status);
+                          const isPastOcc = temporal === 'past';
+                          const isLiveOcc = temporal === 'ongoing';
                           return (
                             <span
                               key={occ.id}
                               className={`w-1.5 h-1.5 rounded-full ${
-                                reg
+                                isLiveOcc
+                                  ? 'bg-rose-500 ring-2 ring-rose-200'
+                                  : isPastOcc
+                                  ? reg
+                                    ? 'bg-emerald-300'
+                                    : isSpecial
+                                    ? 'bg-amber-300'
+                                    : 'bg-slate-300'
+                                  : reg
                                   ? 'bg-emerald-600'
                                   : isSpecial
                                   ? 'bg-amber-500'
@@ -1271,39 +1419,62 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                           );
                         })}
                         {dayEntries.length > 3 && (
-                          <span className="text-[10px] font-bold text-indigo-700 tabular-nums">
+                          <span
+                            className={`text-[10px] font-bold tabular-nums ${
+                              isPastDay ? 'text-slate-400' : 'text-indigo-700'
+                            }`}
+                          >
                             +{dayEntries.length - 3}
                           </span>
                         )}
                       </div>
                     )}
 
-                    {/* Tablet & Desktop Event Chips (sm+) */}
+                    {/* Tablet & Desktop Event Chips (sm+) — Google Calendar muted treatment for passed events */}
                     {hasEvents && (
                       <div className="hidden sm:block space-y-1 w-full overflow-hidden">
                         {dayEntries.slice(0, 2).map(({ occ, event }) => {
                           const reg = getEventUserReg(event);
                           const isSpecial = occ.is_combined_service || event.is_combined_service;
+                          const temporal = getEventTemporalStatus(occ.start_time, occ.end_time, nowMs, occ.status);
+                          const isPastOcc = temporal === 'past';
+                          const isLiveOcc = temporal === 'ongoing';
+
+                          const chipStyle = isPastOcc
+                            ? reg
+                              ? 'bg-emerald-50 text-emerald-700/80 border border-emerald-200/80'
+                              : isSpecial
+                              ? 'bg-amber-50 text-amber-800/80 border border-amber-200/80'
+                              : occ.status === 'rescheduled'
+                              ? 'bg-purple-50 text-purple-700/80 border border-purple-200/80'
+                              : 'bg-slate-100 text-slate-500 border border-slate-200/90'
+                            : reg
+                            ? 'bg-emerald-600 text-white'
+                            : isSpecial
+                            ? 'bg-amber-500 text-slate-950'
+                            : occ.status === 'rescheduled'
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-indigo-600 text-white';
+
                           return (
                             <div
                               key={occ.id}
-                              className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md truncate ${
-                                reg
-                                  ? 'bg-emerald-600 text-white'
-                                  : isSpecial
-                                  ? 'bg-amber-500 text-slate-950'
-                                  : occ.status === 'rescheduled'
-                                  ? 'bg-purple-600 text-white'
-                                  : 'bg-indigo-600 text-white'
-                              }`}
-                              title={event.title}
+                              className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md truncate flex items-center gap-1 ${chipStyle}`}
+                              title={`${event.title}${isPastOcc ? ' (Ended)' : isLiveOcc ? ' (Happening Now)' : ''}`}
                             >
-                              {event.title}
+                              {isLiveOcc && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shrink-0" />
+                              )}
+                              <span className="truncate">{event.title}</span>
                             </div>
                           );
                         })}
                         {dayEntries.length > 2 && (
-                          <div className="text-[11px] font-bold text-indigo-700 text-right pr-0.5 tabular-nums">
+                          <div
+                            className={`text-[11px] font-bold text-right pr-0.5 tabular-nums ${
+                              isPastDay ? 'text-slate-400' : 'text-indigo-700'
+                            }`}
+                          >
                             +{dayEntries.length - 2} more
                           </div>
                         )}
@@ -1331,6 +1502,14 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-purple-600 shrink-0" />
                 <span>Rescheduled</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                <span>Happening Now</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-200 border border-slate-300 shrink-0" />
+                <span>Past / Ended</span>
               </span>
             </div>
           </div>
@@ -1377,22 +1556,41 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                 {selectedDayEntries.map(({ occ, event: evt }) => {
                   const userReg = getEventUserReg(evt);
                   const isCancelledOcc = occ.status === 'cancelled';
+                  const temporal = getEventTemporalStatus(occ.start_time, occ.end_time, nowMs, occ.status);
+                  const isPastOcc = temporal === 'past' && !isCancelledOcc;
+                  const isLiveOcc = temporal === 'ongoing' && !isCancelledOcc;
                   const displayLoc = occ.override_location || occ.location || evt.location;
 
                   return (
                     <div
                       key={occ.id}
-                      className={`p-3.5 sm:p-4 rounded-2xl border space-y-3 ${
+                      className={`p-3.5 sm:p-4 rounded-2xl border space-y-3 transition-colors ${
                         isCancelledOcc
-                          ? 'bg-slate-50/70 border-slate-200 opacity-85'
+                          ? 'bg-slate-50/70 border-slate-200 opacity-75'
+                          : isPastOcc
+                          ? 'bg-slate-50/60 border-slate-200/80 opacity-80'
+                          : isLiveOcc
+                          ? 'bg-emerald-50/35 border-emerald-300'
                           : 'bg-slate-50 border-slate-200'
                       }`}
                     >
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-slate-500">
-                          <span className="text-indigo-700 font-semibold">{evt.category}</span>
+                          <span className={`font-semibold ${isPastOcc ? 'text-slate-500' : 'text-indigo-700'}`}>
+                            {evt.category}
+                          </span>
                           {isCancelledOcc ? (
                             <span className="font-bold text-slate-600">Updated / Merged</span>
+                          ) : isPastOcc ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-slate-500">
+                              <History size={12} />
+                              <span>{userReg ? 'Registered · Ended' : 'Ended'}</span>
+                            </span>
+                          ) : isLiveOcc ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-rose-600">
+                              <Radio size={12} className="animate-pulse" />
+                              <span>Happening Now</span>
+                            </span>
                           ) : occ.status === 'rescheduled' ? (
                             <span className="font-bold text-purple-700">Rescheduled</span>
                           ) : userReg ? (
@@ -1411,6 +1609,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                           className={`text-left font-bold text-sm sm:text-base leading-snug cursor-pointer transition-colors ${
                             isCancelledOcc
                               ? 'line-through text-slate-500'
+                              : isPastOcc
+                              ? 'text-slate-600 hover:text-slate-900'
                               : 'text-slate-900 hover:text-indigo-700'
                           }`}
                         >
@@ -1424,21 +1624,38 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         )}
                       </div>
 
-                      <div className="space-y-1 text-xs sm:text-[13px] text-slate-700">
+                      <div className={`space-y-1 text-xs sm:text-[13px] ${isPastOcc ? 'text-slate-500' : 'text-slate-700'}`}>
                         <div className="flex items-center gap-2 tabular-nums">
-                          <Clock size={14} className="text-indigo-600 shrink-0" />
+                          <Clock size={14} className={`${isPastOcc ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
                           <span>{formatTimeRange(occ.start_time, occ.end_time)}</span>
                         </div>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <MapPin size={14} className="text-indigo-600 shrink-0" />
-                          <span className="truncate">{displayLoc}</span>
+                        <div className="flex items-center justify-between gap-2 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <MapPin size={14} className={`${isPastOcc ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
+                            <span className="truncate">{displayLoc}</span>
+                          </div>
+                          {(displayLoc || getEventCoordinates(evt)) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedMapLocation({
+                                  event: evt,
+                                  locationName: displayLoc || 'Event Venue',
+                                  occurrence: occ
+                                })
+                              }
+                              className="text-xs font-semibold text-indigo-700 hover:underline shrink-0 whitespace-nowrap cursor-pointer"
+                            >
+                              Map
+                            </button>
+                          )}
                         </div>
                       </div>
 
                       {!isCancelledOcc && (
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <div className="flex-1 min-w-[140px]">
-                            {renderEventActionButton(evt, true)}
+                            {renderEventActionButton(evt, true, occ)}
                           </div>
                           <button
                             type="button"
@@ -1539,6 +1756,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               {weekDays.map(day => {
                 const isSelected = selectedWeekDayKey === day.key;
                 const isToday = day.key === todayKey;
+                const isPastDay = day.key < todayKey;
                 const hasEvents = day.activeCount > 0;
                 return (
                   <button
@@ -1552,12 +1770,14 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         ? 'bg-indigo-600 border-indigo-600 text-white'
                         : isToday
                         ? 'bg-indigo-50 border-indigo-300 text-indigo-950'
+                        : isPastDay
+                        ? 'bg-slate-50/50 hover:bg-slate-100 border-slate-100 text-slate-400'
                         : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
                     }`}
                   >
                     <span
                       className={`text-[11px] sm:text-xs font-semibold ${
-                        isSelected ? 'text-indigo-100' : 'text-slate-500'
+                        isSelected ? 'text-indigo-100' : isPastDay ? 'text-slate-400' : 'text-slate-500'
                       }`}
                     >
                       {day.dayShort}
@@ -1570,6 +1790,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         hasEvents
                           ? isSelected
                             ? 'bg-amber-300'
+                            : isPastDay
+                            ? 'bg-slate-300'
                             : 'bg-indigo-600'
                           : 'bg-transparent'
                       }`}
@@ -1617,18 +1839,37 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                 const startDate = new Date(occ.start_time);
                 const userReg = getEventUserReg(evt);
                 const isCancelledOcc = occ.status === 'cancelled';
+                const temporal = getEventTemporalStatus(occ.start_time, occ.end_time, nowMs, occ.status);
+                const isPastOcc = temporal === 'past' && !isCancelledOcc;
+                const isLiveOcc = temporal === 'ongoing' && !isCancelledOcc;
                 const displayLoc = occ.override_location || occ.location || evt.location;
 
                 return (
                   <div
                     key={occ.id}
-                    className={`p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors ${
-                      isCancelledOcc ? 'opacity-80' : 'hover:border-indigo-300'
+                    className={`p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors ${
+                      isCancelledOcc
+                        ? 'bg-slate-50/70 border-slate-200 opacity-75'
+                        : isPastOcc
+                        ? 'bg-slate-50/60 border-slate-200/80 opacity-80'
+                        : isLiveOcc
+                        ? 'bg-emerald-50/35 border-emerald-300'
+                        : 'bg-slate-50 border-slate-200 hover:border-indigo-300'
                     }`}
                   >
                     <div className="flex items-start gap-3.5 min-w-0">
-                      <div className="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex flex-col items-center justify-center shrink-0 tabular-nums px-2 py-1.5">
-                        <span className="text-[11px] font-semibold uppercase text-indigo-100 leading-none">
+                      <div
+                        className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center shrink-0 tabular-nums px-2 py-1.5 ${
+                          isPastOcc || isCancelledOcc
+                            ? 'bg-slate-200 text-slate-600'
+                            : 'bg-indigo-600 text-white'
+                        }`}
+                      >
+                        <span
+                          className={`text-[11px] font-semibold uppercase leading-none ${
+                            isPastOcc || isCancelledOcc ? 'text-slate-500' : 'text-indigo-100'
+                          }`}
+                        >
                           {startDate.toLocaleDateString('en-US', { weekday: 'short' })}
                         </span>
                         <span className="text-lg font-bold leading-tight mt-0.5">
@@ -1638,11 +1879,29 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
 
                       <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-medium">
-                          <span className="text-indigo-700 font-semibold">{evt.category}</span>
+                          <span className={`font-semibold ${isPastOcc ? 'text-slate-500' : 'text-indigo-700'}`}>
+                            {evt.category}
+                          </span>
                           {isCancelledOcc ? (
                             <>
                               <span aria-hidden="true">·</span>
                               <span className="font-bold text-slate-600">Updated / Merged</span>
+                            </>
+                          ) : isPastOcc ? (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="inline-flex items-center gap-1 font-bold text-slate-500">
+                                <History size={12} />
+                                <span>{userReg ? 'Registered · Ended' : 'Ended'}</span>
+                              </span>
+                            </>
+                          ) : isLiveOcc ? (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="inline-flex items-center gap-1 font-bold text-rose-600">
+                                <Radio size={12} className="animate-pulse" />
+                                <span>Happening Now</span>
+                              </span>
                             </>
                           ) : occ.status === 'rescheduled' ? (
                             <>
@@ -1666,7 +1925,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                           type="button"
                           onClick={() => setSelectedEventDetail({ event: evt, occurrence: occ })}
                           className={`text-left font-bold text-sm sm:text-base leading-snug cursor-pointer ${
-                            isCancelledOcc ? 'line-through text-slate-500' : 'text-slate-900 hover:text-indigo-700'
+                            isCancelledOcc
+                              ? 'line-through text-slate-500'
+                              : isPastOcc
+                              ? 'text-slate-600 hover:text-slate-900'
+                              : 'text-slate-900 hover:text-indigo-700'
                           }`}
                         >
                           {evt.title}
@@ -1674,14 +1937,29 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         {occ.modified_notes && (
                           <p className="text-xs text-amber-800 font-medium">{occ.modified_notes}</p>
                         )}
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-[13px] text-slate-700 pt-0.5">
+                        <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-[13px] pt-0.5 ${isPastOcc ? 'text-slate-500' : 'text-slate-700'}`}>
                           <span className="inline-flex items-center gap-1.5 tabular-nums">
-                            <Clock size={13} className="text-indigo-600 shrink-0" />
+                            <Clock size={13} className={`${isPastOcc ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
                             <span>{formatTimeRange(occ.start_time, occ.end_time)}</span>
                           </span>
                           <span className="inline-flex items-center gap-1.5 min-w-0">
-                            <MapPin size={13} className="text-indigo-600 shrink-0" />
+                            <MapPin size={13} className={`${isPastOcc ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
                             <span className="truncate">{displayLoc}</span>
+                            {(displayLoc || getEventCoordinates(evt)) && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSelectedMapLocation({
+                                    event: evt,
+                                    locationName: displayLoc || 'Event Venue',
+                                    occurrence: occ
+                                  })
+                                }
+                                className="text-xs font-semibold text-indigo-700 hover:underline shrink-0 whitespace-nowrap ml-1 cursor-pointer"
+                              >
+                                Map
+                              </button>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -1690,7 +1968,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                     {!isCancelledOcc && (
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
                         <div className="flex-1 sm:flex-initial min-w-[140px]">
-                          {renderEventActionButton(evt, true)}
+                          {renderEventActionButton(evt, true, occ)}
                         </div>
                         <button
                           type="button"
@@ -1734,12 +2012,26 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
             <h2 className="font-bold text-slate-900 text-lg sm:text-xl">
-              Upcoming Program Roster
+              Program Roster
             </h2>
             <div className="flex items-center gap-3 text-xs sm:text-[13px] text-slate-600 font-semibold tabular-nums">
-              <span>
-                {orderedFilteredEvents.length} {orderedFilteredEvents.length === 1 ? 'Program' : 'Programs'}
-              </span>
+              {(() => {
+                const pastCount = orderedFilteredEvents.filter(evt => {
+                  const nextOcc = nextOccurrenceByEventId.get(evt.id);
+                  const temporal = nextOcc
+                    ? getEventTemporalStatus(nextOcc.start_time, nextOcc.end_time, nowMs, nextOcc.status)
+                    : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
+                  return temporal === 'past';
+                }).length;
+                const activeCount = orderedFilteredEvents.length - pastCount;
+                return (
+                  <span>
+                    {pastCount > 0
+                      ? `${activeCount} Upcoming · ${pastCount} Past`
+                      : `${orderedFilteredEvents.length} ${orderedFilteredEvents.length === 1 ? 'Program' : 'Programs'}`}
+                  </span>
+                );
+              })()}
               {hasActiveFilters && (
                 <button
                   type="button"
@@ -1782,6 +2074,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                 const displayStart = nextOcc?.start_time || evt.start_time;
                 const displayEnd = nextOcc?.end_time || evt.end_time;
                 const displayLoc = nextOcc?.override_location || nextOcc?.location || evt.location;
+                const temporal = nextOcc
+                  ? getEventTemporalStatus(nextOcc.start_time, nextOcc.end_time, nowMs, nextOcc.status)
+                  : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
+                const isPastEvt = temporal === 'past';
+                const isLiveEvt = temporal === 'ongoing';
                 const startDate = new Date(displayStart);
                 const userReg = getEventUserReg(evt);
                 const maxAtt = evt.max_attendees || 9999;
@@ -1793,7 +2090,13 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                 return (
                   <article
                     key={evt.id}
-                    className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col justify-between group hover:border-indigo-300 transition-colors min-w-0"
+                    className={`rounded-2xl border overflow-hidden flex flex-col justify-between group transition-colors min-w-0 ${
+                      isPastEvt
+                        ? 'bg-slate-50/75 border-slate-200/90 opacity-85 hover:opacity-100'
+                        : isLiveEvt
+                        ? 'bg-white border-emerald-300 ring-1 ring-emerald-200/70'
+                        : 'bg-white border-slate-200 hover:border-indigo-300'
+                    }`}
                   >
                     <div className="flex flex-col md:flex-row lg:flex-col flex-1">
                       {/* Cover Media (Top on Mobile & lg+, Left Panel on md: Tablet to eliminate sidebar squeeze) */}
@@ -1804,13 +2107,20 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         <EventCoverImage
                           src={evt.featured_image}
                           title={evt.title}
-                          className="group-hover:scale-105 transition-transform duration-300"
+                          className={`group-hover:scale-105 transition-transform duration-300 ${
+                            isPastEvt ? 'grayscale opacity-65' : ''
+                          }`}
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/25 to-transparent" />
 
                         <div className="absolute bottom-3 left-3.5 right-3.5 flex items-end justify-between gap-2 text-white">
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-amber-300 tabular-nums">
+                            <p
+                              className={`text-xs font-bold tabular-nums ${
+                                isPastEvt ? 'text-slate-300' : 'text-amber-300'
+                              }`}
+                            >
+                              {isPastEvt ? 'Ended · ' : ''}
                               {startDate.toLocaleDateString('en-US', {
                                 weekday: 'short',
                                 month: 'short',
@@ -1819,7 +2129,17 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                               })}
                             </p>
                           </div>
-                          {userReg ? (
+                          {isPastEvt ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-slate-900/85 text-slate-200 border border-white/15 text-[11px] font-bold shrink-0 inline-flex items-center gap-1">
+                              <History size={11} />
+                              <span>Past</span>
+                            </span>
+                          ) : isLiveEvt ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-600 text-white text-[11px] font-bold shrink-0 inline-flex items-center gap-1">
+                              <Radio size={11} className="animate-pulse" />
+                              <span>Live Now</span>
+                            </span>
+                          ) : userReg ? (
                             <span
                               className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 ${
                                 userReg.status === 'waitlist'
@@ -1842,10 +2162,18 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         <div className="space-y-2.5">
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500">
-                              <span className="text-indigo-700 font-semibold">{evt.category}</span>
+                              <span className={`font-semibold ${isPastEvt ? 'text-slate-500' : 'text-indigo-700'}`}>
+                                {evt.category}
+                              </span>
                               <span aria-hidden="true">·</span>
                               <span>{rec.label}</span>
-                              {evt.is_virtual && (
+                              {isPastEvt && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="text-slate-500 font-semibold">Ended</span>
+                                </>
+                              )}
+                              {!isPastEvt && evt.is_virtual && (
                                 <>
                                   <span aria-hidden="true">·</span>
                                   <span className="text-slate-700">Livestream</span>
@@ -1856,39 +2184,46 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                             <button
                               type="button"
                               onClick={() => setSelectedEventDetail({ event: evt, occurrence: nextOcc })}
-                              className="text-left font-bold text-slate-900 hover:text-indigo-700 text-base sm:text-lg leading-snug cursor-pointer transition-colors"
+                              className={`text-left font-bold text-base sm:text-lg leading-snug cursor-pointer transition-colors ${
+                                isPastEvt
+                                  ? 'text-slate-600 hover:text-slate-900'
+                                  : 'text-slate-900 hover:text-indigo-700'
+                              }`}
                             >
                               {evt.title}
                             </button>
                           </div>
 
-                          <p className="text-[13px] sm:text-sm text-slate-600 line-clamp-2 leading-relaxed">
+                          <p className={`text-[13px] sm:text-sm line-clamp-2 leading-relaxed ${isPastEvt ? 'text-slate-500' : 'text-slate-600'}`}>
                             {evt.description}
                           </p>
                         </div>
 
                         <div className="space-y-2 pt-2.5 border-t border-slate-100">
-                          <div className="space-y-1.5 text-xs sm:text-[13px] text-slate-700">
+                          <div className={`space-y-1.5 text-xs sm:text-[13px] ${isPastEvt ? 'text-slate-500' : 'text-slate-700'}`}>
                             <div className="flex items-center gap-2 tabular-nums">
-                              <Clock size={14} className="text-indigo-600 shrink-0" />
+                              <Clock size={14} className={`${isPastEvt ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
                               <span>{formatTimeRange(displayStart, displayEnd)}</span>
                             </div>
                             <div className="flex items-center justify-between gap-2 min-w-0">
                               <div className="flex items-center gap-2 min-w-0">
-                                <MapPin size={14} className="text-indigo-600 shrink-0" />
+                                <MapPin size={14} className={`${isPastEvt ? 'text-slate-400' : 'text-indigo-600'} shrink-0`} />
                                 <span className="truncate">{displayLoc}</span>
                               </div>
-                              {displayLoc && (
-                                <a
-                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                    displayLoc
-                                  )}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs font-semibold text-indigo-700 hover:underline shrink-0 whitespace-nowrap"
+                              {(displayLoc || getEventCoordinates(evt)) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedMapLocation({
+                                      event: evt,
+                                      locationName: displayLoc || 'Event Venue',
+                                      occurrence: nextOcc
+                                    })
+                                  }
+                                  className="text-xs font-semibold text-indigo-700 hover:underline shrink-0 whitespace-nowrap cursor-pointer"
                                 >
                                   Map
-                                </a>
+                                </button>
                               )}
                             </div>
                             {evt.recurrence_pattern && (
@@ -1916,7 +2251,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                     {/* Touch-Friendly Wrapped Footer Actions (Never clips at 320px or 768px) */}
                     <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex-1 min-w-[140px]">
-                        {renderEventActionButton(evt, true)}
+                        {renderEventActionButton(evt, true, nextOcc)}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -1976,6 +2311,9 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         const effStart = occ?.start_time || evt.start_time;
         const effEnd = occ?.end_time || evt.end_time;
         const effLoc = occ?.override_location || occ?.location || evt.location;
+        const detailTemporal = getEventTemporalStatus(effStart, effEnd, nowMs, occ?.status || evt.status);
+        const detailIsPast = detailTemporal === 'past';
+        const detailIsLive = detailTemporal === 'ongoing';
 
         return (
           <div
@@ -1991,7 +2329,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </div>
 
               <div className="relative h-40 sm:h-48 w-full bg-slate-900 shrink-0">
-                <EventCoverImage src={evt.featured_image} title={evt.title} />
+                <EventCoverImage
+                  src={evt.featured_image}
+                  title={evt.title}
+                  className={detailIsPast ? 'grayscale opacity-70' : ''}
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent" />
                 <button
                   type="button"
@@ -2002,16 +2344,42 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                   <X size={20} />
                 </button>
                 <div className="absolute bottom-3.5 left-4 right-4 text-white space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-amber-300 font-semibold">
+                  <div className={`flex flex-wrap items-center gap-1.5 text-xs font-semibold ${detailIsPast ? 'text-slate-300' : 'text-amber-300'}`}>
                     <span>{evt.category}</span>
                     <span aria-hidden="true">·</span>
                     <span>{rec.label}</span>
+                    {detailIsPast && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-slate-200">Ended</span>
+                      </>
+                    )}
+                    {detailIsLive && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-rose-300">Happening Now</span>
+                      </>
+                    )}
                   </div>
                   <h3 className="text-lg sm:text-xl font-bold leading-snug">{evt.title}</h3>
                 </div>
               </div>
 
               <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
+                {detailIsPast && (
+                  <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 text-xs sm:text-[13px] font-medium text-slate-700 flex items-center gap-2">
+                    <History size={15} className="text-slate-500 shrink-0" />
+                    <span>This event session has already ended.</span>
+                  </div>
+                )}
+
+                {detailIsLive && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs sm:text-[13px] font-medium text-rose-800 flex items-center gap-2">
+                    <Radio size={15} className="text-rose-600 animate-pulse shrink-0" />
+                    <span>This service or program is currently in progress.</span>
+                  </div>
+                )}
+
                 {occ?.modified_notes && (
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs sm:text-[13px] font-medium text-amber-900 flex items-start gap-2">
                     <AlertCircle size={15} className="text-amber-700 shrink-0 mt-0.5" />
@@ -2039,20 +2407,45 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       <MapPin size={16} className="text-indigo-600 shrink-0 mt-0.5" />
                       <span className="font-medium">{effLoc}</span>
                     </div>
-                    {effLoc && (
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          effLoc
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-semibold text-indigo-700 hover:underline inline-flex items-center gap-1 shrink-0"
-                      >
-                        <span>Maps</span>
-                        <ExternalLink size={12} />
-                      </a>
-                    )}
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      {getEventCoordinates(evt) && (
+                        <button
+                          type="button"
+                          onClick={() => setShowDetailMap(prev => !prev)}
+                          className="text-xs font-semibold text-slate-600 hover:text-indigo-700 cursor-pointer whitespace-nowrap"
+                        >
+                          {showDetailMap ? 'Hide Map' : 'Show Map'}
+                        </button>
+                      )}
+                      {(effLoc || getEventCoordinates(evt)) && (
+                        <a
+                          href={getGoogleMapsHref(evt, effLoc)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs font-semibold text-indigo-700 hover:underline inline-flex items-center gap-1 shrink-0"
+                        >
+                          <span>Maps</span>
+                          <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
                   </div>
+                  {showDetailMap && (() => {
+                    const detailCoords = getEventCoordinates(evt);
+                    if (!detailCoords) return null;
+                    return (
+                      <div className="pt-1">
+                        <LocationMap
+                          latitude={detailCoords.lat}
+                          longitude={detailCoords.lng}
+                          title={evt.title}
+                          subtitle={effLoc}
+                          sourceLabel="Configured Event Location"
+                          height="220px"
+                        />
+                      </div>
+                    );
+                  })()}
                   {evt.organizer_name && (
                     <div className="flex items-start gap-2.5">
                       <Users size={16} className="text-indigo-600 shrink-0 mt-0.5" />
@@ -2098,7 +2491,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </div>
 
               <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                <div className="flex-1">{renderEventActionButton(evt, true)}</div>
+                <div className="flex-1">{renderEventActionButton(evt, true, occ)}</div>
                 <div className="grid grid-cols-2 sm:flex items-center gap-2">
                   <button
                     type="button"
@@ -2129,6 +2522,116 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       Done
                     </button>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* EVENT VENUE MAP MODAL (Triggered by clicking Map on any event card) */}
+      {selectedMapLocation && (() => {
+        const { event: mapEvt, locationName, occurrence: mapOcc } = selectedMapLocation;
+        const mapCoords = getEventCoordinates(mapEvt);
+        const effStart = mapOcc?.start_time || mapEvt.start_time;
+        const effEnd = mapOcc?.end_time || mapEvt.end_time;
+        const googleMapsLink = getGoogleMapsHref(mapEvt, locationName);
+
+        return (
+          <div
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-[105]"
+            onClick={e => {
+              if (e.target === e.currentTarget) setSelectedMapLocation(null);
+            }}
+          >
+            <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-2xl w-full border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+              <div className="sm:hidden flex justify-center pt-2.5 pb-1">
+                <span className="w-10 h-1.5 rounded-full bg-slate-300" />
+              </div>
+
+              <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-700">
+                    <MapPin size={14} />
+                    <span>Event Location &amp; Directions</span>
+                  </div>
+                  <h3 className="font-bold text-slate-900 text-base sm:text-lg leading-snug truncate">
+                    {mapEvt.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 truncate">
+                    {locationName} · {formatReadableDate(toLocalDateKey(effStart))} ({formatTimeRange(effStart, effEnd)})
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMapLocation(null)}
+                  aria-label="Close map preview"
+                  className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer shrink-0"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4">
+                {mapCoords ? (
+                  <LocationMap
+                    latitude={mapCoords.lat}
+                    longitude={mapCoords.lng}
+                    title={mapEvt.title}
+                    subtitle={locationName}
+                    sourceLabel="Admin Configured Pin"
+                    height="300px"
+                  />
+                ) : (
+                  <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-3">
+                    <MapPin size={28} className="mx-auto text-indigo-600" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-slate-900">{locationName}</p>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto">
+                        Exact GPS coordinates have not been pinned for this event yet. You can open the venue name directly in Google Maps.
+                      </p>
+                    </div>
+                    <a
+                      href={googleMapsLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors"
+                    >
+                      <span>Search Venue in Google Maps</span>
+                      <ExternalLink size={13} />
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedMapLocation(null);
+                    setSelectedEventDetail({ event: mapEvt, occurrence: mapOcc });
+                  }}
+                  className="min-h-[40px] px-3.5 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  View Event Details
+                </button>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={googleMapsLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-[40px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>Open in Google Maps</span>
+                    <ExternalLink size={13} />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMapLocation(null)}
+                    className="min-h-[40px] px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
             </div>

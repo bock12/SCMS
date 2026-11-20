@@ -158,79 +158,274 @@ export function applyChurchTheme(profile: ChurchProfile): void {
   `;
 }
 
-export async function getCurrentGpsLocation(): Promise<{ lat: number; lng: number; source: 'device' | 'ip' }> {
-  return new Promise((resolve, reject) => {
-    let resolved = false;
+export interface GpsLocationResult {
+  lat: number;
+  lng: number;
+  source: 'device' | 'ip';
+  accuracy?: number;
+  warning?: string;
+}
 
-    // Fast Timeout fallback to IP Geolocation if browser API is blocked or slow
-    const ipFallbackTimeout = setTimeout(async () => {
-      if (resolved) return;
+export interface PlaceSearchResult {
+  displayName: string;
+  lat: number;
+  lng: number;
+}
+
+export function parseCoordinatesInput(raw: string): { lat: number; lng: number } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Support Google Maps URLs containing @lat,lng or q=lat,lng
+  const urlMatch = trimmed.match(/(?:@|[?&](?:q|query)=)(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+  if (urlMatch) {
+    const lat = Number(urlMatch[1]);
+    const lng = Number(urlMatch[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) };
+    }
+  }
+
+  // Support plain "lat, lng" or "lat lng"
+  const pairMatch = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+  if (pairMatch) {
+    const lat = Number(pairMatch[1]);
+    const lng = Number(pairMatch[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) };
+    }
+  }
+
+  return null;
+}
+
+export async function searchLocationByQuery(query: string): Promise<PlaceSearchResult[]> {
+  const cleaned = query.trim();
+  if (!cleaned) return [];
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 7000);
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(cleaned)}`,
+      {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json'
+        }
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`Location search failed (${res.status})`);
+    }
+    const items = await res.json();
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item: any) => ({
+        displayName: String(item.display_name || ''),
+        lat: Number(Number(item.lat).toFixed(6)),
+        lng: Number(Number(item.lon).toFixed(6))
+      }))
+      .filter(r => r.displayName && Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fetchIpLocationFallback(): Promise<{ lat: number; lng: number } | null> {
+  const endpoints = [
+    async () => {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), 4500);
       try {
-        const res = await fetch('https://ipapi.co/json/');
+        const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+        if (!res.ok) return null;
         const data = await res.json();
-        if (data && data.latitude && data.longitude) {
-          resolved = true;
-          resolve({
-            lat: Number(data.latitude),
-            lng: Number(data.longitude),
-            source: 'ip'
-          });
+        const lat = Number(data?.latitude);
+        const lng = Number(data?.longitude);
+        return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+      } finally {
+        window.clearTimeout(t);
+      }
+    },
+    async () => {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), 4500);
+      try {
+        const res = await fetch('https://ipwho.is/', { signal: controller.signal });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data?.success === false) return null;
+        const lat = Number(data?.latitude);
+        const lng = Number(data?.longitude);
+        return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+      } finally {
+        window.clearTimeout(t);
+      }
+    }
+  ];
+
+  for (const attempt of endpoints) {
+    try {
+      const coords = await attempt();
+      if (coords) {
+        return {
+          lat: Number(coords.lat.toFixed(6)),
+          lng: Number(coords.lng.toFixed(6))
+        };
+      }
+    } catch {
+      // Try next IP provider
+    }
+  }
+  return null;
+}
+
+export class GpsAccessError extends Error {
+  code: 'PERMISSION_DENIED' | 'POLICY_BLOCKED' | 'TIMEOUT' | 'UNAVAILABLE' | 'UNSUPPORTED';
+  constructor(
+    message: string,
+    code: 'PERMISSION_DENIED' | 'POLICY_BLOCKED' | 'TIMEOUT' | 'UNAVAILABLE' | 'UNSUPPORTED'
+  ) {
+    super(message);
+    this.name = 'GpsAccessError';
+    this.code = code;
+  }
+}
+
+export async function getNetworkApproximateLocation(): Promise<GpsLocationResult> {
+  const ipCoords = await fetchIpLocationFallback();
+  if (!ipCoords) {
+    throw new GpsAccessError(
+      'Approximate network location lookup failed. Search a venue or paste coordinates manually.',
+      'UNAVAILABLE'
+    );
+  }
+  return {
+    ...ipCoords,
+    source: 'ip',
+    warning: 'Using approximate network (IP) location — verify and fine-tune the pin on the map.'
+  };
+}
+
+export async function getGeolocationPermissionStatus(): Promise<PermissionState | 'unsupported'> {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) {
+    return 'unsupported';
+  }
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+    return status.state;
+  } catch {
+    return 'unsupported';
+  }
+}
+
+export async function getCurrentGpsLocation(): Promise<GpsLocationResult> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    throw new GpsAccessError(
+      'Device GPS API (navigator.geolocation) is not supported in this browser.',
+      'UNSUPPORTED'
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const handleFailure = async (geoErr?: GeolocationPositionError) => {
+      if (settled) return;
+      settled = true;
+
+      const errMsg = String(geoErr?.message || '').toLowerCase();
+      const isPolicyBlocked =
+        errMsg.includes('permissions policy') ||
+        errMsg.includes('feature policy') ||
+        errMsg.includes('disabled in this document');
+
+      if (geoErr?.code === 1) {
+        if (isPolicyBlocked) {
+          reject(
+            new GpsAccessError(
+              'Geolocation is currently blocked by the embedded frame Permissions Policy. Reload the preview or open the app in a standalone tab to allow device GPS access.',
+              'POLICY_BLOCKED'
+            )
+          );
           return;
         }
-      } catch (e) {
-        console.warn('IP fallback failed during timeout:', e);
+        reject(
+          new GpsAccessError(
+            'Device GPS permission was denied. Allow Location access in your browser site settings (address bar lock/tune icon) and try again.',
+            'PERMISSION_DENIED'
+          )
+        );
+        return;
       }
-    }, 4000);
 
-    if (navigator.geolocation) {
+      const reason =
+        geoErr?.code === 3
+          ? 'Device GPS timed out before acquiring a satellite or Wi-Fi fix.'
+          : geoErr?.message || 'Device GPS signal is currently unavailable.';
+
+      const ipCoords = await fetchIpLocationFallback();
+      if (ipCoords) {
+        resolve({
+          ...ipCoords,
+          source: 'ip',
+          warning: `${reason} Showing approximate network location instead—verify the pin on the map.`
+        });
+        return;
+      }
+
+      reject(
+        new GpsAccessError(
+          `${reason} Search an address, pick a preset, or paste coordinates directly.`,
+          geoErr?.code === 3 ? 'TIMEOUT' : 'UNAVAILABLE'
+        )
+      );
+    };
+
+    try {
+      // Call getCurrentPosition synchronously inside user click flow so the browser displays its native permission prompt
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (resolved) return;
-          clearTimeout(ipFallbackTimeout);
-          resolved = true;
+        pos => {
+          if (settled) return;
+          settled = true;
           resolve({
             lat: Number(pos.coords.latitude.toFixed(6)),
             lng: Number(pos.coords.longitude.toFixed(6)),
-            source: 'device'
+            source: 'device',
+            accuracy: typeof pos.coords.accuracy === 'number' ? Math.round(pos.coords.accuracy) : undefined
           });
         },
-        async (err) => {
-          if (resolved) return;
-          clearTimeout(ipFallbackTimeout);
-          console.warn('Geolocation API permission/error, switching to IP location:', err.message);
-          try {
-            const res = await fetch('https://ipapi.co/json/');
-            const data = await res.json();
-            if (data && data.latitude && data.longitude) {
-              resolved = true;
-              resolve({
-                lat: Number(data.latitude),
-                lng: Number(data.longitude),
-                source: 'ip'
-              });
-              return;
-            }
-          } catch (e) {
-            console.error('IP location service error:', e);
+        err => {
+          // If high-accuracy timed out or failed transiently (not permission denied), retry once with standard accuracy
+          if (err && err.code !== 1) {
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                if (settled) return;
+                settled = true;
+                resolve({
+                  lat: Number(pos.coords.latitude.toFixed(6)),
+                  lng: Number(pos.coords.longitude.toFixed(6)),
+                  source: 'device',
+                  accuracy: typeof pos.coords.accuracy === 'number' ? Math.round(pos.coords.accuracy) : undefined
+                });
+              },
+              retryErr => {
+                void handleFailure(retryErr || err);
+              },
+              { enableHighAccuracy: false, timeout: 6000, maximumAge: 180000 }
+            );
+            return;
           }
-          // Secondary fallback to Freetown default if network API blocked
-          resolved = true;
-          resolve({ lat: 8.484, lng: -13.229, source: 'ip' });
+          void handleFailure(err);
         },
-        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
       );
-    } else {
-      clearTimeout(ipFallbackTimeout);
-      fetch('https://ipapi.co/json/')
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.latitude && data.longitude) {
-            resolve({ lat: Number(data.latitude), lng: Number(data.longitude), source: 'ip' });
-          } else {
-            resolve({ lat: 8.484, lng: -13.229, source: 'ip' });
-          }
-        })
-        .catch(() => resolve({ lat: 8.484, lng: -13.229, source: 'ip' }));
+    } catch (syncErr: any) {
+      if (!settled) {
+        settled = true;
+        reject(new GpsAccessError(syncErr?.message || 'Unable to invoke device GPS.', 'UNAVAILABLE'));
+      }
     }
   });
 }

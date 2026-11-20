@@ -1184,5 +1184,35 @@ export const resolveOccurrencePreemption = (occurrences: EventOccurrence[]): Eve
   return resolved;
 };
 
+export type EventTemporalStatus = 'past' | 'ongoing' | 'upcoming';
+
+export const getEventTemporalStatus = (
+  startIso?: string,
+  endIso?: string,
+  nowMs: number = Date.now(),
+  explicitStatus?: string
+): EventTemporalStatus => {
+  if (explicitStatus === 'completed') return 'past';
+
+  const startMs = startIso ? new Date(startIso).getTime() : NaN;
+  const endMs = endIso ? new Date(endIso).getTime() : startMs;
+
+  const effectiveEnd = Number.isNaN(endMs) ? startMs : endMs;
+  const effectiveStart = Number.isNaN(startMs) ? effectiveEnd : startMs;
+
+  if (Number.isNaN(effectiveEnd)) {
+    return explicitStatus === 'ongoing' ? 'ongoing' : 'upcoming';
+  }
+
+  if (effectiveEnd < nowMs) return 'past';
+
+  if (!Number.isNaN(effectiveStart) && effectiveStart <= nowMs && nowMs <= effectiveEnd) {
+    return 'ongoing';
+  }
+
+  return explicitStatus === 'ongoing' ? 'ongoing' : 'upcoming';
+};
+
+
 
 
