@@ -297,7 +297,7 @@ describe('financial document approval and rejection lifecycle', () => {
       load: () => structuredClone(current),
       save: next => { current = structuredClone(next); }
     }, () => ({ userId: authUserId }));
-    const created = await createFinancialDocumentTransaction(baseInput, client);
+    const created = await createFinancialDocumentTransaction({ ...baseInput, categoryAccountId: 'income-chart' }, client);
     expect(created.error).toBeNull();
     expect(created.data?.status).toBe('pending_approval');
     return {
