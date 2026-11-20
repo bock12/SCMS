@@ -74,7 +74,8 @@ test.describe('SCMS finance browser smoke', () => {
 
     await page.reload();
     await expect(page.getByText('Church Overview').first()).toBeVisible();
-    await page.goto('/portal/finance?tab=ledger');
+    // The app uses HashRouter, so direct browser navigation must target the route inside the URL hash.
+    await page.goto('/#/portal/finance?tab=ledger');
     console.log('FINANCE_BROWSER_ROUTE:', { url: page.url(), location: await page.evaluate(() => ({ pathname: window.location.pathname, search: window.location.search })) });
     console.log('FINANCE_BROWSER_PAGE:', (await page.locator('body').innerText()).slice(0, 1800));
     console.log('FINANCE_BROWSER_AUTHZ:', await page.evaluate(() => {
