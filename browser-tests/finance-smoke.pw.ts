@@ -41,7 +41,7 @@ test.describe('SCMS finance browser smoke', () => {
       }
       financeRole.is_active = true;
 
-      for (const key of ['view_finances', 'manage_finances']) {
+      for (const key of ['view_finances', 'manage_finances', 'post_journals']) {
         let permission = database.permissions.find((item: { key?: string }) => item.key === key);
         if (!permission) {
           permission = { id: `pw-${key}`, key };
@@ -76,6 +76,8 @@ test.describe('SCMS finance browser smoke', () => {
       const financeState = {
         profiles: [], permissions: [], ministries: [], requisitions: [], requisitionItems: [],
         currencies: ['SLL'], baseCurrencyCode: 'SLL',
+        permissions: [{ profile_id: actor.id, permission: 'manage_finances', branch_id: actor.branch_id },
+          { profile_id: actor.id, permission: 'post_journals', branch_id: actor.branch_id }],
         financialAccounts: [{
           id: 'pw-cash-account', branch_id: actor.branch_id, name: 'Browser Test Cash',
           account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'pw-cash-chart'
@@ -307,5 +309,56 @@ test.describe('SCMS finance browser smoke', () => {
     expect(rejectedPayment.journal_entry_id).toBeFalsy();
     expect(rejectedJournal.status).toBe('draft');
     expect(rejectedJournal.source_type).toBe('financial_document_pending');
+
+    // Return to the submitting Finance Officer and verify that approved,
+    // pending and rejected journals are excluded from posted balances/reports.
+    await page.evaluate(() => {
+      const database = JSON.parse(localStorage.getItem('faithconnect_db_v2') || '{}');
+      const assignment = (database.profile_role_assignments || []).find((item: any) =>
+        item.id === 'pw-finance-officer-assignment'
+      );
+      const actor = (database.profiles || []).find((profile: any) => profile.id === assignment?.profile_id);
+      if (!actor?.auth_user_id) throw new Error('Submitting Finance Officer session could not be restored.');
+      const key = 'faithconnect_auth_session_v2';
+      const session = JSON.parse(localStorage.getItem(key) || '{}');
+      session.user = { ...(session.user || {}), id: actor.auth_user_id };
+      localStorage.setItem(key, JSON.stringify(session));
+    });
+    await page.reload();
+    await page.goto('/#/portal/finance?tab=ledger');
+    await expect(page.getByText('Journal register & posted ledger balances')).toBeVisible();
+
+    const prePostingState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    const approvedReceiptBeforePosting = prePostingState.documents.find((document: any) =>
+      document.payee_or_payer_name === 'Browser Test Offering'
+    );
+    expect(approvedReceiptBeforePosting.status).toBe('approved');
+    expect(prePostingState.journals.find((journal: any) => journal.id === approvedReceiptBeforePosting.journal_entry_id).status).toBe('draft');
+    await expect(page.getByText('No posted journal lines exist in this branch. Approved and pending drafts are excluded.')).toBeVisible();
+    await expect(page.getByText('No posted transactions are available for this reporting period.')).toBeVisible();
+
+    const approvedReceiptJournalCard = page.locator('article').filter({ hasText: 'Browser smoke test receipt' }).first();
+    await expect(approvedReceiptJournalCard.getByText('Approved — awaiting posting')).toBeVisible();
+    await expect(approvedReceiptJournalCard.getByRole('button', { name: 'Post journal' })).toBeVisible();
+
+    // Posting is a separate authorized action. Only after this click should
+    // the receipt enter the ledger balances and posted financial report.
+    await approvedReceiptJournalCard.getByRole('button', { name: 'Post journal' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Journal posted successfully' })).toBeVisible();
+    await expect(page.getByText('SLL 125.00').first()).toBeVisible();
+
+    const postedState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    const postedReceipt = postedState.documents.find((document: any) => document.payee_or_payer_name === 'Browser Test Offering');
+    const postedReceiptJournal = postedState.journals.find((journal: any) => journal.id === postedReceipt.journal_entry_id);
+    const stillRejectedPayment = postedState.documents.find((document: any) => document.payee_or_payer_name === 'Browser Test Supplier');
+    const stillRejectedJournal = postedState.journals.find((journal: any) => journal.source_id === stillRejectedPayment.id);
+    expect(postedReceipt.status).toBe('posted');
+    expect(postedReceiptJournal.status).toBe('posted');
+    expect(postedReceiptJournal.source_type).toBe('financial_document');
+    expect(stillRejectedPayment.status).toBe('rejected');
+    expect(stillRejectedJournal.status).toBe('draft');
+    expect(stillRejectedJournal.source_type).toBe('financial_document_pending');
+    expect(postedState.journals.filter((journal: any) => journal.status === 'posted')).toHaveLength(1);
+  });
   });
 });
