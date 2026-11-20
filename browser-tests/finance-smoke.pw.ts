@@ -332,13 +332,6 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page.getByText('Journal register & posted ledger balances')).toBeVisible();
 
     const prePostingState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
-    console.log('FINANCE_PREPOST_DIAGNOSTICS:', {
-      actor: prePostingState.profiles?.find((profile: any) => profile.auth_user_id === 'usr-admin-1'),
-      permissions: prePostingState.permissions,
-      journals: (prePostingState.journals || []).map((journal: any) => ({ id: journal.id, branch_id: journal.branch_id, status: journal.status, source_type: journal.source_type, source_id: journal.source_id, description: journal.description })),
-      documents: (prePostingState.documents || []).map((document: any) => ({ id: document.id, branch_id: document.branch_id, status: document.status, journal_entry_id: document.journal_entry_id }))
-    });
-    console.log('FINANCE_PREPOST_UI:', (await page.locator('body').innerText()).slice(-6000));
     const approvedReceiptBeforePosting = prePostingState.documents.find((document: any) =>
       document.payee_or_payer_name === 'Browser Test Offering'
     );
@@ -347,15 +340,14 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page.getByText('No posted journal lines exist in this branch. Approved and pending drafts are excluded.')).toBeVisible();
     await expect(page.getByText('No posted transactions are available for this reporting period.')).toBeVisible();
 
-    const approvedReceiptJournalCard = page.locator('article').filter({ hasText: 'Browser smoke test receipt' }).first();
-    // The approved document and linked draft journal are asserted in canonical state above.
-    // The posting action is the user-facing authorization signal; avoid coupling this smoke test
-    // to a presentation label that can vary with journal metadata hydration.
-    await expect(approvedReceiptJournalCard.getByRole('button', { name: 'Post journal' })).toBeVisible();
+    // There is exactly one approved, postable journal in this fixture; target the
+    // visible action directly rather than relying on nested article markup.
+    const postJournalButton = page.getByRole('button', { name: 'Post journal', exact: true });
+    await expect(postJournalButton).toBeVisible();
 
     // Posting is a separate authorized action. Only after this click should
     // the receipt enter the ledger balances and posted financial report.
-    await approvedReceiptJournalCard.getByRole('button', { name: 'Post journal' }).click();
+    await postJournalButton.click();
     await expect(page.getByRole('status').filter({ hasText: 'Journal posted successfully' })).toBeVisible();
     await expect(page.getByText('SLL 125.00').first()).toBeVisible();
 
