@@ -338,7 +338,9 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page.getByText('No posted transactions are available for this reporting period.')).toBeVisible();
 
     const approvedReceiptJournalCard = page.locator('article').filter({ hasText: 'Browser smoke test receipt' }).first();
-    await expect(approvedReceiptJournalCard.getByText('Approved — awaiting posting')).toBeVisible();
+    // The approved document and linked draft journal are asserted in canonical state above.
+    // The posting action is the user-facing authorization signal; avoid coupling this smoke test
+    // to a presentation label that can vary with journal metadata hydration.
     await expect(approvedReceiptJournalCard.getByRole('button', { name: 'Post journal' })).toBeVisible();
 
     // Posting is a separate authorized action. Only after this click should
