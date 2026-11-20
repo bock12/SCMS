@@ -74,7 +74,7 @@ test.describe('SCMS finance browser smoke', () => {
       // Seed only the isolated canonical finance store so this browser test
       // exercises the real receipt form -> mock RPC -> approval/journal path.
       const financeState = {
-        profiles: [], permissions: [], ministries: [], requisitions: [], requisitionItems: [],
+        profiles: [], ministries: [], requisitions: [], requisitionItems: [],
         currencies: ['SLL'], baseCurrencyCode: 'SLL',
         permissions: [{ profile_id: actor.id, permission: 'manage_finances', branch_id: actor.branch_id },
           { profile_id: actor.id, permission: 'post_journals', branch_id: actor.branch_id }],
@@ -359,6 +359,5 @@ test.describe('SCMS finance browser smoke', () => {
     expect(stillRejectedJournal.status).toBe('draft');
     expect(stillRejectedJournal.source_type).toBe('financial_document_pending');
     expect(postedState.journals.filter((journal: any) => journal.status === 'posted')).toHaveLength(1);
-  });
   });
 });
