@@ -613,7 +613,7 @@ export function createMockFinanceRpc(
     if (!auth.userId) return fail('Authentication required', '42501');
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
     if (!actor) return fail('No active member profile is linked to this account', '42501');
-    const branchId = args.p_branch_id ?? null;
+    const branchId = args.p_branch_id ?? actor.branch_id ?? null;
     const canView = hasPermission(state, actor.id, 'view_finances', branchId) ||
       hasPermission(state, actor.id, 'manage_finances', branchId) ||
       hasPermission(state, actor.id, 'approve_finances', branchId);
@@ -1156,7 +1156,7 @@ export function createMockFinanceRpc(
     if (!auth.userId) return fail('Authentication required', '42501');
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
     if (!actor) return fail('No active member profile is linked to this account', '42501');
-    const requestedBranch = args.p_branch_id ?? null;
+    const requestedBranch = args.p_branch_id ?? actor.branch_id ?? null;
     const canView = (branchId: string) =>
       hasPermission(state, actor.id, 'view_finances', branchId) ||
       hasPermission(state, actor.id, 'manage_finances', branchId) ||
