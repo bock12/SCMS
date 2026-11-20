@@ -76,8 +76,11 @@ test.describe('SCMS finance browser smoke', () => {
       const financeState = {
         profiles: [], ministries: [], requisitions: [], requisitionItems: [],
         currencies: ['SLL'], baseCurrencyCode: 'SLL',
-        permissions: [{ profile_id: actor.id, permission: 'manage_finances', branch_id: actor.branch_id },
-          { profile_id: actor.id, permission: 'post_journals', branch_id: actor.branch_id }],
+        permissions: [
+          { profile_id: actor.id, permission: 'view_finances', branch_id: null },
+          { profile_id: actor.id, permission: 'manage_finances', branch_id: null },
+          { profile_id: actor.id, permission: 'post_journals', branch_id: null }
+        ],
         financialAccounts: [{
           id: 'pw-cash-account', branch_id: actor.branch_id, name: 'Browser Test Cash',
           account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'pw-cash-chart'
