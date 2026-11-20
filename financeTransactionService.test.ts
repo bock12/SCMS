@@ -209,8 +209,8 @@ describe('finance transaction service end-to-end adapter integration', () => {
 function createTransactionSecurityFixture(): MockFinanceState {
   return {
     ...createEmptyMockFinanceState(),
-    profiles: [{ id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' }],
-    permissions: [{ profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' }],
+    profiles: [\n      { id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' },\n      { id: 'approver', auth_user_id: 'user-approver', branch_id: 'branch-1' }\n    ],
+    permissions: [\n      { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' },\n      { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-1' },\n      { profile_id: 'approver', permission: 'approve_finances', branch_id: 'branch-1' }\n    ],
     currencies: ['SLL'],
     baseCurrencyCode: 'SLL',
     chartAccounts: [
@@ -279,4 +279,109 @@ describe('financial transaction creation security and fail-closed validation', (
       expect(current.approvalSteps).toHaveLength(0);
     });
   }
+});
+
+
+describe('financial document approval and rejection lifecycle', () => {
+  async function createPendingReceipt() {
+    let current = createTransactionSecurityFixture();
+    let authUserId: string | null = 'user-creator';
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: authUserId }));
+    const created = await createFinancialDocumentTransaction(baseInput, client);
+    expect(created.error).toBeNull();
+    expect(created.data?.status).toBe('pending_approval');
+    return {
+      client,
+      getState: () => current,
+      setAuth: (userId: string | null) => { authUserId = userId; },
+      requestStepId: current.approvalSteps[0].id,
+      journalId: current.journals[0].id
+    };
+  }
+
+  test('prevents the transaction submitter from approving their own request', async () => {
+    const flow = await createPendingReceipt();
+    const before = flow.getState();
+    flow.setAuth('user-creator');
+
+    const result = await decideFinancialDocumentApproval({
+      requestStepId: flow.requestStepId,
+      decision: 'approved'
+    }, flow.client);
+
+    expect(result.data).toBeNull();
+    expect(result.error?.code).toBe('42501');
+    expect(flow.getState()).toEqual(before);
+    expect(flow.getState().documents[0].status).toBe('pending_approval');
+    expect(flow.getState().approvalDecisions).toHaveLength(0);
+  });
+
+  test('rejects an approval decision from a profile without the required scoped permission', async () => {
+    const flow = await createPendingReceipt();
+    const before = flow.getState();
+    flow.setAuth('user-unlinked-approver');
+
+    const result = await decideFinancialDocumentApproval({
+      requestStepId: flow.requestStepId,
+      decision: 'approved'
+    }, flow.client);
+
+    expect(result.data).toBeNull();
+    expect(result.error?.code).toBe('42501');
+    expect(flow.getState()).toEqual(before);
+  });
+
+  test('rejects out-of-order approval steps without recording a decision', async () => {
+    const flow = await createPendingReceipt();
+    const state = flow.getState();
+    state.profiles.push({ id: 'approver-2', auth_user_id: 'user-approver-2', branch_id: 'branch-1' });
+    state.permissions.push({ profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-1' });
+    state.approvalSteps.push({
+      id: 'step-2', approval_request_id: state.approvalRequests[0].id,
+      step_order: 2, required_permission_key: 'approve_finances',
+      required_approvals: 1, prohibit_submitter_approval: true, status: 'pending'
+    });
+    const before = structuredClone(state);
+    flow.setAuth('user-approver-2');
+
+    const result = await decideFinancialDocumentApproval({
+      requestStepId: 'step-2',
+      decision: 'approved'
+    }, flow.client);
+
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toContain('Earlier approval steps');
+    expect(flow.getState()).toEqual(before);
+  });
+
+  test('rejection closes the document and permanently blocks posting its pending journal', async () => {
+    const flow = await createPendingReceipt();
+    flow.setAuth('user-approver');
+
+    const rejected = await decideFinancialDocumentApproval({
+      requestStepId: flow.requestStepId,
+      decision: 'rejected',
+      comments: 'Supporting documentation is incomplete'
+    }, flow.client);
+
+    expect(rejected.error).toBeNull();
+    expect(rejected.data?.approval_status).toBe('rejected');
+    expect(flow.getState().documents[0].status).toBe('rejected');
+    expect(flow.getState().approvalRequests[0].status).toBe('rejected');
+    expect(flow.getState().journals[0].status).toBe('draft');
+    expect(flow.getState().journals[0].source_type).toBe('financial_document_pending');
+
+    flow.setAuth('user-creator');
+    const posting = await flow.client.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: flow.journalId
+    });
+
+    expect(posting.data).toBeNull();
+    expect(posting.error).not.toBeNull();
+    expect(flow.getState().journals[0].status).toBe('draft');
+    expect(flow.getState().documents[0].status).toBe('rejected');
+  });
 });
