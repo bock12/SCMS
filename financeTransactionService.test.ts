@@ -204,3 +204,79 @@ describe('finance transaction service end-to-end adapter integration', () => {
     expect(current.documents[0].status).toBe('posted');
   });
 });
+
+
+function createTransactionSecurityFixture(): MockFinanceState {
+  return {
+    ...createEmptyMockFinanceState(),
+    profiles: [{ id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' }],
+    permissions: [{ profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' }],
+    currencies: ['SLL'],
+    baseCurrencyCode: 'SLL',
+    chartAccounts: [
+      { id: 'cash-chart', code: '1000', name: 'Cash', account_type: 'asset', normal_balance: 'debit', is_active: true },
+      { id: 'income-chart', code: '4000', name: 'Offering Income', account_type: 'income', normal_balance: 'credit', is_active: true }
+    ],
+    financialAccounts: [{
+      id: 'cash-account-1', branch_id: 'branch-1', name: 'Main Cash',
+      account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart'
+    }],
+    financialYears: [{ id: 'year-1', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+    periods: [{ id: 'period-1', financial_year_id: 'year-1', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
+    approvalPolicies: [{
+      id: 'policy-1', name: 'Receipt policy', transaction_type: 'financial_document',
+      branch_id: 'branch-1', is_active: true, min_amount: 0, max_amount: null,
+      approver_profile_ids: []
+    }],
+    approvalPolicyBands: [{ id: 'band-1', policy_id: 'policy-1', min_amount_base: 0, max_amount_base: 100000 }],
+    approvalPolicySteps: [{
+      id: 'policy-step-1', band_id: 'band-1', step_number: 1,
+      required_permission_key: 'approve_finances', required_approvals: 1,
+      prohibit_submitter_approval: true
+    }]
+  };
+}
+
+describe('financial transaction creation security and fail-closed validation', () => {
+  const cases: Array<{ name: string; mutate?: (state: MockFinanceState) => void; auth?: string | null; branchId?: string }> = [
+    { name: 'rejects unauthenticated callers', auth: null },
+    { name: 'rejects accounts without an active linked profile', auth: 'unlinked-user' },
+    { name: 'rejects callers without manage_finances permission', mutate: s => { s.permissions = []; } },
+    { name: 'rejects permission granted only in another branch', mutate: s => { s.permissions[0].branch_id = 'branch-2'; } },
+    { name: 'rejects an unconfigured base currency', mutate: s => { s.baseCurrencyCode = null; } },
+    { name: 'rejects a missing active financial-document approval policy', mutate: s => { s.approvalPolicies = []; } },
+    { name: 'rejects an approval policy without a covering amount band', mutate: s => { s.approvalPolicyBands = []; } },
+    { name: 'rejects an inactive financial account', mutate: s => { s.financialAccounts[0].is_active = false; } },
+    { name: 'rejects an account belonging to another branch', mutate: s => { s.financialAccounts[0].branch_id = 'branch-2'; } },
+    { name: 'rejects an inactive category account', mutate: s => { s.chartAccounts[1].is_active = false; } },
+    { name: 'rejects a category account of the wrong type', mutate: s => { s.chartAccounts[1].account_type = 'expense'; } },
+    { name: 'rejects a closed financial period', mutate: s => { s.periods[0].status = 'closed'; } },
+    { name: 'rejects a closed financial year', mutate: s => { s.periods[0].year_status = 'closed'; } }
+  ];
+
+  for (const scenario of cases) {
+    test(scenario.name + ' without persisting partial transaction records', async () => {
+      let current = createTransactionSecurityFixture();
+      scenario.mutate?.(current);
+      const before = structuredClone(current);
+      const client = createMockFinanceRpc({
+        load: () => structuredClone(current),
+        save: next => { current = structuredClone(next); }
+      }, () => ({ userId: scenario.auth === undefined ? 'user-creator' : scenario.auth }));
+
+      const result = await createFinancialDocumentTransaction({
+        ...baseInput,
+        branchId: scenario.branchId ?? 'branch-1'
+      }, client);
+
+      expect(result.data).toBeNull();
+      expect(result.error).not.toBeNull();
+      expect(current).toEqual(before);
+      expect(current.documents).toHaveLength(0);
+      expect(current.journals).toHaveLength(0);
+      expect(current.journalLines).toHaveLength(0);
+      expect(current.approvalRequests).toHaveLength(0);
+      expect(current.approvalSteps).toHaveLength(0);
+    });
+  }
+});
