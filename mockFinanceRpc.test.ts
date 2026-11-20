@@ -168,7 +168,7 @@ describe('deterministic mock financial-document RPC', () => {
     expect(listed.data.documents[0].approval_steps_completed).toBe(0);
   });
 
-  test('treats a null branch filter as church-wide scope instead of all branches', async () => {
+  test('defaults an unspecified branch filter to the signed-in profile branch', async () => {
     const ctx = fixture();
     const state = ctx.read();
     state.permissions.push({ profile_id: 'creator', permission: 'view_finances', branch_id: null });
@@ -182,7 +182,7 @@ describe('deterministic mock financial-document RPC', () => {
     }, () => ({ userId: 'user-creator' }));
     const result = await rpc.rpc('get_finance_documents', { p_branch_id: null });
     expect(result.error).toBeNull();
-    expect(result.data.documents.map((document: any) => document.id)).toEqual(['church-document']);
+    expect(result.data.documents.map((document: any) => document.id)).toEqual(['branch-document']);
   });
 
   test('does not expose finance documents to an unrelated branch or unauthorized profile', async () => {
