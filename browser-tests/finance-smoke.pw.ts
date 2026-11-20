@@ -191,6 +191,121 @@ test.describe('SCMS finance browser smoke', () => {
       expect(lines.reduce((sum: number, line: any) => sum + line.debit_amount, 0)).toBe(amount);
       expect(lines.reduce((sum: number, line: any) => sum + line.credit_amount, 0)).toBe(amount);
     }
+
     expect(paymentState.approvalRequests).toHaveLength(2);
+
+    // Prepare two distinct approver identities from the isolated mock directory.
+    // Their approval authority is granted in both the app's role-resolution
+    // fixture and the canonical finance RPC fixture.
+    const approverIds = await page.evaluate(() => {
+      const databaseKey = 'faithconnect_db_v2';
+      const financeKey = 'scms_mock_finance_v2';
+      const database = JSON.parse(localStorage.getItem(databaseKey) || '{}');
+      const session = JSON.parse(localStorage.getItem('faithconnect_auth_session_v2') || '{}');
+      const submitter = (database.profiles || []).find((profile: any) =>
+        profile.auth_user_id === session.user?.id || profile.id === session.user?.id
+      );
+      if (!submitter) throw new Error('Submitter profile was not found.');
+      const candidates = (database.profiles || []).filter((profile: any) =>
+        profile.id !== submitter.id && profile.auth_user_id && profile.branch_id === submitter.branch_id &&
+        !['suspended', 'archived'].includes(profile.status)
+      );
+      if (candidates.length < 2) throw new Error('Two additional active profiles in the submitter branch are required for browser approval coverage.');
+
+      const financeState = JSON.parse(localStorage.getItem(financeKey) || '{}');
+      financeState.profiles = (database.profiles || []).map((profile: any) => ({
+        id: profile.id, auth_user_id: profile.auth_user_id || null,
+        status: profile.status, branch_id: profile.branch_id,
+        first_name: profile.first_name, last_name: profile.last_name
+      }));
+      financeState.permissions = financeState.permissions || [];
+      for (const candidate of candidates.slice(0, 2)) {
+        financeState.permissions = financeState.permissions.filter((item: any) =>
+          !(item.profile_id === candidate.id && item.permission === 'approve_finances')
+        );
+        financeState.permissions.push({
+          profile_id: candidate.id, permission: 'approve_finances', branch_id: submitter.branch_id
+        });
+      }
+      localStorage.setItem(financeKey, JSON.stringify(financeState));
+
+      const roles = database.roles || [];
+      const financeRole = roles.find((role: any) => role.name === 'finance_officer');
+      if (!financeRole) throw new Error('Finance role fixture is missing.');
+      database.permissions = database.permissions || [];
+      database.role_permissions = database.role_permissions || [];
+      let approvePermission = database.permissions.find((item: any) => item.key === 'approve_finances');
+      if (!approvePermission) {
+        approvePermission = { id: 'pw-approve-finances', key: 'approve_finances' };
+        database.permissions.push(approvePermission);
+      }
+      for (const key of ['view_finances', 'manage_finances', 'approve_finances']) {
+        const permission = database.permissions.find((item: any) => item.key === key);
+        if (permission && !database.role_permissions.some((link: any) =>
+          link.role_id === financeRole.id && link.permission_id === permission.id
+        )) database.role_permissions.push({ role_id: financeRole.id, permission_id: permission.id });
+      }
+      database.profile_role_assignments = database.profile_role_assignments || [];
+      for (const candidate of candidates.slice(0, 2)) {
+        database.profile_role_assignments = database.profile_role_assignments.filter((item: any) =>
+          !(item.profile_id === candidate.id && item.role_id === financeRole.id)
+        );
+        database.profile_role_assignments.push({
+          id: `pw-approver-${candidate.id}`, profile_id: candidate.id,
+          role_id: financeRole.id, scope_type: 'branch', branch_id: submitter.branch_id,
+          district_id: null, assigned_by_profile_id: submitter.id,
+          assigned_at: new Date(Date.now() - 1000).toISOString(), expires_at: null, is_active: true
+        });
+      }
+      localStorage.setItem(databaseKey, JSON.stringify(database));
+      return candidates.slice(0, 2).map((profile: any) => ({
+        id: profile.id, authUserId: profile.auth_user_id
+      }));
+    });
+
+    const switchToApprover = async (index: number) => {
+      await page.evaluate((authUserId: string) => {
+        const key = 'faithconnect_auth_session_v2';
+        const session = JSON.parse(localStorage.getItem(key) || '{}');
+        session.user = { ...(session.user || {}), id: authUserId };
+        localStorage.setItem(key, JSON.stringify(session));
+      }, approverIds[index].authUserId);
+      await page.reload();
+      await page.goto('/#/portal/finance?tab=ledger');
+      await expect(page.getByText('Financial documents & approvals')).toBeVisible();
+    };
+
+    await switchToApprover(0);
+    const receiptCard = page.locator('article').filter({ hasText: 'Browser Test Offering' }).first();
+    await expect(receiptCard.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await receiptCard.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Approval decision recorded' })).toBeVisible();
+    await expect(receiptCard.getByText('Approval progress: 1/2 steps approved')).toBeVisible();
+
+    await switchToApprover(1);
+    const secondReceiptCard = page.locator('article').filter({ hasText: 'Browser Test Offering' }).first();
+    await expect(secondReceiptCard.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+    await secondReceiptCard.getByRole('button', { name: 'Approve', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Approval decision recorded' })).toBeVisible();
+    const approvedReceiptState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    const approvedReceipt = approvedReceiptState.documents.find((document: any) => document.payee_or_payer_name === 'Browser Test Offering');
+    const approvedReceiptJournal = approvedReceiptState.journals.find((journal: any) => journal.id === approvedReceipt.journal_entry_id);
+    expect(approvedReceipt.status).toBe('approved');
+    expect(approvedReceipt.journal_entry_id).toBeTruthy();
+    expect(approvedReceiptJournal.source_type).toBe('financial_document');
+
+    // The second document follows the rejection branch. It must remain
+    // unlinked and its pending journal must never become postable.
+    const paymentCard = page.locator('article').filter({ hasText: 'Browser Test Supplier' }).first();
+    await expect(paymentCard.getByRole('button', { name: 'Reject', exact: true })).toBeVisible();
+    await paymentCard.getByRole('button', { name: 'Reject', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Document rejected' })).toBeVisible();
+    const finalFinanceState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    const rejectedPayment = finalFinanceState.documents.find((document: any) => document.payee_or_payer_name === 'Browser Test Supplier');
+    const rejectedJournal = finalFinanceState.journals.find((journal: any) => journal.source_id === rejectedPayment.id);
+    expect(rejectedPayment.status).toBe('rejected');
+    expect(rejectedPayment.journal_entry_id).toBeFalsy();
+    expect(rejectedJournal.status).toBe('draft');
+    expect(rejectedJournal.source_type).toBe('financial_document_pending');
   });
 });
