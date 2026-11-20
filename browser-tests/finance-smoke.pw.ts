@@ -332,6 +332,13 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page.getByText('Journal register & posted ledger balances')).toBeVisible();
 
     const prePostingState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    console.log('FINANCE_PREPOST_DIAGNOSTICS:', {
+      actor: prePostingState.profiles?.find((profile: any) => profile.auth_user_id === 'usr-admin-1'),
+      permissions: prePostingState.permissions,
+      journals: (prePostingState.journals || []).map((journal: any) => ({ id: journal.id, branch_id: journal.branch_id, status: journal.status, source_type: journal.source_type, source_id: journal.source_id, description: journal.description })),
+      documents: (prePostingState.documents || []).map((document: any) => ({ id: document.id, branch_id: document.branch_id, status: document.status, journal_entry_id: document.journal_entry_id }))
+    });
+    console.log('FINANCE_PREPOST_UI:', (await page.locator('body').innerText()).slice(-6000));
     const approvedReceiptBeforePosting = prePostingState.documents.find((document: any) =>
       document.payee_or_payer_name === 'Browser Test Offering'
     );
