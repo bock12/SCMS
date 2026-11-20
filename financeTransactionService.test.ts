@@ -209,8 +209,15 @@ describe('finance transaction service end-to-end adapter integration', () => {
 function createTransactionSecurityFixture(): MockFinanceState {
   return {
     ...createEmptyMockFinanceState(),
-    profiles: [\n      { id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' },\n      { id: 'approver', auth_user_id: 'user-approver', branch_id: 'branch-1' }\n    ],
-    permissions: [\n      { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' },\n      { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-1' },\n      { profile_id: 'approver', permission: 'approve_finances', branch_id: 'branch-1' }\n    ],
+    profiles: [
+      { id: 'creator', auth_user_id: 'user-creator', branch_id: 'branch-1' },
+      { id: 'approver', auth_user_id: 'user-approver', branch_id: 'branch-1' }
+    ],
+    permissions: [
+      { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-1' },
+      { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-1' },
+      { profile_id: 'approver', permission: 'approve_finances', branch_id: 'branch-1' }
+    ],
     currencies: ['SLL'],
     baseCurrencyCode: 'SLL',
     chartAccounts: [
