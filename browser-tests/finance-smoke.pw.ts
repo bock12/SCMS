@@ -134,7 +134,9 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(createReceipt).toBeEnabled();
 
     await page.getByPlaceholder('Person or organisation').fill('Browser Test Offering');
-    await page.getByLabel('Amount *').fill('125');
+    // The visible label includes a required marker that is not part of the input's accessible name.
+    // Amount is the first numeric input; the exchange-rate input follows it.
+    await page.getByRole('spinbutton').first().fill('125');
     await page.getByPlaceholder('Purpose or details of this transaction').fill('Browser smoke test receipt');
     await createReceipt.click();
 
