@@ -15,12 +15,17 @@ import {
   Filter,
   History,
   Landmark,
+  LocateFixed,
   MapPin,
+  Navigation,
   Printer,
   QrCode,
   Radio,
+  RefreshCw,
   RotateCcw,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Users,
   Video,
   X
@@ -32,8 +37,17 @@ import {
   getEventAccount,
   getEventTemporalStatus,
   getRecurrenceBadge,
-  resolveOccurrencePreemption
+  resolveOccurrencePreemption,
+  syncPastRecurringEventsAutomatically
 } from './eventAccountService';
+import {
+  DEFAULT_GEOFENCE_RADIUS_METERS,
+  formatDistanceLabel,
+  getChurchProfile,
+  GpsAccessError,
+  verifyGeofencePresence,
+  type GeofenceVerificationResult
+} from './churchProfileService';
 import { LocationMap } from './LocationMap';
 import type { ChurchEvent, EventOccurrence, EventRegistration, Profile } from './types';
 
@@ -105,6 +119,30 @@ function getGoogleMapsHref(evt: ChurchEvent, fallbackLoc: string): string {
     return `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fallbackLoc)}`;
+}
+
+function getEventGeofenceTarget(evt: ChurchEvent): {
+  lat: number;
+  lng: number;
+  source: 'event' | 'church_profile';
+  label: string;
+} {
+  const coords = getEventCoordinates(evt);
+  if (coords) {
+    return {
+      lat: coords.lat,
+      lng: coords.lng,
+      source: 'event',
+      label: evt.location || 'Event Venue'
+    };
+  }
+  const cp = getChurchProfile();
+  return {
+    lat: Number.isFinite(Number(cp.latitude)) ? Number(cp.latitude) : 8.484,
+    lng: Number.isFinite(Number(cp.longitude)) ? Number(cp.longitude) : -13.229,
+    source: 'church_profile',
+    label: cp.name || evt.location || 'Church Premises'
+  };
 }
 
 function toLocalDateKey(input: Date | string): string {
@@ -214,6 +252,18 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     locationName: string;
     occurrence?: EventOccurrence;
   } | null>(null);
+  const [checkInModal, setCheckInModal] = useState<{
+    event: ChurchEvent;
+    occurrence?: EventOccurrence;
+    locationName: string;
+    target: { lat: number; lng: number; source: 'event' | 'church_profile'; label: string };
+    radiusMeters: number;
+    phase: 'verifying' | 'verified' | 'outside' | 'error';
+    result?: GeofenceVerificationResult;
+    checkedInAt?: string;
+    errorMessage?: string;
+    errorCode?: string;
+  } | null>(null);
   const [showDetailMap, setShowDetailMap] = useState<boolean>(true);
 
   const dayScheduleRef = useRef<HTMLElement | null>(null);
@@ -238,16 +288,18 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showQRPass) setShowQRPass(null);
+        if (checkInModal) {
+          if (checkInModal.phase !== 'verifying') setCheckInModal(null);
+        } else if (showQRPass) setShowQRPass(null);
         else if (selectedMapLocation) setSelectedMapLocation(null);
         else if (selectedEventDetail) setSelectedEventDetail(null);
       }
     };
-    if (showQRPass || selectedEventDetail || selectedMapLocation) {
+    if (checkInModal || showQRPass || selectedEventDetail || selectedMapLocation) {
       document.addEventListener('keydown', onKeyDown);
       return () => document.removeEventListener('keydown', onKeyDown);
     }
-  }, [showQRPass, selectedEventDetail, selectedMapLocation]);
+  }, [checkInModal, showQRPass, selectedEventDetail, selectedMapLocation]);
 
   const fetchEvents = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -256,7 +308,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         supabase.from('events').select('*').order('start_time', { ascending: true }),
         supabase.from('event_registrations').select('*')
       ]);
-      const loadedEvents = (evtRes.data || []) as ChurchEvent[];
+      const rawEvents = (evtRes.data || []) as ChurchEvent[];
+      const loadedEvents = await syncPastRecurringEventsAutomatically(rawEvents);
       const loadedRegs = (regRes.data || []) as EventRegistration[];
       setEvents(loadedEvents);
       setRegistrations(loadedRegs);
@@ -404,6 +457,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
       const existingReg = getEventUserReg(evt);
 
       if (existingReg) {
+        if (existingReg.status === 'checked_in' || existingReg.status === 'attended') {
+          showToast(`You have already checked in to "${evt.title}".`);
+          return;
+        }
+
         const { error: deleteError } = await supabase
           .from('event_registrations')
           .delete()
@@ -459,6 +517,134 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     } finally {
       setBusyEventId(null);
     }
+  };
+
+  const runGeofenceVerification = async (
+    evt: ChurchEvent,
+    locationName: string,
+    target: { lat: number; lng: number; source: 'event' | 'church_profile'; label: string },
+    occurrence?: EventOccurrence
+  ) => {
+    setCheckInModal({
+      event: evt,
+      occurrence,
+      locationName,
+      target,
+      radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+      phase: 'verifying'
+    });
+
+    try {
+      const geoRes = await verifyGeofencePresence(
+        target.lat,
+        target.lng,
+        target.source,
+        DEFAULT_GEOFENCE_RADIUS_METERS
+      );
+
+      if (!geoRes.allowed) {
+        setCheckInModal({
+          event: evt,
+          occurrence,
+          locationName,
+          target,
+          radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+          phase: 'outside',
+          result: geoRes
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const existingReg = getEventUserReg(evt);
+      const userEmail = profile?.email || 'member@faithconnect.church';
+      const userName = profile
+        ? `${profile.first_name} ${profile.last_name}`.trim()
+        : 'Grace Cathedral Member';
+
+      if (existingReg) {
+        const { error: updateErr } = await supabase
+          .from('event_registrations')
+          .update({
+            status: 'checked_in',
+            checked_in_at: nowIso
+          })
+          .eq('id', existingReg.id);
+        if (updateErr) throw updateErr;
+      } else {
+        const walkInReg: Omit<EventRegistration, 'id'> = {
+          event_id: evt.id,
+          user_id: profile?.auth_user_id || profile?.id,
+          member_id: profile?.id,
+          member_name: userName,
+          email: userEmail,
+          phone: profile?.phone || '',
+          registered_at: nowIso,
+          checked_in_at: nowIso,
+          status: 'checked_in'
+        };
+        const { error: insertErr } = await supabase
+          .from('event_registrations')
+          .insert(walkInReg);
+        if (insertErr) throw insertErr;
+
+        const newCount = (evt.registered_count || 0) + 1;
+        await supabase.from('events').update({ registered_count: newCount }).eq('id', evt.id);
+      }
+
+      await fetchEvents(true);
+      setCheckInModal({
+        event: evt,
+        occurrence,
+        locationName,
+        target,
+        radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+        phase: 'verified',
+        result: geoRes,
+        checkedInAt: nowIso
+      });
+      showToast(`Checked in at ${locationName} (${formatDistanceLabel(geoRes.distanceMeters)} from venue).`);
+    } catch (err: any) {
+      const code = err instanceof GpsAccessError ? err.code : 'UNAVAILABLE';
+      setCheckInModal({
+        event: evt,
+        occurrence,
+        locationName,
+        target,
+        radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+        phase: 'error',
+        errorCode: code,
+        errorMessage:
+          err?.message ||
+          'Unable to verify your device GPS location. Enable Location permissions and try again.'
+      });
+    }
+  };
+
+  const startGeofenceCheckIn = (evt: ChurchEvent, occurrence?: EventOccurrence) => {
+    const effStart = occurrence?.start_time || evt.start_time;
+    const effEnd = occurrence?.end_time || evt.end_time;
+    const effStatus = occurrence?.status || evt.status;
+    const temporal = getEventTemporalStatus(effStart, effEnd, nowMs, effStatus);
+
+    if (temporal === 'past' || effStatus === 'cancelled') {
+      showToast('Check-in is closed because this session has ended or been cancelled.', 'error');
+      return;
+    }
+
+    const userReg = getEventUserReg(evt);
+    if (userReg?.status === 'checked_in' || userReg?.status === 'attended') {
+      showToast(`You are already checked in to "${evt.title}".`);
+      return;
+    }
+    if (userReg?.status === 'waitlist') {
+      showToast('Waitlisted seats cannot check in until a seat opens up.', 'error');
+      return;
+    }
+
+    const locationName = occurrence?.override_location || occurrence?.location || evt.location || 'Church Sanctuary';
+    const target = getEventGeofenceTarget(evt);
+    void runGeofenceVerification(evt, locationName, target, occurrence);
   };
 
   const downloadICS = (evt: ChurchEvent, occ?: EventOccurrence) => {
@@ -801,6 +987,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
       ? getEventTemporalStatus(effectiveOcc.start_time, effectiveOcc.end_time, nowMs, effectiveOcc.status)
       : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
 
+    const isCheckedIn = userReg?.status === 'checked_in' || userReg?.status === 'attended';
+
     if (temporal === 'past') {
       return (
         <button
@@ -810,12 +998,27 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         >
           <History size={15} />
           <span>
-            {userReg
+            {isCheckedIn
+              ? 'Checked In · Ended'
+              : userReg
               ? 'Reserved · Ended'
               : occurrence
               ? 'Session Ended'
               : 'Event Ended'}
           </span>
+        </button>
+      );
+    }
+
+    if (isCheckedIn) {
+      return (
+        <button
+          type="button"
+          disabled
+          className={`${fullWidth ? 'w-full' : ''} min-h-[44px] sm:min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-default`}
+        >
+          <ShieldCheck size={15} />
+          <span>Checked In</span>
         </button>
       );
     }
@@ -1101,36 +1304,68 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       className="w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold bg-white/15 text-slate-300 border border-white/15 flex items-center justify-center gap-2 whitespace-nowrap cursor-not-allowed"
                     >
                       <History size={16} />
-                      <span>{featReg ? 'Reserved · Event Ended' : 'Event Ended'}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busyEventId === featuredEvent.id}
-                      onClick={() => handleRSVPToggle(featuredEvent)}
-                      className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
-                        featReg
-                          ? featReg.status === 'waitlist'
-                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                            : 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                          : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
-                      }`}
-                    >
-                      {featReg ? (
-                        featReg.status === 'waitlist' ? <Clock size={16} /> : <CheckCircle2 size={16} />
-                      ) : (
-                        <CalendarCheck size={16} />
-                      )}
                       <span>
-                        {featReg
-                          ? featReg.status === 'waitlist'
-                            ? 'Waitlisted (Cancel)'
-                            : 'Reserved (Cancel)'
-                          : isFull
-                          ? 'Join Waitlist'
-                          : 'Reserve Seat'}
+                        {featReg?.status === 'checked_in' || featReg?.status === 'attended'
+                          ? 'Checked In · Event Ended'
+                          : featReg
+                          ? 'Reserved · Event Ended'
+                          : 'Event Ended'}
                       </span>
                     </button>
+                  ) : (
+                    <>
+                      {featReg?.status === 'checked_in' || featReg?.status === 'attended' ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 text-white flex items-center justify-center gap-2 whitespace-nowrap cursor-default"
+                        >
+                          <ShieldCheck size={16} />
+                          <span>Checked In on Premises</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busyEventId === featuredEvent.id}
+                          onClick={() => handleRSVPToggle(featuredEvent)}
+                          className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
+                            featReg
+                              ? featReg.status === 'waitlist'
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                              : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                          }`}
+                        >
+                          {featReg ? (
+                            featReg.status === 'waitlist' ? <Clock size={16} /> : <CheckCircle2 size={16} />
+                          ) : (
+                            <CalendarCheck size={16} />
+                          )}
+                          <span>
+                            {featReg
+                              ? featReg.status === 'waitlist'
+                                ? 'Waitlisted (Cancel)'
+                                : 'Reserved (Cancel)'
+                              : isFull
+                              ? 'Join Waitlist'
+                              : 'Reserve Seat'}
+                          </span>
+                        </button>
+                      )}
+
+                      {featReg?.status !== 'waitlist' &&
+                        featReg?.status !== 'checked_in' &&
+                        featReg?.status !== 'attended' && (
+                          <button
+                            type="button"
+                            onClick={() => startGeofenceCheckIn(featuredEvent, featNextOcc)}
+                            className="w-full min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-500 hover:bg-indigo-400 text-white transition-colors cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap"
+                          >
+                            <LocateFixed size={15} />
+                            <span>GPS Check-In (On Premises)</span>
+                          </button>
+                        )}
+                    </>
                   )}
 
                   <div className="grid grid-cols-2 gap-2">
@@ -1657,6 +1892,20 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                           <div className="flex-1 min-w-[140px]">
                             {renderEventActionButton(evt, true, occ)}
                           </div>
+                          {!isPastOcc &&
+                            userReg?.status !== 'waitlist' &&
+                            userReg?.status !== 'checked_in' &&
+                            userReg?.status !== 'attended' && (
+                              <button
+                                type="button"
+                                onClick={() => startGeofenceCheckIn(evt, occ)}
+                                className="min-h-[44px] sm:min-h-[40px] px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                                title="Verify physical presence via GPS and check in"
+                              >
+                                <LocateFixed size={14} />
+                                <span>Check In</span>
+                              </button>
+                            )}
                           <button
                             type="button"
                             onClick={() => setSelectedEventDetail({ event: evt, occurrence: occ })}
@@ -1970,6 +2219,20 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         <div className="flex-1 sm:flex-initial min-w-[140px]">
                           {renderEventActionButton(evt, true, occ)}
                         </div>
+                        {!isPastOcc &&
+                          userReg?.status !== 'waitlist' &&
+                          userReg?.status !== 'checked_in' &&
+                          userReg?.status !== 'attended' && (
+                            <button
+                              type="button"
+                              onClick={() => startGeofenceCheckIn(evt, occ)}
+                              className="min-h-[44px] sm:min-h-[40px] px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                              title="Verify physical presence via GPS and check in"
+                            >
+                              <LocateFixed size={14} />
+                              <span>Check In</span>
+                            </button>
+                          )}
                         <button
                           type="button"
                           onClick={() => setSelectedEventDetail({ event: evt, occurrence: occ })}
@@ -2255,6 +2518,20 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                        {!isPastEvt &&
+                          userReg?.status !== 'waitlist' &&
+                          userReg?.status !== 'checked_in' &&
+                          userReg?.status !== 'attended' && (
+                            <button
+                              type="button"
+                              onClick={() => startGeofenceCheckIn(evt, nextOcc)}
+                              className="min-h-[44px] sm:min-h-[40px] px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+                              title="Confirm presence on church premises via device GPS"
+                            >
+                              <LocateFixed size={14} />
+                              <span>Check In</span>
+                            </button>
+                          )}
                         <button
                           type="button"
                           onClick={() => jumpToEventOnCalendar(evt, nextOcc)}
@@ -2491,7 +2768,25 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </div>
 
               <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                <div className="flex-1">{renderEventActionButton(evt, true, occ)}</div>
+                <div className="flex-1 flex flex-wrap items-center gap-2">
+                  <div className="flex-1 min-w-[130px]">
+                    {renderEventActionButton(evt, true, occ)}
+                  </div>
+                  {!detailIsPast &&
+                    (occ?.status || evt.status) !== 'cancelled' &&
+                    userReg?.status !== 'waitlist' &&
+                    userReg?.status !== 'checked_in' &&
+                    userReg?.status !== 'attended' && (
+                      <button
+                        type="button"
+                        onClick={() => startGeofenceCheckIn(evt, occ)}
+                        className="min-h-[44px] sm:min-h-[40px] px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                      >
+                        <LocateFixed size={15} />
+                        <span>GPS Check-In</span>
+                      </button>
+                    )}
+                </div>
                 <div className="grid grid-cols-2 sm:flex items-center gap-2">
                   <button
                     type="button"
@@ -2707,6 +3002,24 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </p>
             </div>
 
+            {showQRPass.reg.status !== 'checked_in' &&
+              showQRPass.reg.status !== 'attended' &&
+              showQRPass.reg.status !== 'waitlist' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const evt = showQRPass.event;
+                    const occ = showQRPass.occurrence;
+                    setShowQRPass(null);
+                    startGeofenceCheckIn(evt, occ);
+                  }}
+                  className="w-full min-h-[44px] py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LocateFixed size={15} />
+                  <span>Check In with Device GPS</span>
+                </button>
+              )}
+
             <button
               type="button"
               onClick={() => window.print()}
@@ -2715,6 +3028,252 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               <Printer size={15} />
               <span>Print / Save Pass</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* GEOFENCE GPS CHECK-IN VERIFICATION MODAL */}
+      {checkInModal && (
+        <div
+          className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-[115]"
+          onClick={e => {
+            if (e.target === e.currentTarget && checkInModal.phase !== 'verifying') {
+              setCheckInModal(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-lg w-full border border-slate-200 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1">
+              <span className="w-10 h-1.5 rounded-full bg-slate-300" />
+            </div>
+
+            <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-700">
+                  <LocateFixed size={14} />
+                  <span>Premises GPS Geofence Check-In</span>
+                </div>
+                <h3 className="font-bold text-slate-900 text-base sm:text-lg leading-snug truncate">
+                  {checkInModal.event.title}
+                </h3>
+                <p className="text-xs text-slate-500 truncate">
+                  {checkInModal.locationName} · Allowed perimeter: {checkInModal.radiusMeters} m
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={checkInModal.phase === 'verifying'}
+                onClick={() => setCheckInModal(null)}
+                aria-label="Close check-in dialog"
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 cursor-pointer disabled:opacity-40 shrink-0"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4">
+              {checkInModal.phase === 'verifying' && (
+                <div className="p-6 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center mx-auto">
+                    <RefreshCw size={22} className="animate-spin" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-slate-900">
+                      Confirming Your Device Location...
+                    </p>
+                    <p className="text-xs text-slate-600 max-w-sm mx-auto">
+                      Comparing your live device GPS position against{' '}
+                      <strong>{checkInModal.target.label}</strong> ({checkInModal.radiusMeters} m geofence).
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {checkInModal.phase === 'verified' && checkInModal.result && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                      <ShieldCheck size={20} />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <h4 className="text-sm font-bold text-emerald-950">
+                        Presence Confirmed — Checked In
+                      </h4>
+                      <p className="text-xs text-emerald-800 leading-relaxed">
+                        You are verified on church premises ({formatDistanceLabel(checkInModal.result.distanceMeters)} from{' '}
+                        <strong>{checkInModal.target.label}</strong>). Attendance recorded
+                        {checkInModal.checkedInAt
+                          ? ` at ${new Date(checkInModal.checkedInAt).toLocaleTimeString([], {
+                              hour: 'numeric',
+                              minute: '2-digit'
+                            })}`
+                          : ''}
+                        .
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-slate-500 block text-[11px]">Measured Distance</span>
+                      <span className="font-bold font-mono text-emerald-700 text-sm tabular-nums">
+                        {formatDistanceLabel(checkInModal.result.distanceMeters)}
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-slate-500 block text-[11px]">Device GPS Accuracy</span>
+                      <span className="font-bold font-mono text-slate-800 text-sm tabular-nums">
+                        {checkInModal.result.accuracy ? `±${checkInModal.result.accuracy} m` : 'High accuracy'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {checkInModal.phase === 'outside' && checkInModal.result && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0">
+                      <ShieldAlert size={20} />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <h4 className="text-sm font-bold text-amber-950">
+                        Check-In Blocked — Outside Church Premises
+                      </h4>
+                      <p className="text-xs text-amber-900 leading-relaxed">
+                        Your device is currently{' '}
+                        <strong className="tabular-nums">
+                          {formatDistanceLabel(checkInModal.result.distanceMeters)}
+                        </strong>{' '}
+                        away from <strong>{checkInModal.target.label}</strong>. Members must be within{' '}
+                        <strong>{checkInModal.result.radiusMeters} m</strong> of the venue to check in.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-slate-500 block text-[11px]">Your Device GPS</span>
+                      <span className="font-mono font-semibold text-slate-800 tabular-nums">
+                        {checkInModal.result.userLat.toFixed(5)}, {checkInModal.result.userLng.toFixed(5)}
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-slate-500 block text-[11px]">
+                        {checkInModal.result.targetSource === 'event' ? 'Event Venue Pin' : 'Church Sanctuary Pin'}
+                      </span>
+                      <span className="font-mono font-semibold text-indigo-700 tabular-nums">
+                        {checkInModal.result.targetLat.toFixed(5)}, {checkInModal.result.targetLng.toFixed(5)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <LocationMap
+                    latitude={checkInModal.target.lat}
+                    longitude={checkInModal.target.lng}
+                    title={checkInModal.event.title}
+                    subtitle={checkInModal.locationName}
+                    sourceLabel={`${checkInModal.radiusMeters} m Check-In Geofence`}
+                    height="200px"
+                  />
+                </div>
+              )}
+
+              {checkInModal.phase === 'error' && (
+                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0">
+                    <ShieldAlert size={20} />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <h4 className="text-sm font-bold text-rose-950">
+                      Device GPS Required for Check-In
+                    </h4>
+                    <p className="text-xs text-rose-800 leading-relaxed">
+                      {checkInModal.errorMessage}
+                    </p>
+                    {checkInModal.errorCode === 'POLICY_BLOCKED' && typeof window !== 'undefined' && (
+                      <a
+                        href={window.location.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-rose-200 text-rose-900 font-bold text-xs hover:bg-rose-100 transition-colors"
+                      >
+                        <span>Open in New Tab</span>
+                        <ExternalLink size={12} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              {checkInModal.phase === 'outside' ? (
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${checkInModal.target.lat},${checkInModal.target.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[40px] px-3.5 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-indigo-700 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Navigation size={13} />
+                  <span>Directions to Venue</span>
+                  <ExternalLink size={11} />
+                </a>
+              ) : (
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Verified using device GPS only
+                </span>
+              )}
+
+              <div className="flex items-center gap-2">
+                {(checkInModal.phase === 'outside' || checkInModal.phase === 'error') && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void runGeofenceVerification(
+                        checkInModal.event,
+                        checkInModal.locationName,
+                        checkInModal.target,
+                        checkInModal.occurrence
+                      )
+                    }
+                    className="min-h-[40px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw size={13} />
+                    <span>Retry GPS Check</span>
+                  </button>
+                )}
+
+                {checkInModal.phase === 'verified' && (() => {
+                  const latestReg = getEventUserReg(checkInModal.event);
+                  if (!latestReg) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const evt = checkInModal.event;
+                        const occ = checkInModal.occurrence;
+                        setCheckInModal(null);
+                        setShowQRPass({ event: evt, reg: latestReg, occurrence: occ });
+                      }}
+                      className="min-h-[40px] px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <QrCode size={14} />
+                      <span>View Pass</span>
+                    </button>
+                  );
+                })()}
+
+                <button
+                  type="button"
+                  disabled={checkInModal.phase === 'verifying'}
+                  onClick={() => setCheckInModal(null)}
+                  className="min-h-[40px] px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  {checkInModal.phase === 'verified' ? 'Done' : 'Close'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

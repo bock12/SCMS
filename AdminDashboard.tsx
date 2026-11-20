@@ -11,7 +11,7 @@ import { EventSurveysAdminTab } from './EventSurveysAdminTab';
 import { getCustomRoles, getRoleAssignments } from './roleService';
 import { hasEffectivePermission, hasAnyEffectivePermission, ADMIN_DASHBOARD_PERMISSION_KEYS, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
-import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, advanceRecurringEventDate, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption, getEventTemporalStatus } from './eventAccountService';
+import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, syncPastRecurringEventsAutomatically, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption, getEventTemporalStatus } from './eventAccountService';
 import { LocationMap } from './LocationMap';
 import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation, getNetworkApproximateLocation, GpsAccessError, searchLocationByQuery, parseCoordinatesInput, type PlaceSearchResult } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
@@ -7209,29 +7209,8 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
   const [manualName, setManualName] = useState('');
   const [manualEmail, setManualEmail] = useState('');
   const [manualPhone, setManualPhone] = useState('');
-  // Recurrence Toast & Advancement State
+  // Recurrence Toast State
   const [recurrenceToast, setRecurrenceToast] = useState<string | null>(null);
-
-  const handleAdvanceEventRecurrence = async (evt: ChurchEvent) => {
-    const updated = await advanceRecurringEventDate(evt);
-    setEvents(prev => prev.map(e => e.id === updated.id ? updated : e));
-    setRecurrenceToast(`🎉 Updated program schedule for "${evt.title}" to ${new Date(updated.start_time).toLocaleString()}!`);
-    setTimeout(() => setRecurrenceToast(null), 5000);
-  };
-
-  const handleAutoAdvancePastEvents = async () => {
-    const now = new Date().getTime();
-    const pastRecurring = events.filter(e => e.recurrence && e.recurrence !== 'one_time' && new Date(e.end_time || e.start_time).getTime() < now);
-    if (pastRecurring.length === 0) return;
-
-    for (const evt of pastRecurring) {
-      await advanceRecurringEventDate(evt);
-    }
-
-    setRecurrenceToast(`🚀 Successfully rolled ${pastRecurring.length} past recurring program(s) forward to their next scheduled cycle!`);
-    setTimeout(() => setRecurrenceToast(null), 6000);
-    fetchEventsData();
-  };
 
   const defaultBannerPresets = [
     { label: 'Worship Service', url: 'https://images.unsplash.com/photo-1510525009512-ad7fc13eefab?auto=format&fit=crop&w=1200&q=80' },
@@ -7242,22 +7221,30 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
     { label: 'Prayer & Candlelight', url: 'https://images.unsplash.com/photo-1544427920-c49ccfb85579?auto=format&fit=crop&w=1200&q=80' }
   ];
 
-  const fetchEventsData = async () => {
-    setLoading(true);
+  const fetchEventsData = async (silent = false) => {
+    if (!silent) setLoading(true);
     const [evtRes, regRes, profRes] = await Promise.all([
       supabase.from('events').select('*').order('start_time', { ascending: true }),
       supabase.from('event_registrations').select('*'),
       supabase.from('profiles').select('*').order('first_name', { ascending: true })
     ]);
 
-    if (evtRes.data) setEvents(evtRes.data as ChurchEvent[]);
+    if (evtRes.data) {
+      const syncedEvents = await syncPastRecurringEventsAutomatically(evtRes.data as ChurchEvent[]);
+      setEvents(syncedEvents);
+    }
     if (regRes.data) setRegistrations(regRes.data as EventRegistration[]);
     if (profRes.data) setMembers(profRes.data as Profile[]);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => {
     fetchEventsData();
+    const handleEventsSync = () => fetchEventsData(true);
+    window.addEventListener('church_events_updated', handleEventsSync);
+    return () => {
+      window.removeEventListener('church_events_updated', handleEventsSync);
+    };
   }, []);
 
   const toLocalDateTimeInput = (val: Date | string): string => {
@@ -7793,26 +7780,18 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                   </div>
                 )}
 
-                {/* Next Recurrence Cycle Pill & Roll Action */}
+                {/* Automatic Recurrence Next Cycle Pill */}
                 {evt.recurrence && evt.recurrence !== 'one_time' && (
-                  <div className="p-2.5 bg-purple-50/80 rounded-2xl border border-purple-200/80 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="text-[10px] font-black uppercase text-purple-900 block">Next Cycle Schedule</span>
-                      <span className="font-bold text-slate-800 text-[11px]">
-                        {calculateNextRecurrenceDate(evt.start_time, evt.end_time, evt.recurrence).formattedNextStart}
+                  <div className="p-2.5 bg-purple-50/80 rounded-2xl border border-purple-200/80 flex items-center justify-between gap-2 text-xs">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-black uppercase text-purple-900 block">Next Auto-Cycle</span>
+                      <span className="font-bold text-slate-800 text-[11px] truncate block">
+                        {calculateNextRecurrenceDate(evt.start_time, evt.end_time, evt.recurrence, evt).formattedNextStart}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAdvanceEventRecurrence(evt);
-                      }}
-                      className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-[10px] shadow-2xs transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                      title="Advance event date to next scheduled recurrence cycle"
-                    >
-                      <RefreshCw size={11} /> Advance Date
-                    </button>
+                    <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-800 font-bold text-[10px] shrink-0">
+                      Auto-Recurs
+                    </span>
                   </div>
                 )}
 
@@ -8000,16 +7979,6 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                   </td>
                   <td className="p-4 text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1">
-                      {evt.recurrence && evt.recurrence !== 'one_time' && (
-                        <button
-                          onClick={() => handleAdvanceEventRecurrence(evt)}
-                          className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                          title="Advance event date to next scheduled recurrence cycle"
-                        >
-                          <RefreshCw size={12} />
-                          <span>Roll Date</span>
-                        </button>
-                      )}
                       <button
                         onClick={() => setWorkspaceEvent(evt)}
                         className="px-2.5 py-1 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-xs"
@@ -8820,7 +8789,6 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
     );
   }
 
-  const pastRecurringEvents = events.filter(e => e.recurrence && e.recurrence !== 'one_time' && new Date(e.end_time || e.start_time).getTime() < Date.now());
   const detectedConflicts = detectScheduleConflicts(events);
 
   return (
@@ -9088,37 +9056,6 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Auto-Advance Notification Banner for Past Recurring Programs */}
-      {pastRecurringEvents.length > 0 && (
-        <div className="p-4.5 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 text-white rounded-2xl border border-purple-800 text-xs font-bold flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md animate-in fade-in">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-purple-800 text-amber-300 flex items-center justify-center shrink-0">
-              <RefreshCw size={18} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm text-white">Past Recurrence Date Alert</span>
-                <span className="px-2 py-0.2 rounded-full text-[10px] font-black uppercase bg-amber-400 text-slate-950">
-                  {pastRecurringEvents.length} Program(s) Due
-                </span>
-              </div>
-              <p className="text-purple-200 text-[11px] font-medium mt-0.5">
-                Some recurring church programs have passed their scheduled date. Roll them forward to their next cycle date in 1-click.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleAutoAdvancePastEvents}
-            className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-          >
-            <RefreshCw size={14} />
-            <span>Auto-Advance All Past Program Dates</span>
-          </button>
         </div>
       )}
 
@@ -10107,22 +10044,14 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
                     <div className="p-3.5 bg-purple-100/70 rounded-2xl border border-purple-200/90 space-y-2.5 text-xs">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div>
-                          <span className="font-extrabold text-purple-950 block text-[10px] uppercase tracking-wider">Calculated Next Cycle Schedule</span>
+                          <span className="font-extrabold text-purple-950 block text-[10px] uppercase tracking-wider">Automatic Next Cycle Schedule</span>
                           <span className="font-bold text-slate-800 text-xs">
                             {calculateNextRecurrenceDate(formStartTime, formEndTime || formStartTime, formRecurrence, tempEvt).formattedNextStart}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const { nextStartISO, nextEndISO } = calculateNextRecurrenceDate(formStartTime, formEndTime || formStartTime, formRecurrence, tempEvt);
-                            setFormStartTime(nextStartISO.slice(0, 16));
-                            setFormEndTime(nextEndISO.slice(0, 16));
-                          }}
-                          className="px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-extrabold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
-                        >
-                          <RefreshCw size={13} /> Roll Form Dates to Next Cycle
-                        </button>
+                        <span className="px-2.5 py-1 bg-purple-200/70 text-purple-950 font-bold rounded-lg text-[10px] shrink-0">
+                          Renews Automatically
+                        </span>
                       </div>
 
                       {sampleOccs.length > 0 && (

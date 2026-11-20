@@ -564,11 +564,14 @@ export const calculateNextRecurrenceDate = (
   // Determine recurrence rules
   const { nth, weekday, excludedMonths } = parseRecurrenceRules(eventObj?.recurrence_pattern, eventObj);
 
-  // Check if this is an Nth weekday rule or if pattern contains weekday names
+  // Only treat as monthly nth-weekday rule when recurrence itself is monthly/nth_weekday_monthly
   const patternLower = (eventObj?.recurrence_pattern || '').toLowerCase();
-  const isNthWeekdayRule = recurrence === 'nth_weekday_monthly' || (eventObj?.recurrence_nth !== undefined) || 
-    patternLower.includes('sunday') || patternLower.includes('monday') || patternLower.includes('tuesday') || 
-    patternLower.includes('wednesday') || patternLower.includes('thursday') || patternLower.includes('friday') || patternLower.includes('saturday');
+  const isMonthlyType = recurrence === 'monthly' || recurrence === 'nth_weekday_monthly';
+  const isNthWeekdayRule =
+    recurrence === 'nth_weekday_monthly' ||
+    (isMonthlyType &&
+      (eventObj?.recurrence_nth !== undefined ||
+        /\b(1st|first|2nd|second|3rd|third|4th|fourth|last)\b/.test(patternLower)));
 
   if (isNthWeekdayRule) {
     let year = nextStart.getFullYear();
@@ -581,8 +584,10 @@ export const calculateNextRecurrenceDate = (
       year++;
     }
 
-    // Skip any excluded months (e.g. January = 0)
-    while (excludedMonths.includes(month)) {
+    // Skip any excluded months (e.g. January = 0) with safety guard
+    let exclGuard = 0;
+    while (excludedMonths.includes(month) && exclGuard < 12) {
+      exclGuard++;
       month++;
       if (month > 11) {
         month = 0;
@@ -593,13 +598,17 @@ export const calculateNextRecurrenceDate = (
     nextStart = getNthWeekdayDate(year, month, nth, weekday, hours, minutes);
 
     // If candidate nextStart is still in the past, advance to subsequent non-excluded months
-    while (nextStart.getTime() <= now.getTime()) {
+    let futureGuard = 0;
+    while (nextStart.getTime() <= now.getTime() && futureGuard < 120) {
+      futureGuard++;
       month++;
       if (month > 11) {
         month = 0;
         year++;
       }
-      while (excludedMonths.includes(month)) {
+      let innerGuard = 0;
+      while (excludedMonths.includes(month) && innerGuard < 12) {
+        innerGuard++;
         month++;
         if (month > 11) {
           month = 0;
@@ -632,7 +641,12 @@ export const calculateNextRecurrenceDate = (
     advanceDate(nextStart, recurrence);
 
     // Skip excluded months if specified (for standard monthly/quarterly/yearly)
-    while (excludedMonths.includes(nextStart.getMonth()) || nextStart.getTime() <= now.getTime()) {
+    let stdGuard = 0;
+    while (
+      (excludedMonths.includes(nextStart.getMonth()) || nextStart.getTime() <= now.getTime()) &&
+      stdGuard < 520
+    ) {
+      stdGuard++;
       advanceDate(nextStart, recurrence);
     }
   }
@@ -695,6 +709,40 @@ export const advanceRecurringEventDate = async (event: ChurchEvent): Promise<Chu
     ...event,
     ...updatedPayload
   };
+};
+
+/**
+ * Automatically rolls any past recurring events forward to their next scheduled cycle
+ * without requiring manual admin intervention or nagging alert banners.
+ */
+export const syncPastRecurringEventsAutomatically = async (
+  events: ChurchEvent[]
+): Promise<ChurchEvent[]> => {
+  const now = Date.now();
+  const hasDue = events.some(
+    e =>
+      e.recurrence &&
+      e.recurrence !== 'one_time' &&
+      e.status !== 'cancelled' &&
+      new Date(e.end_time || e.start_time).getTime() < now
+  );
+  if (!hasDue) return events;
+
+  const updatedList: ChurchEvent[] = [];
+  for (const evt of events) {
+    if (
+      evt.recurrence &&
+      evt.recurrence !== 'one_time' &&
+      evt.status !== 'cancelled' &&
+      new Date(evt.end_time || evt.start_time).getTime() < now
+    ) {
+      const rolled = await advanceRecurringEventDate(evt);
+      updatedList.push(rolled);
+    } else {
+      updatedList.push(evt);
+    }
+  }
+  return updatedList;
 };
 
 export interface ScheduleConflict {

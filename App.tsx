@@ -23,7 +23,7 @@ import { FinanceOfficerWorkspace } from './FinanceOfficerWorkspace';
 import { MemberResourcesPage } from './MemberResourcesPage';
 import { MemberEventSurveysPage } from './MemberEventSurveysPage';
 import { CalendarPage } from './CalendarPage';
-import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption } from './eventAccountService';
+import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption, syncPastRecurringEventsAutomatically } from './eventAccountService';
 import { getGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, getDepartmentRequisitionSubmissionOptions, submitDatabaseRequisition } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
@@ -1069,7 +1069,9 @@ const OverviewPage = ({ profile }: { profile: Profile | null }) => {
         if (!active) return;
         if (sData) setLiveStream(sData as Stream);
         if (evData && Array.isArray(evData)) {
-          const allEvents = (evData as ChurchEvent[]).filter(ev => ev.status !== 'cancelled');
+          const syncedEvents = await syncPastRecurringEventsAutomatically(evData as ChurchEvent[]);
+          if (!active) return;
+          const allEvents = syncedEvents.filter(ev => ev.status !== 'cancelled');
           const now = new Date();
           const nowTime = now.getTime();
           const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);

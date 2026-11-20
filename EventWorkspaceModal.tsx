@@ -23,7 +23,7 @@ import { getEventBudgetApproval } from './eventBudgetService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { getChurchResources, getEventResourceReservations, saveEventResourceReservations, ChurchResource, EventResourceReservation } from './resourceService';
 import { getSurveyResponses, saveSurveyResponse, calculateSentimentSummary, SurveyResponse, SentimentSummary } from './surveyService';
-import { getEventAccount, fundEventAccount, disburseFromEventAccount, getRecurrenceBadge, calculateNextRecurrenceDate, advanceRecurringEventDate } from './eventAccountService';
+import { getEventAccount, fundEventAccount, disburseFromEventAccount, getRecurrenceBadge, calculateNextRecurrenceDate } from './eventAccountService';
 import { getChurchProfile } from './churchProfileService';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
@@ -115,19 +115,6 @@ export const EventWorkspaceModal: React.FC<EventWorkspaceModalProps> = ({
   const [accountSuccessMsg, setAccountSuccessMsg] = useState<string | null>(null);
   const [accountErrorMsg, setAccountErrorMsg] = useState<string | null>(null);
   const [copyCodeFeedback, setCopyCodeFeedback] = useState<string | null>(null);
-  const [recurrenceAdvanceToast, setRecurrenceAdvanceToast] = useState<string | null>(null);
-
-  const handleAdvanceRecurrence = async () => {
-    try {
-      const updatedEvt = await advanceRecurringEventDate(event);
-      onUpdateEvent(updatedEvt);
-      setRecurrenceAdvanceToast(`🎉 Event schedule successfully rolled forward to: ${new Date(updatedEvt.start_time).toLocaleString()}!`);
-      setTimeout(() => setRecurrenceAdvanceToast(null), 6000);
-      onRefreshData();
-    } catch (err: any) {
-      setAccountErrorMsg(err?.message || 'Error advancing recurrence date');
-    }
-  };
 
   // Fund Account Form State
   const [fundAmount, setFundAmount] = useState<string>('5000');
@@ -2071,44 +2058,27 @@ Currency: SLE`;
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Recurring Program Schedule Control Banner */}
+            {/* Automatic Recurrence Schedule Overview */}
             {event.recurrence && event.recurrence !== 'one_time' && (
-              <div className="p-5 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 text-white rounded-3xl border border-purple-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in fade-in">
+              <div className="p-5 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 text-white rounded-3xl border border-purple-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-400 text-slate-950">
-                      🔄 Recurring Program ({event.recurrence})
+                      Recurring Program ({event.recurrence})
                     </span>
                     <span className="text-xs text-purple-200 font-bold">
                       Current: {new Date(event.start_time).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
                     </span>
                   </div>
-                  <h4 className="font-extrabold text-white text-sm">Automated Recurrence Cycle Schedule</h4>
+                  <h4 className="font-extrabold text-white text-sm">Automatic Recurrence Schedule Active</h4>
                   <p className="text-xs text-purple-200/90">
-                    Next Scheduled Occurrence: <strong className="text-amber-300 font-mono text-xs">{calculateNextRecurrenceDate(event.start_time, event.end_time, event.recurrence).formattedNextStart}</strong>
+                    Next Scheduled Occurrence: <strong className="text-amber-300 font-mono text-xs">{calculateNextRecurrenceDate(event.start_time, event.end_time, event.recurrence, event).formattedNextStart}</strong>
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleAdvanceRecurrence}
-                  className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
-                >
-                  <RefreshCw size={15} />
-                  <span>Advance Event Date to Next Occurrence</span>
-                </button>
-              </div>
-            )}
-
-            {recurrenceAdvanceToast && (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-                  <span>{recurrenceAdvanceToast}</span>
-                </div>
-                <button onClick={() => setRecurrenceAdvanceToast(null)} className="text-emerald-600">
-                  <X size={14} />
-                </button>
+                <span className="px-3.5 py-2 bg-white/10 border border-white/15 text-purple-100 font-bold rounded-xl text-xs shrink-0">
+                  Renews Automatically
+                </span>
               </div>
             )}
 

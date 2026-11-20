@@ -430,6 +430,191 @@ export async function getCurrentGpsLocation(): Promise<GpsLocationResult> {
   });
 }
 
+export const DEFAULT_GEOFENCE_RADIUS_METERS = 250;
+
+export interface GeofenceVerificationResult {
+  allowed: boolean;
+  distanceMeters: number;
+  radiusMeters: number;
+  effectiveAllowanceMeters: number;
+  userLat: number;
+  userLng: number;
+  accuracy?: number;
+  targetLat: number;
+  targetLng: number;
+  targetSource: 'event' | 'church_profile';
+  locationSource: 'device';
+}
+
+export function calculateDistanceMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000; // Earth mean radius in meters
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+export function formatDistanceLabel(meters: number): string {
+  if (!Number.isFinite(meters) || meters < 0) return '0 m';
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(2)} km`;
+}
+
+/**
+ * Acquires precise device GPS only (no IP fallback) for geofence attendance verification.
+ */
+export async function getDeviceGpsPreciseOnly(): Promise<GpsLocationResult> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    throw new GpsAccessError(
+      'Device GPS API (navigator.geolocation) is not supported in this browser.',
+      'UNSUPPORTED'
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const handleErr = (geoErr?: GeolocationPositionError) => {
+      if (settled) return;
+      settled = true;
+
+      const errMsg = String(geoErr?.message || '').toLowerCase();
+      const isPolicyBlocked =
+        errMsg.includes('permissions policy') ||
+        errMsg.includes('feature policy') ||
+        errMsg.includes('disabled in this document');
+
+      if (geoErr?.code === 1) {
+        if (isPolicyBlocked) {
+          reject(
+            new GpsAccessError(
+              'Geolocation is blocked by the embedded frame Permissions Policy. Reload the preview or open the app in a standalone tab to check in with device GPS.',
+              'POLICY_BLOCKED'
+            )
+          );
+          return;
+        }
+        reject(
+          new GpsAccessError(
+            'Device GPS permission was denied. Allow Location access in your browser site settings and try checking in again.',
+            'PERMISSION_DENIED'
+          )
+        );
+        return;
+      }
+
+      if (geoErr?.code === 3) {
+        reject(
+          new GpsAccessError(
+            'Device GPS timed out before locking onto your location. Ensure Location / GPS is turned on and try again.',
+            'TIMEOUT'
+          )
+        );
+        return;
+      }
+
+      reject(
+        new GpsAccessError(
+          geoErr?.message || 'Unable to confirm your device GPS position. Please enable GPS and try again.',
+          'UNAVAILABLE'
+        )
+      );
+    };
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          if (settled) return;
+          settled = true;
+          resolve({
+            lat: Number(pos.coords.latitude.toFixed(6)),
+            lng: Number(pos.coords.longitude.toFixed(6)),
+            source: 'device',
+            accuracy: typeof pos.coords.accuracy === 'number' ? Math.round(pos.coords.accuracy) : undefined
+          });
+        },
+        err => {
+          if (err && err.code !== 1) {
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                if (settled) return;
+                settled = true;
+                resolve({
+                  lat: Number(pos.coords.latitude.toFixed(6)),
+                  lng: Number(pos.coords.longitude.toFixed(6)),
+                  source: 'device',
+                  accuracy: typeof pos.coords.accuracy === 'number' ? Math.round(pos.coords.accuracy) : undefined
+                });
+              },
+              retryErr => handleErr(retryErr || err),
+              { enableHighAccuracy: false, timeout: 7000, maximumAge: 30000 }
+            );
+            return;
+          }
+          handleErr(err);
+        },
+        { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
+      );
+    } catch (syncErr: any) {
+      if (!settled) {
+        settled = true;
+        reject(new GpsAccessError(syncErr?.message || 'Unable to invoke device GPS.', 'UNAVAILABLE'));
+      }
+    }
+  });
+}
+
+export async function verifyGeofencePresence(
+  targetLat: number,
+  targetLng: number,
+  targetSource: 'event' | 'church_profile' = 'event',
+  radiusMeters: number = DEFAULT_GEOFENCE_RADIUS_METERS
+): Promise<GeofenceVerificationResult> {
+  if (
+    !Number.isFinite(targetLat) ||
+    !Number.isFinite(targetLng) ||
+    Math.abs(targetLat) > 90 ||
+    Math.abs(targetLng) > 180
+  ) {
+    throw new GpsAccessError('Event premises GPS coordinates are invalid or not configured.', 'UNAVAILABLE');
+  }
+
+  const deviceLoc = await getDeviceGpsPreciseOnly();
+  const distanceMeters = calculateDistanceMeters(
+    deviceLoc.lat,
+    deviceLoc.lng,
+    targetLat,
+    targetLng
+  );
+  // Allow modest indoor GPS accuracy tolerance (up to +50m) on top of the configured perimeter
+  const accuracyBuffer = Math.min(50, Math.round((deviceLoc.accuracy || 0) * 0.5));
+  const effectiveAllowanceMeters = radiusMeters + accuracyBuffer;
+  const allowed = distanceMeters <= effectiveAllowanceMeters;
+
+  return {
+    allowed,
+    distanceMeters,
+    radiusMeters,
+    effectiveAllowanceMeters,
+    userLat: deviceLoc.lat,
+    userLng: deviceLoc.lng,
+    accuracy: deviceLoc.accuracy,
+    targetLat,
+    targetLng,
+    targetSource,
+    locationSource: 'device'
+  };
+}
+
 export const PRESET_COLOR_THEMES = [
   { name: 'Royal Indigo & Emerald', primary: '#4f46e5', secondary: '#10b981' },
   { name: 'Deep Navy & Warm Gold', primary: '#1e3a8a', secondary: '#f59e0b' },
