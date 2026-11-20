@@ -75,6 +75,22 @@ test.describe('SCMS finance browser smoke', () => {
     await page.reload();
     await expect(page.getByText('Church Overview').first()).toBeVisible();
     await page.goto('/portal/finance?tab=ledger');
+    console.log('FINANCE_BROWSER_PAGE:', (await page.locator('body').innerText()).slice(0, 5000));
+    console.log('FINANCE_BROWSER_AUTHZ:', await page.evaluate(() => {
+      const database = JSON.parse(localStorage.getItem('faithconnect_db_v2') || '{}');
+      const session = JSON.parse(localStorage.getItem('faithconnect_auth_session_v2') || '{}');
+      const actor = (database.profiles || []).find((profile: { auth_user_id?: string; id: string }) =>
+        profile.auth_user_id === session.user?.id || profile.id === session.user?.id
+      );
+      return {
+        sessionUserId: session.user?.id,
+        actor: actor ? { id: actor.id, branch_id: actor.branch_id } : null,
+        roles: (database.roles || []).filter((role: { name?: string }) => role.name === 'finance_officer'),
+        assignments: (database.profile_role_assignments || []).filter((item: { id?: string }) => item.id === 'pw-finance-officer-assignment'),
+        permissions: (database.permissions || []).filter((item: { key?: string }) => ['view_finances', 'manage_finances'].includes(item.key || '')),
+        rolePermissions: database.role_permissions || []
+      };
+    }));
     await expect(page.getByText('Receipt & payment entry')).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole('button', { name: 'Create receipt' })).toBeVisible();
   });
