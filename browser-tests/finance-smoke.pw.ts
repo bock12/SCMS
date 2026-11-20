@@ -158,6 +158,39 @@ test.describe('SCMS finance browser smoke', () => {
     expect(transactionState.journalLines).toHaveLength(2);
     expect(transactionState.journalLines.reduce((sum: number, line: any) => sum + line.debit_amount, 0)).toBe(125);
     expect(transactionState.journalLines.reduce((sum: number, line: any) => sum + line.credit_amount, 0)).toBe(125);
+
     expect(transactionState.approvalRequests).toHaveLength(1);
+
+    // Exercise the payment side of the same real entry workspace. The adapter
+    // must create a separate pending document and balanced draft journal.
+    await page.getByRole('button', { name: 'Payment', exact: true }).click();
+    await expect(page.getByPlaceholder('Person or organisation')).toBeVisible();
+    await page.getByPlaceholder('Person or organisation').fill('Browser Test Supplier');
+    await page.getByRole('spinbutton').first().fill('80');
+    await page.getByPlaceholder('Purpose or details of this transaction').fill('Browser smoke test payment');
+    await page.getByRole('button', { name: 'Create payment', exact: true }).click();
+
+    await expect(page.getByRole('status').filter({ hasText: 'Financial document created' })).toBeVisible();
+    const paymentState = await page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}');
+      return {
+        documents: state.documents || [],
+        journals: state.journals || [],
+        journalLines: state.journalLines || [],
+        approvalRequests: state.approvalRequests || []
+      };
+    });
+    expect(paymentState.documents).toHaveLength(2);
+    expect(paymentState.documents.map((document: any) => document.document_type).sort()).toEqual(['payment', 'receipt']);
+    expect(paymentState.documents.every((document: any) => document.status === 'pending_approval')).toBe(true);
+    expect(paymentState.journals).toHaveLength(2);
+    expect(paymentState.journals.every((journal: any) => journal.source_type === 'financial_document_pending')).toBe(true);
+    expect(paymentState.journalLines).toHaveLength(4);
+    for (const amount of [125, 80]) {
+      const lines = paymentState.journalLines.filter((line: any) => line.debit_amount === amount || line.credit_amount === amount);
+      expect(lines.reduce((sum: number, line: any) => sum + line.debit_amount, 0)).toBe(amount);
+      expect(lines.reduce((sum: number, line: any) => sum + line.credit_amount, 0)).toBe(amount);
+    }
+    expect(paymentState.approvalRequests).toHaveLength(2);
   });
 });
