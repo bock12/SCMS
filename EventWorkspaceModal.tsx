@@ -15,7 +15,7 @@ import {
   Send, TrendingUp, Award, Percent, FileCheck, CheckCircle,
   PieChart, UserCheck, UserX, BarChart3, AlertTriangle,
   Package, MessageSquareText, Star, ThumbsUp, ThumbsDown, Link, Copy, Share2,
-  Landmark, Wallet, ArrowDownRight, ArrowUpRight, Receipt, CreditCard, Smartphone, MoreHorizontal
+  Landmark, Wallet, ArrowDownRight, ArrowUpRight, Receipt, CreditCard, Smartphone, MoreHorizontal, ArrowUpDown
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { getRequisitions, saveRequisitions } from './requisitionService';
@@ -115,6 +115,9 @@ export const EventWorkspaceModal: React.FC<EventWorkspaceModalProps> = ({
   const [accountSuccessMsg, setAccountSuccessMsg] = useState<string | null>(null);
   const [accountErrorMsg, setAccountErrorMsg] = useState<string | null>(null);
   const [copyCodeFeedback, setCopyCodeFeedback] = useState<string | null>(null);
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState<'all' | 'inflow' | 'disbursement'>('all');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerSortOrder, setLedgerSortOrder] = useState<'newest' | 'highest'>('newest');
 
   // Fund Account Form State
   const [fundAmount, setFundAmount] = useState<string>('5000');
@@ -1820,7 +1823,7 @@ Currency: SLE`;
   const checkedInCount = evtRegistrations.filter(r => r.status === 'checked_in' || r.status === 'attended').length;
 
   return (
-    <div className="w-full max-w-7xl mx-auto min-h-screen bg-slate-50 flex flex-col space-y-4 pb-20 animate-in fade-in duration-200 px-2 sm:px-4">
+    <div className="w-full max-w-7xl mx-auto min-h-screen bg-slate-50 flex flex-col space-y-4 pb-24 lg:pb-12 animate-in fade-in duration-200 px-2.5 sm:px-4">
       
       {/* ULTRA-SLIM STICKY TOP APP HEADER (< 50px tall) */}
       <div className="bg-slate-950/95 text-white rounded-2xl px-3 py-2 sm:px-5 sm:py-2.5 shadow-xl border border-slate-800/90 sticky top-1 z-30 backdrop-blur-md flex items-center justify-between gap-3">
@@ -2304,116 +2307,119 @@ Currency: SLE`;
             </div>
           </div>
         ) : activeTab === 'account' && (
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
             {/* Top Account & Banking Overview Card */}
-            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-6">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 pb-6 border-b border-slate-100">
-                <div className="space-y-2">
+            <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 border border-slate-200 shadow-xs space-y-5 sm:space-y-6">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-5 pb-5 sm:pb-6 border-b border-slate-100">
+                <div className="space-y-2 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-black flex items-center gap-1.5">
-                      <Landmark size={14} className="text-emerald-600" />
+                    <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-black flex items-center gap-1.5">
+                      <Landmark size={13} className="text-emerald-600 shrink-0" />
                       <span>Dedicated Event Account</span>
                     </span>
                     {(() => {
                       const rec = getRecurrenceBadge(event.recurrence);
                       return (
-                        <span className={`px-3 py-1 rounded-xl text-xs font-black border flex items-center gap-1.5 ${rec.badgeColor}`}>
+                        <span className={`px-2.5 py-1 rounded-lg text-[11px] font-black border flex items-center gap-1.5 ${rec.badgeColor}`}>
                           <span>{rec.icon}</span>
                           <span>{rec.label}</span>
                         </span>
                       );
                     })()}
-                    <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-extrabold text-xs rounded-xl">
+                    <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-extrabold text-[11px] rounded-lg">
                       Status: ACTIVE
                     </span>
                   </div>
 
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">{eventAccount.account_name}</h2>
-                  <p className="text-xs text-slate-500 max-w-2xl">
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight break-words">{eventAccount.account_name}</h2>
+                  <p className="text-xs sm:text-sm text-slate-500 max-w-2xl leading-relaxed">
                     Every church event and recurring program has an autonomous financial ledger. Fund this event directly from Church Treasury allocations, donor sponsorships, or member pledges, and disburse payments directly to vendors.
                   </p>
                 </div>
 
-                {/* Actions Bar */}
-                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                {/* Actions Bar - Responsive 2x2 grid on phones, inline flex on tablet/desktop */}
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:flex-wrap shrink-0 w-full lg:w-auto">
                   <button
                     onClick={() => setShowFundModal(true)}
-                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] sm:min-h-[40px] px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                   >
-                    <Plus size={16} />
-                    <span>+ Fund Account</span>
+                    <Plus size={16} className="shrink-0" />
+                    <span>Fund Account</span>
                   </button>
                   <button
                     onClick={() => setShowDisburseModal(true)}
-                    className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-md shadow-rose-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] sm:min-h-[40px] px-3.5 sm:px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black shadow-md shadow-rose-100 transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                   >
-                    <ArrowUpRight size={16} />
-                    <span>- Record Payout</span>
+                    <ArrowUpRight size={16} className="shrink-0" />
+                    <span>Record Payout</span>
                   </button>
                   <button
                     onClick={downloadEventAccountStatementPDF}
-                    className="px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] sm:min-h-[40px] px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                     title="Export printable audit statement"
                   >
-                    <Printer size={15} />
+                    <Printer size={15} className="shrink-0" />
                     <span>Audit PDF</span>
                   </button>
                   <button
                     onClick={handleCopyFundingInfo}
-                    className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="min-h-[44px] sm:min-h-[40px] px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                     title="Copy details to share with sponsors"
                   >
-                    <Copy size={15} />
+                    <Copy size={15} className="shrink-0" />
                     <span>Copy Details</span>
                   </button>
                 </div>
               </div>
 
               {copyCodeFeedback && (
-                <div className="p-3 bg-emerald-100 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between">
+                <div className="p-3 bg-emerald-100 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
                   <span>✓ {copyCodeFeedback}</span>
-                  <button onClick={() => setCopyCodeFeedback(null)} className="text-emerald-700">
+                  <button
+                    onClick={() => setCopyCodeFeedback(null)}
+                    className="text-emerald-700 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg hover:bg-emerald-200/60 cursor-pointer shrink-0"
+                  >
                     <X size={14} />
                   </button>
                 </div>
               )}
 
-              {/* Metrics Row */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="p-5 bg-emerald-50/60 rounded-3xl border border-emerald-100 space-y-1">
+              {/* Metrics Row - 1 col tiny phones, 2x2 mobile/tablet, 4 col desktop */}
+              <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="p-4 sm:p-5 bg-emerald-50/60 rounded-2xl sm:rounded-3xl border border-emerald-100 space-y-1">
                   <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">Available Balance</span>
-                  <div className="text-2xl sm:text-3xl font-black text-emerald-700">
+                  <div className="text-xl sm:text-2xl xl:text-[26px] font-black text-emerald-700 tabular-nums leading-tight">
                     SLE {eventAccount.current_balance.toLocaleString()}
                   </div>
-                  <p className="text-[10px] text-emerald-600 font-medium">Ready for disbursement</p>
+                  <p className="text-[11px] text-emerald-600 font-medium">Ready for disbursement</p>
                 </div>
 
-                <div className="p-5 bg-indigo-50/60 rounded-3xl border border-indigo-100 space-y-1">
+                <div className="p-4 sm:p-5 bg-indigo-50/60 rounded-2xl sm:rounded-3xl border border-indigo-100 space-y-1">
                   <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-wider block">
                     {event.recurrence && event.recurrence !== 'one_time' ? 'Cycle Budget Allowance' : 'Target Budget'}
                   </span>
-                  <div className="text-2xl sm:text-3xl font-black text-indigo-700">
+                  <div className="text-xl sm:text-2xl xl:text-[26px] font-black text-indigo-700 tabular-nums leading-tight">
                     SLE {(event.recurring_funding_allowance || eventAccount.target_budget).toLocaleString()}
                   </div>
-                  <p className="text-[10px] text-indigo-600 font-medium">
+                  <p className="text-[11px] text-indigo-600 font-medium">
                     {event.recurrence && event.recurrence !== 'one_time' ? `Per ${event.recurrence} cycle` : 'Approved target'}
                   </p>
                 </div>
 
-                <div className="p-5 bg-slate-50 rounded-3xl border border-slate-200 space-y-1">
+                <div className="p-4 sm:p-5 bg-slate-50 rounded-2xl sm:rounded-3xl border border-slate-200 space-y-1">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Deposits (Inflow)</span>
-                  <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                  <div className="text-xl sm:text-2xl xl:text-[26px] font-black text-slate-900 tabular-nums leading-tight">
                     SLE {eventAccount.total_funded.toLocaleString()}
                   </div>
-                  <p className="text-[10px] text-slate-500 font-medium">Treasury & Sponsor seeds</p>
+                  <p className="text-[11px] text-slate-500 font-medium">Treasury & Sponsor seeds</p>
                 </div>
 
-                <div className="p-5 bg-slate-50 rounded-3xl border border-slate-200 space-y-1">
+                <div className="p-4 sm:p-5 bg-slate-50 rounded-2xl sm:rounded-3xl border border-slate-200 space-y-1">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Disbursed (Outflow)</span>
-                  <div className="text-2xl sm:text-3xl font-black text-rose-600">
+                  <div className="text-xl sm:text-2xl xl:text-[26px] font-black text-rose-600 tabular-nums leading-tight">
                     SLE {eventAccount.total_disbursed.toLocaleString()}
                   </div>
-                  <p className="text-[10px] text-slate-500 font-medium">Paid vendor requisitions</p>
+                  <p className="text-[11px] text-slate-500 font-medium">Paid vendor requisitions</p>
                 </div>
               </div>
 
@@ -2422,17 +2428,17 @@ Currency: SLE`;
                 const target = event.recurring_funding_allowance || eventAccount.target_budget || 1;
                 const pct = Math.min(100, Math.round((eventAccount.current_balance / target) * 100));
                 return (
-                  <div className="space-y-2 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <div className="flex justify-between items-center text-xs">
+                  <div className="space-y-2 p-3.5 sm:p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-1.5 text-xs">
                       <span className="font-extrabold text-slate-700 flex items-center gap-1.5">
-                        <TrendingUp size={15} className="text-indigo-600" />
-                        <span>Funding Goal Fulfillment: {pct}% Funded</span>
+                        <TrendingUp size={15} className="text-indigo-600 shrink-0" />
+                        <span>Funding Goal Fulfillment: <span className="tabular-nums">{pct}%</span> Funded</span>
                       </span>
-                      <span className="font-mono text-slate-500 font-bold">
+                      <span className="font-mono text-slate-600 font-bold tabular-nums text-[11px] sm:text-xs">
                         SLE {eventAccount.current_balance.toLocaleString()} / SLE {target.toLocaleString()}
                       </span>
                     </div>
-                    <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                    <div className="w-full bg-slate-200 rounded-full h-2.5 sm:h-3 overflow-hidden">
                       <div 
                         className={`h-full rounded-full transition-all duration-500 ${pct >= 100 ? 'bg-emerald-500' : 'bg-indigo-600'}`}
                         style={{ width: `${pct}%` }}
@@ -2443,166 +2449,531 @@ Currency: SLE`;
               })()}
 
               {/* Banking & Mobile Money Details 2-Column Box */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-white rounded-2xl border border-indigo-100 space-y-2">
-                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase">
-                    <Landmark size={16} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 pt-1">
+                <div className="p-4 sm:p-5 bg-gradient-to-br from-indigo-50/50 to-white rounded-2xl border border-indigo-100 space-y-2.5">
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase tracking-wide">
+                    <Landmark size={16} className="shrink-0" />
                     <span>Bank Wire Credentials</span>
                   </div>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Bank:</span>
-                      <strong className="text-slate-800">{eventAccount.bank_name}</strong>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Bank:</span>
+                      <strong className="text-slate-800 text-right break-words min-w-0">{eventAccount.bank_name}</strong>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Account No:</span>
-                      <strong className="text-indigo-950 font-mono">{eventAccount.bank_account_number}</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Account No:</span>
+                      <strong className="text-indigo-950 font-mono tabular-nums text-right break-all min-w-0">{eventAccount.bank_account_number}</strong>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Account Title:</span>
-                      <strong className="text-slate-800 truncate max-w-[200px]">{eventAccount.account_name}</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Account Title:</span>
+                      <strong className="text-slate-800 text-right break-words min-w-0">{eventAccount.account_name}</strong>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Currency:</span>
-                      <strong className="text-emerald-700">{eventAccount.currency} (Sierra Leone Leones)</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Currency:</span>
+                      <strong className="text-emerald-700 text-right">{eventAccount.currency} (Sierra Leone Leones)</strong>
                     </div>
                   </div>
                 </div>
 
-                <div className="p-5 bg-gradient-to-br from-amber-50/50 to-white rounded-2xl border border-amber-100 space-y-2">
-                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase">
-                    <Smartphone size={16} />
+                <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/50 to-white rounded-2xl border border-amber-100 space-y-2.5">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wide">
+                    <Smartphone size={16} className="shrink-0" />
                     <span>Mobile Money & Donor Reference</span>
                   </div>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Merchant Code:</span>
-                      <strong className="text-slate-800">{eventAccount.mobile_money_merchant}</strong>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Merchant Code:</span>
+                      <strong className="text-slate-800 text-right break-words min-w-0">{eventAccount.mobile_money_merchant}</strong>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Donor Memo Ref:</span>
-                      <span className="px-2 py-0.5 bg-amber-100 text-amber-900 font-mono font-black rounded text-[11px]">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Donor Memo Ref:</span>
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-900 font-mono font-black rounded text-[11px] tabular-nums">
                         {eventAccount.donor_reference_code}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Recurrence Pattern:</span>
-                      <strong className="text-slate-800">{event.recurrence_pattern || 'Scheduled occurrence'}</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Recurrence Pattern:</span>
+                      <strong className="text-slate-800 text-right break-words min-w-0">{event.recurrence_pattern || 'Scheduled occurrence'}</strong>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Controller:</span>
-                      <strong className="text-slate-800">Cathedral Treasury Board</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-500 shrink-0">Controller:</span>
+                      <strong className="text-slate-800 text-right">Cathedral Treasury Board</strong>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Itemized Transactions Ledger Table */}
-            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div>
-                  <h3 className="text-lg font-black text-slate-900">Event Financial Transactions Ledger</h3>
-                  <p className="text-xs text-slate-500">Real-time audit log of all deposits, church treasury allocations, and vendor payments.</p>
-                </div>
+            {/* Itemized Transactions Ledger - Responsive Mobile List + Tablet Card Grid + Desktop Table */}
+            {(() => {
+              const allTxns = eventAccount.transactions || [];
+              const inflowTxns = allTxns.filter(t => t.type !== 'disbursement');
+              const outflowTxns = allTxns.filter(t => t.type === 'disbursement');
 
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-400">
-                    {eventAccount.transactions?.length || 0} Transactions
-                  </span>
-                </div>
-              </div>
+              const query = ledgerSearch.trim().toLowerCase();
+              const filteredTxns = allTxns
+                .filter(txn => {
+                  if (ledgerTypeFilter === 'inflow' && txn.type === 'disbursement') return false;
+                  if (ledgerTypeFilter === 'disbursement' && txn.type !== 'disbursement') return false;
+                  if (!query) return true;
+                  const hay = [
+                    txn.contributor_or_payee,
+                    txn.transaction_ref || '',
+                    txn.notes || '',
+                    txn.source_or_channel.replace(/_/g, ' '),
+                    txn.recorded_by || ''
+                  ].join(' ').toLowerCase();
+                  return hay.includes(query);
+                })
+                .slice()
+                .sort((a, b) => {
+                  if (ledgerSortOrder === 'highest') {
+                    return b.amount - a.amount;
+                  }
+                  return new Date(b.date).getTime() - new Date(a.date).getTime();
+                });
 
-              {(!eventAccount.transactions || eventAccount.transactions.length === 0) ? (
-                <div className="py-12 text-center space-y-3">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                    <Receipt size={28} />
+              const visibleInflowTotal = filteredTxns
+                .filter(t => t.type !== 'disbursement')
+                .reduce((sum, t) => sum + (t.amount || 0), 0);
+              const visibleOutflowTotal = filteredTxns
+                .filter(t => t.type === 'disbursement')
+                .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+              const formatChannelLabel = (channel: EventFundingTransaction['source_or_channel']) => {
+                switch (channel) {
+                  case 'church_treasury': return 'Church Treasury';
+                  case 'bank_wire': return 'Bank Wire';
+                  case 'mobile_money': return 'Mobile Money';
+                  case 'cash': return 'Cash';
+                  case 'card': return 'Card';
+                  default: return String(channel).replace(/_/g, ' ');
+                }
+              };
+
+              const renderChannelIcon = (channel: EventFundingTransaction['source_or_channel']) => {
+                switch (channel) {
+                  case 'church_treasury':
+                  case 'bank_wire':
+                    return <Landmark size={13} className="text-slate-400 shrink-0" />;
+                  case 'mobile_money':
+                    return <Smartphone size={13} className="text-slate-400 shrink-0" />;
+                  case 'card':
+                    return <CreditCard size={13} className="text-slate-400 shrink-0" />;
+                  default:
+                    return <Wallet size={13} className="text-slate-400 shrink-0" />;
+                }
+              };
+
+              const getTypeMeta = (type: EventFundingTransaction['type']) => {
+                if (type === 'disbursement') {
+                  return {
+                    label: 'Disbursement',
+                    isDisb: true,
+                    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+                    accentBarClass: 'bg-rose-500',
+                    iconBoxClass: 'bg-rose-50 text-rose-600 border-rose-100'
+                  };
+                }
+                if (type === 'treasury_allocation') {
+                  return {
+                    label: 'Treasury Grant',
+                    isDisb: false,
+                    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                    accentBarClass: 'bg-indigo-500',
+                    iconBoxClass: 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                  };
+                }
+                if (type === 'donation') {
+                  return {
+                    label: 'Sponsor Gift',
+                    isDisb: false,
+                    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                    accentBarClass: 'bg-emerald-500',
+                    iconBoxClass: 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                  };
+                }
+                return {
+                  label: 'Deposit',
+                  isDisb: false,
+                  badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                  accentBarClass: 'bg-emerald-500',
+                  iconBoxClass: 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                };
+              };
+
+              return (
+                <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 border border-slate-200 shadow-xs space-y-4">
+                  {/* Ledger Header + Inflow/Outflow Totals Strip */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-slate-100">
+                    <div className="space-y-1">
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                        Event Financial Transactions Ledger
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Real-time audit log of all deposits, church treasury allocations, and vendor payments.
+                      </p>
+                    </div>
+
+                    {allTxns.length > 0 && (
+                      <div className="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:gap-3 shrink-0">
+                        <div className="px-2.5 py-1.5 rounded-xl bg-emerald-50/70 border border-emerald-100 text-left sm:text-right">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Inflow</span>
+                          <span className="text-xs font-black text-emerald-800 font-mono tabular-nums whitespace-nowrap">
+                            +SLE {visibleInflowTotal.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="px-2.5 py-1.5 rounded-xl bg-rose-50/70 border border-rose-100 text-left sm:text-right">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">Outflow</span>
+                          <span className="text-xs font-black text-rose-800 font-mono tabular-nums whitespace-nowrap">
+                            -SLE {visibleOutflowTotal.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="px-2.5 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-left sm:text-right">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Records</span>
+                          <span className="text-xs font-black text-slate-800 tabular-nums whitespace-nowrap">
+                            {filteredTxns.length} / {allTxns.length}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <h4 className="font-extrabold text-slate-800 text-sm">No Transactions Yet</h4>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    No deposits or disbursements have been recorded for this event account yet. Click "+ Fund Account" above to log the first church allocation or donor gift.
-                  </p>
-                  <button
-                    onClick={() => setShowFundModal(true)}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 cursor-pointer"
-                  >
-                    + Record First Deposit
-                  </button>
+
+                  {/* Responsive Filter, Search & Sort Controls */}
+                  {allTxns.length > 0 && (
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                      {/* Type Segmented Filter */}
+                      <div
+                        className="grid grid-cols-3 sm:inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/70 gap-1"
+                        role="group"
+                        aria-label="Filter transactions by type"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setLedgerTypeFilter('all')}
+                          className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                            ledgerTypeFilter === 'all'
+                              ? 'bg-white text-slate-900 shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          <span>All</span>
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400">({allTxns.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerTypeFilter('inflow')}
+                          className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                            ledgerTypeFilter === 'inflow'
+                              ? 'bg-white text-emerald-700 shadow-xs'
+                              : 'text-slate-600 hover:text-emerald-700'
+                          }`}
+                        >
+                          <span>Inflows</span>
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400">({inflowTxns.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerTypeFilter('disbursement')}
+                          className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+                            ledgerTypeFilter === 'disbursement'
+                              ? 'bg-white text-rose-700 shadow-xs'
+                              : 'text-slate-600 hover:text-rose-700'
+                          }`}
+                        >
+                          <span>Payouts</span>
+                          <span className="text-[11px] font-mono tabular-nums text-slate-400">({outflowTxns.length})</span>
+                        </button>
+                      </div>
+
+                      {/* Search & Sort Row */}
+                      <div className="flex items-center gap-2 w-full md:w-auto">
+                        <div className="relative flex-1 md:w-64">
+                          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={ledgerSearch}
+                            onChange={e => setLedgerSearch(e.target.value)}
+                            placeholder="Search payee, ref #, or notes..."
+                            aria-label="Search event ledger transactions"
+                            className="w-full min-h-[44px] sm:min-h-[38px] pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-medium text-slate-800 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-colors"
+                          />
+                          {ledgerSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setLedgerSearch('')}
+                              aria-label="Clear transaction search"
+                              className="absolute right-1.5 top-1/2 -translate-y-1/2 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setLedgerSortOrder(prev => prev === 'newest' ? 'highest' : 'newest')}
+                          className="min-h-[44px] sm:min-h-[38px] px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 cursor-pointer shrink-0 whitespace-nowrap transition-colors"
+                          title="Toggle transaction sort order"
+                        >
+                          <ArrowUpDown size={14} className="text-slate-500 shrink-0" />
+                          <span>{ledgerSortOrder === 'newest' ? 'Newest' : 'Largest'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty State (No Transactions Recorded Yet) */}
+                  {allTxns.length === 0 ? (
+                    <div className="py-10 sm:py-12 text-center space-y-3">
+                      <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                        <Receipt size={28} />
+                      </div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">No Transactions Yet</h4>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                        No deposits or disbursements have been recorded for this event account yet. Click &ldquo;Fund Account&rdquo; above to log the first church allocation or donor gift.
+                      </p>
+                      <button
+                        onClick={() => setShowFundModal(true)}
+                        className="min-h-[44px] px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <Plus size={15} />
+                        <span>Record First Deposit</span>
+                      </button>
+                    </div>
+                  ) : filteredTxns.length === 0 ? (
+                    /* Empty Filter Match State */
+                    <div className="py-10 text-center space-y-3 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 px-4">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                        <Search size={22} />
+                      </div>
+                      <h4 className="font-extrabold text-slate-800 text-sm">No Matching Transactions</h4>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                        No ledger entries matched your current filter or search query.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLedgerTypeFilter('all');
+                          setLedgerSearch('');
+                        }}
+                        className="min-h-[44px] px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        Reset Filters
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* MOBILE VIEW (< 768px): Hairline-divided readable transaction feed (zero horizontal scroll, full notes visible) */}
+                      <div className="md:hidden border border-slate-200 rounded-2xl divide-y divide-slate-100 overflow-hidden bg-white">
+                        {filteredTxns.map((txn) => {
+                          const meta = getTypeMeta(txn.type);
+                          const dateStr = new Date(txn.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                          return (
+                            <article key={txn.id} className="p-3.5 sm:p-4 space-y-2.5 hover:bg-slate-50/70 transition-colors">
+                              {/* Tier 1: Directional Icon + Contributor/Payee + Signed Amount */}
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-2.5 min-w-0">
+                                  <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 mt-0.5 ${meta.iconBoxClass}`}>
+                                    {meta.isDisb ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="font-extrabold text-slate-900 text-sm leading-snug break-words">
+                                      {txn.contributor_or_payee}
+                                    </h4>
+                                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase tracking-wide ${meta.badgeClass}`}>
+                                        {meta.label}
+                                      </span>
+                                      <span className="text-[11px] font-medium text-slate-500 tabular-nums">
+                                        {dateStr}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className={`text-right font-mono font-black text-sm tabular-nums whitespace-nowrap shrink-0 pt-0.5 ${
+                                  meta.isDisb ? 'text-rose-600' : 'text-emerald-600'
+                                }`}>
+                                  {meta.isDisb ? '-' : '+'}SLE {txn.amount.toLocaleString()}
+                                </div>
+                              </div>
+
+                              {/* Tier 2: Notes (Full text, never truncated on touch devices) */}
+                              {txn.notes && (
+                                <p className="text-xs text-slate-600 leading-relaxed pl-[42px] break-words">
+                                  {txn.notes}
+                                </p>
+                              )}
+
+                              {/* Tier 3: Channel, Reference Code, Recorded By */}
+                              <div className="pl-[42px] pt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[11px] text-slate-500">
+                                <span className="inline-flex items-center gap-1.5 font-semibold text-slate-600">
+                                  {renderChannelIcon(txn.source_or_channel)}
+                                  <span>{formatChannelLabel(txn.source_or_channel)}</span>
+                                </span>
+
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {txn.transaction_ref && (
+                                    <span className="font-mono font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded text-[10px] tabular-nums break-all">
+                                      {txn.transaction_ref}
+                                    </span>
+                                  )}
+                                  {txn.recorded_by && (
+                                    <span className="text-[10px] text-slate-400 font-medium">
+                                      by {txn.recorded_by}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+
+                      {/* TABLET VIEW (768px - 1023px): 2-column structured ledger card grid (eliminates narrow 7-col horizontal scroll) */}
+                      <div className="hidden md:grid lg:hidden grid-cols-2 gap-3.5">
+                        {filteredTxns.map((txn) => {
+                          const meta = getTypeMeta(txn.type);
+                          const dateStr = new Date(txn.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                          return (
+                            <article
+                              key={txn.id}
+                              className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-colors flex flex-col justify-between gap-3"
+                            >
+                              <div className="space-y-2.5">
+                                <div className="flex items-start justify-between gap-2.5">
+                                  <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase tracking-wide inline-flex items-center gap-1 ${meta.badgeClass}`}>
+                                    {meta.isDisb ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+                                    <span>{meta.label}</span>
+                                  </span>
+                                  <span className="text-xs font-semibold text-slate-500 tabular-nums shrink-0">
+                                    {dateStr}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <h4 className="font-extrabold text-slate-900 text-sm leading-snug break-words min-w-0">
+                                    {txn.contributor_or_payee}
+                                  </h4>
+                                  <span className={`font-mono font-black text-base tabular-nums whitespace-nowrap shrink-0 ${
+                                    meta.isDisb ? 'text-rose-600' : 'text-emerald-600'
+                                  }`}>
+                                    {meta.isDisb ? '-' : '+'} SLE {txn.amount.toLocaleString()}
+                                  </span>
+                                </div>
+
+                                {txn.notes && (
+                                  <p className="text-xs text-slate-600 leading-relaxed break-words">
+                                    {txn.notes}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                                <span className="inline-flex items-center gap-1.5 font-semibold text-slate-600 min-w-0 truncate">
+                                  {renderChannelIcon(txn.source_or_channel)}
+                                  <span className="truncate">{formatChannelLabel(txn.source_or_channel)}</span>
+                                </span>
+
+                                <span className="font-mono font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded text-[10px] tabular-nums shrink-0">
+                                  {txn.transaction_ref || 'NO REF'}
+                                </span>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+
+                      {/* DESKTOP VIEW (>= 1024px): Full high-density audit ledger table with tabular-nums and clean multi-line notes */}
+                      <div className="hidden lg:block overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-slate-500 font-extrabold uppercase tracking-wider text-[10px]">
+                              <th className="pb-3 pr-3 whitespace-nowrap">Date</th>
+                              <th className="pb-3 px-3 whitespace-nowrap">Type</th>
+                              <th className="pb-3 px-3">Contributor / Payee</th>
+                              <th className="pb-3 px-3 whitespace-nowrap">Channel</th>
+                              <th className="pb-3 px-3 whitespace-nowrap">Reference #</th>
+                              <th className="pb-3 px-3">Notes</th>
+                              <th className="pb-3 pl-3 text-right whitespace-nowrap">Amount (SLE)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredTxns.map((txn) => {
+                              const meta = getTypeMeta(txn.type);
+                              return (
+                                <tr key={txn.id} className="hover:bg-slate-50/80 transition-colors align-top">
+                                  <td className="py-3.5 pr-3 text-slate-600 font-medium whitespace-nowrap tabular-nums">
+                                    {new Date(txn.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </td>
+                                  <td className="py-3.5 px-3 whitespace-nowrap">
+                                    <span className={`px-2 py-0.5 rounded-md border text-[10px] font-black uppercase tracking-wide inline-flex items-center gap-1 ${meta.badgeClass}`}>
+                                      {meta.isDisb ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+                                      <span>{meta.label}</span>
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-3 font-bold text-slate-900 min-w-[160px]">
+                                    <div>{txn.contributor_or_payee}</div>
+                                    {txn.recorded_by && (
+                                      <div className="text-[10px] font-medium text-slate-400 mt-0.5">
+                                        Logged by {txn.recorded_by}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-3 text-slate-600 font-medium whitespace-nowrap">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      {renderChannelIcon(txn.source_or_channel)}
+                                      <span>{formatChannelLabel(txn.source_or_channel)}</span>
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-3 font-mono text-[11px] text-slate-600 font-bold whitespace-nowrap tabular-nums">
+                                    {txn.transaction_ref || 'N/A'}
+                                  </td>
+                                  <td className="py-3.5 px-3 text-slate-600 max-w-xs leading-relaxed break-words">
+                                    {txn.notes || '—'}
+                                  </td>
+                                  <td className={`py-3.5 pl-3 text-right font-mono font-black text-sm whitespace-nowrap tabular-nums ${
+                                    meta.isDisb ? 'text-rose-600' : 'text-emerald-600'
+                                  }`}>
+                                    {meta.isDisb ? '-' : '+'} SLE {txn.amount.toLocaleString()}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 font-extrabold uppercase text-[10px]">
-                        <th className="pb-3">Date</th>
-                        <th className="pb-3">Type</th>
-                        <th className="pb-3">Contributor / Payee</th>
-                        <th className="pb-3">Channel</th>
-                        <th className="pb-3">Reference #</th>
-                        <th className="pb-3">Notes</th>
-                        <th className="pb-3 text-right">Amount (SLE)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {eventAccount.transactions.map((txn) => {
-                        const isDisb = txn.type === 'disbursement';
-                        return (
-                          <tr key={txn.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-3 text-slate-600 font-medium whitespace-nowrap">
-                              {new Date(txn.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                            </td>
-                            <td className="py-3">
-                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                isDisb ? 'bg-rose-100 text-rose-800' :
-                                txn.type === 'treasury_allocation' ? 'bg-indigo-100 text-indigo-800' :
-                                'bg-emerald-100 text-emerald-800'
-                              }`}>
-                                {isDisb ? 'Disbursement' : txn.type === 'treasury_allocation' ? 'Treasury Grant' : 'Deposit'}
-                              </span>
-                            </td>
-                            <td className="py-3 font-bold text-slate-900">
-                              {txn.contributor_or_payee}
-                            </td>
-                            <td className="py-3 capitalize text-slate-600 font-medium">
-                              {txn.source_or_channel.replace('_', ' ')}
-                            </td>
-                            <td className="py-3 font-mono text-[11px] text-slate-500 font-bold">
-                              {txn.transaction_ref || 'N/A'}
-                            </td>
-                            <td className="py-3 text-slate-500 max-w-xs truncate" title={txn.notes}>
-                              {txn.notes || '—'}
-                            </td>
-                            <td className={`py-3 text-right font-black text-sm whitespace-nowrap ${isDisb ? 'text-rose-600' : 'text-emerald-600'}`}>
-                              {isDisb ? '-' : '+'} SLE {txn.amount.toLocaleString()}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* FUND / DEPOSIT MODAL */}
             {showFundModal && (
-              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
-                <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 my-auto animate-in zoom-in-95">
-                  <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[130] flex items-end sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+                <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 my-auto animate-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+                  <div className="flex justify-between items-start pb-3 border-b border-slate-100 gap-3">
                     <div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                      <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
                         Event Inflow Deposit
                       </span>
-                      <h3 className="text-xl font-black text-slate-900 mt-1">Fund Event Treasury</h3>
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">Fund Event Treasury</h3>
                     </div>
-                    <button onClick={() => setShowFundModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => setShowFundModal(false)}
+                      aria-label="Close deposit modal"
+                      className="text-slate-400 hover:text-slate-600 cursor-pointer min-w-[44px] min-h-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-xl hover:bg-slate-100"
+                    >
                       <X size={20} />
                     </button>
                   </div>
 
                   <form onSubmit={handleFundEventAccount} className="space-y-4 text-xs">
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Funding Amount (SLE) *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Funding Amount (SLE) *</label>
                       <input
                         type="number"
                         min="1"
@@ -2610,16 +2981,16 @@ Currency: SLE`;
                         value={fundAmount}
                         onChange={e => setFundAmount(e.target.value)}
                         placeholder="e.g. 5000"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 font-mono outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 font-mono tabular-nums outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Funding Source / Channel *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Funding Source / Channel *</label>
                       <select
                         value={fundSource}
                         onChange={e => setFundSource(e.target.value as any)}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold cursor-pointer"
                       >
                         <option value="church_treasury">Church Central Treasury Allocation</option>
                         <option value="bank_wire">Direct Bank Wire / Transfer</option>
@@ -2630,52 +3001,52 @@ Currency: SLE`;
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Contributor / Benefactor / Source *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Contributor / Benefactor / Source *</label>
                       <input
                         type="text"
                         required
                         value={fundContributor}
                         onChange={e => setFundContributor(e.target.value)}
                         placeholder="e.g. Grace Cathedral Treasury Board / Deacon Sesay"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Transaction Ref / Slip Code</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Transaction Ref / Slip Code</label>
                       <input
                         type="text"
                         value={fundTxnRef}
                         onChange={e => setFundTxnRef(e.target.value)}
                         placeholder="e.g. TREAS-ALLOC-2026-09 or WIRE-8812"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Purpose / Notes</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Purpose / Notes</label>
                       <textarea
                         rows={2}
                         value={fundNotes}
                         onChange={e => setFundNotes(e.target.value)}
                         placeholder="e.g. Advance allocation for guest speaker honorarium and media gear"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs"
                       />
                     </div>
 
-                    <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={() => setShowFundModal(false)}
-                        className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
+                        className="min-h-[44px] px-4 py-2.5 text-slate-600 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
-                        className="px-5 py-2.5 bg-emerald-600 text-white rounded-xl font-black hover:bg-emerald-700 shadow-md shadow-emerald-100 cursor-pointer"
+                        className="min-h-[44px] px-5 py-2.5 bg-emerald-600 text-white rounded-xl font-black hover:bg-emerald-700 shadow-md shadow-emerald-100 cursor-pointer whitespace-nowrap"
                       >
-                        Confirm & Deposit Funds
+                        Confirm &amp; Deposit Funds
                       </button>
                     </div>
                   </form>
@@ -2685,30 +3056,35 @@ Currency: SLE`;
 
             {/* RECORD DISBURSEMENT / PAYOUT MODAL */}
             {showDisburseModal && (
-              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4 overflow-y-auto">
-                <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 my-auto animate-in zoom-in-95">
-                  <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[130] flex items-end sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+                <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 my-auto animate-in zoom-in-95 max-h-[92vh] overflow-y-auto">
+                  <div className="flex justify-between items-start pb-3 border-b border-slate-100 gap-3">
                     <div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800">
+                      <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800">
                         Event Outflow Disbursement
                       </span>
-                      <h3 className="text-xl font-black text-slate-900 mt-1">Record Vendor Payout</h3>
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">Record Vendor Payout</h3>
                     </div>
-                    <button onClick={() => setShowDisburseModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => setShowDisburseModal(false)}
+                      aria-label="Close disbursement modal"
+                      className="text-slate-400 hover:text-slate-600 cursor-pointer min-w-[44px] min-h-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-xl hover:bg-slate-100"
+                    >
                       <X size={20} />
                     </button>
                   </div>
 
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs flex justify-between">
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs flex justify-between items-center gap-2">
                     <span className="text-slate-500">Current Available Balance:</span>
-                    <strong className="text-emerald-700 font-mono font-black">
+                    <strong className="text-emerald-700 font-mono font-black tabular-nums whitespace-nowrap">
                       SLE {eventAccount.current_balance.toLocaleString()}
                     </strong>
                   </div>
 
                   <form onSubmit={handleDisburseEventAccount} className="space-y-4 text-xs">
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Disbursement Amount (SLE) *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Disbursement Amount (SLE) *</label>
                       <input
                         type="number"
                         min="1"
@@ -2717,28 +3093,28 @@ Currency: SLE`;
                         value={disburseAmount}
                         onChange={e => setDisburseAmount(e.target.value)}
                         placeholder="e.g. 1500"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-rose-700 font-mono outline-none focus:ring-2 focus:ring-rose-500"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-rose-700 font-mono tabular-nums outline-none focus:ring-2 focus:ring-rose-500"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Payee Vendor / Recipient *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Payee Vendor / Recipient *</label>
                       <input
                         type="text"
                         required
                         value={disbursePayee}
                         onChange={e => setDisbursePayee(e.target.value)}
                         placeholder="e.g. SoundTech Solutions SL / Freetown Banners"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Payment Method / Channel *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Payment Method / Channel *</label>
                       <select
                         value={disburseChannel}
                         onChange={e => setDisburseChannel(e.target.value as any)}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold cursor-pointer"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold cursor-pointer"
                       >
                         <option value="bank_wire">Direct Vendor Bank Wire</option>
                         <option value="mobile_money">Mobile Money Transfer</option>
@@ -2749,39 +3125,39 @@ Currency: SLE`;
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Invoice / Receipt / Check Ref #</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Invoice / Receipt / Check Ref #</label>
                       <input
                         type="text"
                         value={disburseTxnRef}
                         onChange={e => setDisburseTxnRef(e.target.value)}
                         placeholder="e.g. INV-2026-004 or CHK-9912"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono"
+                        className="w-full min-h-[44px] p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono"
                       />
                     </div>
 
                     <div>
-                      <label className="font-extrabold text-slate-700 block mb-1">Item / Service Description *</label>
+                      <label className="font-extrabold text-slate-700 block mb-1.5">Item / Service Description *</label>
                       <textarea
                         rows={2}
                         required
                         value={disburseNotes}
                         onChange={e => setDisburseNotes(e.target.value)}
                         placeholder="e.g. Payment for 2x Shure wireless microphones and sound engineer support"
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs"
                       />
                     </div>
 
-                    <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={() => setShowDisburseModal(false)}
-                        className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
+                        className="min-h-[44px] px-4 py-2.5 text-slate-600 font-bold hover:bg-slate-100 rounded-xl cursor-pointer"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
-                        className="px-5 py-2.5 bg-rose-600 text-white rounded-xl font-black hover:bg-rose-700 shadow-md shadow-rose-100 cursor-pointer"
+                        className="min-h-[44px] px-5 py-2.5 bg-rose-600 text-white rounded-xl font-black hover:bg-rose-700 shadow-md shadow-rose-100 cursor-pointer whitespace-nowrap"
                       >
                         Record Disbursement
                       </button>
