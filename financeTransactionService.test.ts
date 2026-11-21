@@ -29,7 +29,7 @@ describe('finance transaction RPC service', () => {
       async rpc(name: string, args: Record<string, unknown>) {
         calledName = name;
         calledArgs = args;
-        return { data: { document_id: 'doc-1', journal_entry_id: 'journal-1', approval_request_id: 'approval-1', status: 'pending' }, error: null };
+        return { data: { document_id: 'doc-1', document_number: 42, journal_entry_id: 'journal-1', approval_request_id: 'approval-1', status: 'pending' }, error: null };
       }
     };
 
@@ -55,6 +55,7 @@ describe('finance transaction RPC service', () => {
     });
     expect(result.error).toBeNull();
     expect(result.data?.document_id).toBe('doc-1');
+    expect(result.data?.document_number).toBe(42);
   });
 
   test('maps optional member, fund and foreign-currency values for a payment', async () => {
@@ -170,6 +171,7 @@ describe('finance transaction service end-to-end adapter integration', () => {
 
     expect(created.error).toBeNull();
     expect(created.data?.status).toBe('pending_approval');
+    expect(created.data?.document_number).toBe(1);
     expect(current.documents).toHaveLength(1);
     expect(current.journals).toHaveLength(1);
     expect(current.journalLines).toHaveLength(2);
