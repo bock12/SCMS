@@ -163,6 +163,7 @@ export function createMockFinanceRpc(
         journal.source_id === priorDocument.id && ['financial_document', 'financial_document_pending'].includes(journal.source_type));
       return success({
         document_id: priorDocument.id,
+        document_number: priorDocument.document_number ?? null,
         journal_entry_id: priorJournal?.id ?? priorDocument.journal_entry_id ?? null,
         approval_request_id: priorDocument.approval_request_id ?? null,
         status: priorDocument.status
@@ -223,8 +224,9 @@ export function createMockFinanceRpc(
     const journalId = id(state, 'journal');
     const requestId = policySteps.length ? id(state, 'approval') : null;
     const docStatus = policySteps.length ? 'pending_approval' : 'approved';
+    const documentNumber = state.documents.reduce((max, item) => Math.max(max, Number(item.document_number) || 0), 0) + 1;
     const document = {
-      id: documentId, idempotency_key: idempotencyKey, idempotency_fingerprint: requestFingerprint,
+      id: documentId, document_number: documentNumber, idempotency_key: idempotencyKey, idempotency_fingerprint: requestFingerprint,
       document_type: type, transaction_date: date, branch_id: branchId,
       profile_id: args.p_profile_id ?? null, payee_or_payer_name: party, amount, currency_code: currency,
       payment_method: method, financial_account_id: financialAccount.id, fund_id: args.p_fund_id ?? null,
@@ -271,7 +273,7 @@ export function createMockFinanceRpc(
     state.journals.push(journal);
     state.journalLines.push(...lines);
     if (persist) storage.save(state);
-    return success({ document_id: documentId, journal_entry_id: journalId,
+    return success({ document_id: documentId, document_number: documentNumber, journal_entry_id: journalId,
       approval_request_id: requestId, status: docStatus });
   }
 
