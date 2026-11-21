@@ -1629,85 +1629,13 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* --- WORKSPACE TAB 3: MOBILE MONEY & PAYMENT SETUP --- */}
       {workspaceTab === 'gateways' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
-                  <Smartphone className="text-amber-600" size={22} />
-                  Custom Mobile Money Gateways
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Configure USSD instructions, merchant codes, and account numbers for Afrimoney, Orange Money, QMoney, etc.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleOpenAddGateway}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 cursor-pointer transition-all self-start sm:self-auto"
-              >
-                <Plus size={16} /> Add Custom Mobile Money Provider
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {givingConfig.mobile_gateways.map((g, idx) => (
-                <div key={g.id || idx} className={`p-5 rounded-2xl border transition-all ${
-                  g.is_active ? 'bg-amber-50/30 border-amber-200' : 'bg-slate-50 border-slate-200 opacity-60'
-                }`}>
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500 text-white font-black flex items-center justify-center text-sm shadow-xs">
-                        {g.provider.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <h4 className="font-black text-slate-900 text-base">{g.provider}</h4>
-                        <span className="text-xs font-bold text-slate-500">{g.merchant_name}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleToggleGateway(g.id || g.provider)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
-                          g.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        {g.is_active ? 'Active' : 'Disabled'}
-                      </button>
-                      <button
-                        onClick={() => handleOpenEditGateway(g)}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteGateway(g.id || g.provider)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 text-xs text-slate-700 bg-white p-3 rounded-xl border border-slate-100">
-                    <p className="flex justify-between">
-                      <span className="text-slate-400 font-medium">Merchant Code / Number:</span>
-                      <strong className="font-mono text-slate-900">{g.merchant_number}</strong>
-                    </p>
-                    <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-100">
-                      <strong>USSD Instructions:</strong> {g.dial_code_instructions}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <section className="mx-auto max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950">
+          <h3 className="text-lg font-black">Payment-channel integration is not connected yet</h3>
+          <p className="mt-2 text-sm leading-6">External mobile-money providers and bank-transfer instructions are not yet backed by a verified provider integration and persisted settings API. Sample merchant codes, phone numbers and bank account details are intentionally not displayed or treated as real church payment destinations.</p>
+          <p className="mt-3 text-sm leading-6">Use Accounting Setup to manage the church's actual financial accounts, funds, currencies and approval policies. Provider configuration will be enabled after its secure database and provider integration is implemented.</p>
+        </section>
       )}
 
-      {/* Canonical event-budget records and payments are read from PostgreSQL. */}
       {workspaceTab === 'event_budgets' && (
         <EventBudgetFinanceWorkspace branchId={financeBranchId} profileId={databaseProfileId || null} />
       )}
