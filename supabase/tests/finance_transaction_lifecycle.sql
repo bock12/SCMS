@@ -31,6 +31,7 @@ DECLARE
   v_step1_id uuid;
   v_step2_id uuid;
   v_receipt jsonb;
+  v_receipt_retry jsonb;
   v_payment jsonb;
   v_document_id uuid;
   v_journal_id uuid;
@@ -108,7 +109,8 @@ BEGIN
     PERFORM public.create_financial_document_transaction(
       'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 100,
       'SLE', 'cash', v_financial_account_id, v_income_chart_id,
-      NULL, 'FIN-INT-NO-POLICY', 'Missing policy rollback test', 1
+      NULL, 'FIN-INT-NO-POLICY', 'Missing policy rollback test', 1,
+      '97000000-0000-4000-8000-000000000001'
     );
     RAISE EXCEPTION 'FIN_INT_EXPECTED_POLICY_FAILURE';
   EXCEPTION WHEN OTHERS THEN
@@ -139,8 +141,21 @@ BEGIN
   v_receipt := public.create_financial_document_transaction(
     'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 125,
     'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
-    NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1
+    NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
+    '97000000-0000-4000-8000-000000000002'
   );
+
+  v_receipt_retry := public.create_financial_document_transaction(
+    'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 125,
+    'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
+    NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
+    '97000000-0000-4000-8000-000000000002'
+  );
+  IF v_receipt_retry->>'document_id' IS DISTINCT FROM v_receipt->>'document_id'
+     OR v_receipt_retry->>'journal_entry_id' IS DISTINCT FROM v_receipt->>'journal_entry_id'
+     OR v_receipt_retry->>'idempotent_replay' <> 'true' THEN
+    RAISE EXCEPTION 'An identical receipt retry created a new document or journal';
+  END IF;
 
   v_document_id := (v_receipt->>'document_id')::uuid;
   v_journal_id := (v_receipt->>'journal_entry_id')::uuid;
@@ -224,7 +239,8 @@ BEGIN
   v_payment := public.create_financial_document_transaction(
     'payment', '2026-11-17', v_branch_id, NULL, 'Test Supplier', 75,
     'SLE', 'bank_transfer', v_financial_account_id, v_expense_chart_id,
-    NULL, 'FIN-INT-PAYMENT', 'Payment lifecycle test', 1
+    NULL, 'FIN-INT-PAYMENT', 'Payment lifecycle test', 1,
+    '97000000-0000-4000-8000-000000000003'
   );
 
   v_document_id := (v_payment->>'document_id')::uuid;
@@ -265,7 +281,8 @@ BEGIN
       'receipt', '2026-11-17', '10000000-0000-4000-8000-000000000002',
       NULL, 'Out-of-branch Donor', 10, 'SLE', 'cash',
       v_financial_account_id, v_income_chart_id, NULL,
-      'FIN-INT-BRANCH-DENIED', 'Branch authorization test', 1
+      'FIN-INT-BRANCH-DENIED', 'Branch authorization test', 1,
+      '97000000-0000-4000-8000-000000000004'
     );
     RAISE EXCEPTION 'FIN_INT_EXPECTED_BRANCH_DENIAL';
   EXCEPTION WHEN OTHERS THEN
@@ -294,7 +311,8 @@ BEGIN
     PERFORM public.create_financial_document_transaction(
       'receipt', '2026-11-17', v_branch_id, NULL, 'Unbanded Donor', 50,
       'SLE', 'cash', v_financial_account_id, v_income_chart_id,
-      NULL, 'FIN-INT-NO-BAND', 'Missing amount band rollback test', 1
+      NULL, 'FIN-INT-NO-BAND', 'Missing amount band rollback test', 1,
+      '97000000-0000-4000-8000-000000000005'
     );
     RAISE EXCEPTION 'FIN_INT_EXPECTED_BAND_FAILURE';
   EXCEPTION WHEN OTHERS THEN
@@ -350,7 +368,8 @@ BEGIN
   v_result := public.create_financial_document_transaction(
     'receipt', '2026-11-17', v_branch_id, NULL, 'Two-Step Donor', 200,
     'SLE', 'cash', v_financial_account_id, v_income_chart_id,
-    NULL, 'FIN-INT-TWO-STEP', 'Two-step approval lifecycle test', 1
+    NULL, 'FIN-INT-TWO-STEP', 'Two-step approval lifecycle test', 1,
+    '97000000-0000-4000-8000-000000000006'
   );
 
   v_document_id := (v_result->>'document_id')::uuid;
@@ -417,7 +436,8 @@ BEGIN
   v_result := public.create_financial_document_transaction(
     'payment', '2026-11-17', v_branch_id, NULL, 'Rejected Supplier', 60,
     'SLE', 'cash', v_financial_account_id, v_expense_chart_id,
-    NULL, 'FIN-INT-REJECTED', 'Rejection lifecycle test', 1
+    NULL, 'FIN-INT-REJECTED', 'Rejection lifecycle test', 1,
+    '97000000-0000-4000-8000-000000000007'
   );
 
   v_document_id := (v_result->>'document_id')::uuid;
