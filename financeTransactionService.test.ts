@@ -35,7 +35,7 @@ describe('finance transaction RPC service', () => {
 
     const result = await createFinancialDocumentTransaction(baseInput, client as any);
 
-    expect(calledName).toBe('create_financial_document_transaction');
+    expect(calledName).toBe('create_financial_document_transaction_idempotent');
     expect(calledArgs).toEqual({
       p_document_type: 'receipt',
       p_transaction_date: '2026-11-17',
