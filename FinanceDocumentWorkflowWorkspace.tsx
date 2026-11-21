@@ -140,7 +140,7 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
       {selectedDocument && (() => {
         const selectedIsReceipt = selectedDocument.document_type === 'receipt';
         const selectedReference = `${selectedIsReceipt ? 'REC' : 'PAY'}-${String(selectedDocument.document_number).padStart(6, '0')}`;
-        return <div className="finance-detail-overlay" role="dialog" aria-modal="true" aria-labelledby="finance-document-detail-title">
+        return <div className="finance-detail-overlay" role="dialog" aria-modal="true" aria-label="Financial document detail">
           <div className="finance-detail-panel">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3 print:hidden">
               <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Financial document detail</p><h3 id="finance-document-detail-title" className="text-lg font-black text-slate-900">{selectedReference}</h3></div>
