@@ -991,7 +991,7 @@ jobs:
           BEGIN
             IF NOT has_function_privilege(
               'authenticated',
-              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
+              'public.create_financial_document_transaction_idempotent(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
               'EXECUTE'
             ) THEN
               RAISE EXCEPTION 'Authenticated role is missing the keyed finance transaction RPC grant.';
@@ -999,11 +999,11 @@ jobs:
 
             IF has_function_privilege(
               'anon',
-              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
+              'public.create_financial_document_transaction_idempotent(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
               'EXECUTE'
             ) OR has_function_privilege(
               'service_role',
-              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
+              'public.create_financial_document_transaction_idempotent(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
               'EXECUTE'
             ) OR has_function_privilege(
               'authenticated',
