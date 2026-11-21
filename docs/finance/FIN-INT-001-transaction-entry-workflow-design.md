@@ -310,3 +310,26 @@ The deterministic mock RPC now enforces the same configuration scope boundaries 
 Regression tests cover attempts by a branch Finance Manager to modify church-wide chart configuration, add a church-wide approval policy, or create a financial account in another branch. These operations must fail without changing persisted mock state.
 
 These changes improve development-time authorization parity; the PostgreSQL RPC remains the production authorization boundary. No live Supabase migration or deployment was performed for this work.
+
+## Browser acceptance checkpoint — 2026-11-21
+
+The dedicated Playwright finance browser workflow now passes against the development mock on the current `main` branch.
+
+The browser smoke test exercises the real Finance Officer transaction-entry workspace and verifies:
+- Receipt and payment creation through the transaction service and canonical mock RPC adapter.
+- Balanced two-line draft journals and pending approval state.
+- Multi-step approval by two distinct eligible profiles.
+- Final approval attaching the exact pending journal.
+- Rejection retaining an unlinked pending-marker journal.
+- Separate journal posting, posted-only ledger balances and reporting.
+- Canonical receipt detail and print action.
+
+Validation on current main commit `7c3ba289e70063cdd5329f0e3a175ef7d948af16`:
+- [SCMS Build Validation #44900769982](https://github.com/bock12/SCMS/actions/runs/44900769982): passed; automated tests and Vite production build succeeded.
+- [SCMS Finance Browser Validation #44900769934](https://github.com/bock12/SCMS/actions/runs/44900769934): passed; the Finance mock browser smoke job and all steps completed successfully.
+
+This closes the development-mock browser acceptance gap for the receipt/payment transaction workflow. PostgreSQL lifecycle and security validation remain supported by the earlier successful PostgreSQL 17 workflow runs. These checks do not constitute a live Supabase deployment, production-authentication test, or production acceptance sign-off. Live Supabase remains untouched.
+
+### Follow-up work
+
+The next coherent finance integration slice is to establish canonical source-document relationships for department requisition and event-budget spending, then record approved/disbursed expenditure through financial documents and posted journals. Until that relationship exists, legacy department/event spending analytics must remain excluded from official accounting reports.
