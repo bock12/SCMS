@@ -24,6 +24,7 @@ export interface CreateFinancialDocumentTransactionInput {
   externalReference?: string | null;
   description: string;
   exchangeRateToBase?: number;
+  idempotencyKey: string;
 }
 
 export interface FinancialDocumentTransactionResult {
@@ -74,7 +75,8 @@ export async function createFinancialDocumentTransaction(
     p_fund_id: input.fundId ?? null,
     p_external_reference: input.externalReference?.trim() || null,
     p_description: input.description.trim(),
-    p_exchange_rate_to_base: input.exchangeRateToBase ?? 1
+    p_exchange_rate_to_base: input.exchangeRateToBase ?? 1,
+    p_idempotency_key: input.idempotencyKey
   });
 }
 
