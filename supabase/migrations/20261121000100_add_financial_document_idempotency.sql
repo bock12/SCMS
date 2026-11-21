@@ -38,6 +38,7 @@ declare
   v_existing public.financial_documents%rowtype;
   v_journal_id uuid;
   v_approval_request_id uuid;
+  v_document_number bigint;
   v_result jsonb;
 begin
   if (select auth.uid()) is null then
@@ -84,6 +85,7 @@ begin
       raise exception 'This idempotency key was already used with different transaction details';
     end if;
 
+    v_document_number := v_existing.document_number;
     v_journal_id := v_existing.journal_entry_id;
     if v_journal_id is null then
       select id into v_journal_id
@@ -101,6 +103,7 @@ begin
 
     return jsonb_build_object(
       'document_id', v_existing.id,
+      'document_number', v_document_number,
       'journal_entry_id', v_journal_id,
       'approval_request_id', v_approval_request_id,
       'status', v_existing.status,
@@ -127,6 +130,10 @@ begin
     p_exchange_rate_to_base
   );
 
+  select document_number into v_document_number
+  from public.financial_documents
+  where id = (v_result->>'document_id')::uuid;
+
   update public.financial_documents
   set idempotency_key = p_idempotency_key,
       idempotency_fingerprint = v_fingerprint
@@ -137,7 +144,10 @@ begin
     raise exception 'Created financial document could not be associated with its idempotency key';
   end if;
 
-  return v_result || jsonb_build_object('idempotent_replay', false);
+  return v_result || jsonb_build_object(
+    'document_number', v_document_number,
+    'idempotent_replay', false
+  );
 end;
 $$;
 
