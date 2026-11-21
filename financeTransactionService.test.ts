@@ -274,7 +274,7 @@ describe('financial transaction idempotency', () => {
       save: next => { current = structuredClone(next); }
     }, () => ({ userId: 'user-creator' }));
 
-    const first = await createFinancialDocumentTransaction(baseInput, client);
+    const first = await createFinancialDocumentTransaction({ ...baseInput, categoryAccountId: 'income-chart' }, client);
     const conflictingRetry = await createFinancialDocumentTransaction({
       ...baseInput,
       categoryAccountId: 'income-chart',
