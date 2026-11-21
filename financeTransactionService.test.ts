@@ -246,6 +246,49 @@ function createTransactionSecurityFixture(): MockFinanceState {
   };
 }
 
+describe('financial transaction idempotency', () => {
+  test('returns the original document for an identical retry without creating duplicates', async () => {
+    let current = createTransactionSecurityFixture();
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: 'user-creator' }));
+
+    const first = await createFinancialDocumentTransaction(baseInput, client);
+    const retry = await createFinancialDocumentTransaction(baseInput, client);
+
+    expect(first.error).toBeNull();
+    expect(retry.error).toBeNull();
+    expect(retry.data).toEqual(first.data);
+    expect(current.documents).toHaveLength(1);
+    expect(current.journals).toHaveLength(1);
+    expect(current.journalLines).toHaveLength(2);
+    expect(current.approvalRequests).toHaveLength(1);
+    expect(current.approvalSteps).toHaveLength(1);
+  });
+
+  test('rejects reuse of an idempotency key with changed transaction details', async () => {
+    let current = createTransactionSecurityFixture();
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: 'user-creator' }));
+
+    const first = await createFinancialDocumentTransaction(baseInput, client);
+    const conflictingRetry = await createFinancialDocumentTransaction({
+      ...baseInput,
+      amount: 999
+    }, client);
+
+    expect(first.error).toBeNull();
+    expect(conflictingRetry.data).toBeNull();
+    expect(conflictingRetry.error?.message).toContain('different transaction details');
+    expect(current.documents).toHaveLength(1);
+    expect(current.journals).toHaveLength(1);
+    expect(current.journalLines).toHaveLength(2);
+  });
+});
+
 describe('financial transaction creation security and fail-closed validation', () => {
   const cases: Array<{ name: string; mutate?: (state: MockFinanceState) => void; auth?: string | null; branchId?: string }> = [
     { name: 'rejects unauthenticated callers', auth: null },
