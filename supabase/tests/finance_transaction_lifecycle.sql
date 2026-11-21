@@ -106,7 +106,7 @@ BEGIN
 
   -- Missing policy must fail and leave no partial financial document.
   BEGIN
-    PERFORM public.create_financial_document_transaction(
+    PERFORM public.create_financial_document_transaction_idempotent(
       'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 100,
       'SLE', 'cash', v_financial_account_id, v_income_chart_id,
       NULL, 'FIN-INT-NO-POLICY', 'Missing policy rollback test', 1,
@@ -138,14 +138,14 @@ BEGIN
   INSERT INTO public.approval_policy_bands (id, policy_id, min_amount_base, max_amount_base)
   VALUES (v_band_id, v_policy_id, 0, NULL);
 
-  v_receipt := public.create_financial_document_transaction(
+  v_receipt := public.create_financial_document_transaction_idempotent(
     'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 125,
     'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
     NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
     '97000000-0000-4000-8000-000000000002'
   );
 
-  v_receipt_retry := public.create_financial_document_transaction(
+  v_receipt_retry := public.create_financial_document_transaction_idempotent(
     'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 125,
     'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
     NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
@@ -158,7 +158,7 @@ BEGIN
   END IF;
 
   BEGIN
-    PERFORM public.create_financial_document_transaction(
+    PERFORM public.create_financial_document_transaction_idempotent(
       'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 126,
       'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
       NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
@@ -249,7 +249,7 @@ BEGIN
     RAISE EXCEPTION 'Journal listing or posted-only account balance projection is incorrect';
   END IF;
 
-  v_payment := public.create_financial_document_transaction(
+  v_payment := public.create_financial_document_transaction_idempotent(
     'payment', '2026-11-17', v_branch_id, NULL, 'Test Supplier', 75,
     'SLE', 'bank_transfer', v_financial_account_id, v_expense_chart_id,
     NULL, 'FIN-INT-PAYMENT', 'Payment lifecycle test', 1,
@@ -290,7 +290,7 @@ BEGIN
   -- A branch-scoped finance permission must not authorize transactions in
   -- another branch. The permission check runs before account compatibility.
   BEGIN
-    PERFORM public.create_financial_document_transaction(
+    PERFORM public.create_financial_document_transaction_idempotent(
       'receipt', '2026-11-17', '10000000-0000-4000-8000-000000000002',
       NULL, 'Out-of-branch Donor', 10, 'SLE', 'cash',
       v_financial_account_id, v_income_chart_id, NULL,
@@ -321,7 +321,7 @@ BEGIN
   );
 
   BEGIN
-    PERFORM public.create_financial_document_transaction(
+    PERFORM public.create_financial_document_transaction_idempotent(
       'receipt', '2026-11-17', v_branch_id, NULL, 'Unbanded Donor', 50,
       'SLE', 'cash', v_financial_account_id, v_income_chart_id,
       NULL, 'FIN-INT-NO-BAND', 'Missing amount band rollback test', 1,
@@ -378,7 +378,7 @@ BEGIN
     (v_band3_id, 1, 'approve_finances', 1, true),
     (v_band3_id, 2, 'approve_finances', 1, true);
 
-  v_result := public.create_financial_document_transaction(
+  v_result := public.create_financial_document_transaction_idempotent(
     'receipt', '2026-11-17', v_branch_id, NULL, 'Two-Step Donor', 200,
     'SLE', 'cash', v_financial_account_id, v_income_chart_id,
     NULL, 'FIN-INT-TWO-STEP', 'Two-step approval lifecycle test', 1,
@@ -446,7 +446,7 @@ BEGIN
   ) VALUES (v_band4_id, 1, 'approve_finances', 1, true);
 
   PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
-  v_result := public.create_financial_document_transaction(
+  v_result := public.create_financial_document_transaction_idempotent(
     'payment', '2026-11-17', v_branch_id, NULL, 'Rejected Supplier', 60,
     'SLE', 'cash', v_financial_account_id, v_expense_chart_id,
     NULL, 'FIN-INT-REJECTED', 'Rejection lifecycle test', 1,
