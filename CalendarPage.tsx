@@ -41,13 +41,14 @@ import {
   syncPastRecurringEventsAutomatically
 } from './eventAccountService';
 import {
-  DEFAULT_GEOFENCE_RADIUS_METERS,
   formatDistanceLabel,
   getChurchProfile,
+  getConfiguredGeofenceRadius,
   GpsAccessError,
   verifyGeofencePresence,
   type GeofenceVerificationResult
 } from './churchProfileService';
+import { GeofenceD3Map } from './GeofenceD3Map';
 import { LocationMap } from './LocationMap';
 import type { ChurchEvent, EventOccurrence, EventRegistration, Profile } from './types';
 
@@ -151,6 +152,13 @@ function toLocalDateKey(input: Date | string): string {
   return formatLocalDateKey(dt);
 }
 
+function isSessionOnEventDay(startIso: string, endIso: string, todayDateKey: string): boolean {
+  const startKey = toLocalDateKey(startIso);
+  if (!startKey) return false;
+  const endKey = toLocalDateKey(endIso) || startKey;
+  return startKey <= todayDateKey && todayDateKey <= endKey;
+}
+
 function getStartOfWeek(date: Date): Date {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   d.setDate(d.getDate() - d.getDay());
@@ -241,7 +249,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedAudience, setSelectedAudience] = useState<string>('All');
   const [onlyMyRsvps, setOnlyMyRsvps] = useState<boolean>(false);
+  const [showPastEvents, setShowPastEvents] = useState<boolean>(false);
   const [search, setSearch] = useState('');
+  const [configuredRadiusMeters, setConfiguredRadiusMeters] = useState<number>(() =>
+    getConfiguredGeofenceRadius()
+  );
 
   const [toastMessage, setToastMessage] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
@@ -278,6 +290,16 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     const timer = setTimeout(() => setToastMessage(null), 4000);
     return () => clearTimeout(timer);
   }, [toastMessage]);
+
+  useEffect(() => {
+    const syncRadius = () => setConfiguredRadiusMeters(getConfiguredGeofenceRadius());
+    window.addEventListener('church-profile-updated', syncRadius);
+    window.addEventListener('storage', syncRadius);
+    return () => {
+      window.removeEventListener('church-profile-updated', syncRadius);
+      window.removeEventListener('storage', syncRadius);
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedEventDetail) {
@@ -525,12 +547,15 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     target: { lat: number; lng: number; source: 'event' | 'church_profile'; label: string },
     occurrence?: EventOccurrence
   ) => {
+    const activeRadius = getConfiguredGeofenceRadius();
+    setConfiguredRadiusMeters(activeRadius);
+
     setCheckInModal({
       event: evt,
       occurrence,
       locationName,
       target,
-      radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+      radiusMeters: activeRadius,
       phase: 'verifying'
     });
 
@@ -539,7 +564,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         target.lat,
         target.lng,
         target.source,
-        DEFAULT_GEOFENCE_RADIUS_METERS
+        activeRadius
       );
 
       if (!geoRes.allowed) {
@@ -548,7 +573,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
           occurrence,
           locationName,
           target,
-          radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+          radiusMeters: geoRes.radiusMeters,
           phase: 'outside',
           result: geoRes
         });
@@ -598,7 +623,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         occurrence,
         locationName,
         target,
-        radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+        radiusMeters: geoRes.radiusMeters,
         phase: 'verified',
         result: geoRes,
         checkedInAt: nowIso
@@ -611,7 +636,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         occurrence,
         locationName,
         target,
-        radiusMeters: DEFAULT_GEOFENCE_RADIUS_METERS,
+        radiusMeters: activeRadius,
         phase: 'error',
         errorCode: code,
         errorMessage:
@@ -621,6 +646,19 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
     }
   };
 
+  const canCheckInSessionToday = useCallback(
+    (evt: ChurchEvent, occurrence?: EventOccurrence): boolean => {
+      const effStart = occurrence?.start_time || evt.start_time;
+      const effEnd = occurrence?.end_time || evt.end_time;
+      const effStatus = occurrence?.status || evt.status;
+      if (effStatus === 'cancelled') return false;
+      const temporal = getEventTemporalStatus(effStart, effEnd, nowMs, effStatus);
+      if (temporal === 'past') return false;
+      return isSessionOnEventDay(effStart, effEnd, todayKey);
+    },
+    [nowMs, todayKey]
+  );
+
   const startGeofenceCheckIn = (evt: ChurchEvent, occurrence?: EventOccurrence) => {
     const effStart = occurrence?.start_time || evt.start_time;
     const effEnd = occurrence?.end_time || evt.end_time;
@@ -629,6 +667,11 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
 
     if (temporal === 'past' || effStatus === 'cancelled') {
       showToast('Check-in is closed because this session has ended or been cancelled.', 'error');
+      return;
+    }
+
+    if (!isSessionOnEventDay(effStart, effEnd, todayKey)) {
+      showToast('GPS check-in is only active on the event day.', 'error');
       return;
     }
 
@@ -753,6 +796,28 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
       return isActiveA ? timeA - timeB : timeB - timeA;
     });
   }, [filteredEvents, nextOccurrenceByEventId, nowMs]);
+
+  const { upcomingFilteredEvents, pastFilteredEvents } = useMemo(() => {
+    const upcoming: ChurchEvent[] = [];
+    const past: ChurchEvent[] = [];
+    for (const evt of orderedFilteredEvents) {
+      const nextOcc = nextOccurrenceByEventId.get(evt.id);
+      const temporal = nextOcc
+        ? getEventTemporalStatus(nextOcc.start_time, nextOcc.end_time, nowMs, nextOcc.status)
+        : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
+      if (temporal === 'past') {
+        past.push(evt);
+      } else {
+        upcoming.push(evt);
+      }
+    }
+    return { upcomingFilteredEvents: upcoming, pastFilteredEvents: past };
+  }, [orderedFilteredEvents, nextOccurrenceByEventId, nowMs]);
+
+  const displayedRosterEvents = useMemo(
+    () => (showPastEvents ? [...upcomingFilteredEvents, ...pastFilteredEvents] : upcomingFilteredEvents),
+    [showPastEvents, upcomingFilteredEvents, pastFilteredEvents]
+  );
 
   const year = currentMonthDate.getFullYear();
   const month = currentMonthDate.getMonth();
@@ -953,10 +1018,10 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
         : getEventTemporalStatus(e.start_time, e.end_time, nowMs, e.status);
       return temporal !== 'past';
     });
-    const preferredPool = upcomingPool.length > 0 ? upcomingPool : sourcePool;
+    if (upcomingPool.length === 0) return null;
     return (
-      preferredPool.find(e => e.category === 'Conference' || e.is_combined_service || e.registration_required) ||
-      preferredPool[0]
+      upcomingPool.find(e => e.category === 'Conference' || e.is_combined_service || e.registration_required) ||
+      upcomingPool[0]
     );
   }, [orderedFilteredEvents, activeEvents, nextOccurrenceByEventId, nowMs]);
 
@@ -1353,7 +1418,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         </button>
                       )}
 
-                      {featReg?.status !== 'waitlist' &&
+                      {canCheckInSessionToday(featuredEvent, featNextOcc) &&
+                        featReg?.status !== 'waitlist' &&
                         featReg?.status !== 'checked_in' &&
                         featReg?.status !== 'attended' && (
                           <button
@@ -1700,7 +1766,13 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                               {isLiveOcc && (
                                 <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shrink-0" />
                               )}
-                              <span className="truncate">{event.title}</span>
+                              <span
+                                className={`truncate ${
+                                  isPastOcc ? 'line-through decoration-slate-500/85' : ''
+                                }`}
+                              >
+                                {event.title}
+                              </span>
                             </div>
                           );
                         })}
@@ -1845,7 +1917,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                             isCancelledOcc
                               ? 'line-through text-slate-500'
                               : isPastOcc
-                              ? 'text-slate-600 hover:text-slate-900'
+                              ? 'line-through decoration-slate-400 text-slate-500 hover:text-slate-800'
                               : 'text-slate-900 hover:text-indigo-700'
                           }`}
                         >
@@ -1892,7 +1964,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                           <div className="flex-1 min-w-[140px]">
                             {renderEventActionButton(evt, true, occ)}
                           </div>
-                          {!isPastOcc &&
+                          {canCheckInSessionToday(evt, occ) &&
                             userReg?.status !== 'waitlist' &&
                             userReg?.status !== 'checked_in' &&
                             userReg?.status !== 'attended' && (
@@ -2177,7 +2249,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                             isCancelledOcc
                               ? 'line-through text-slate-500'
                               : isPastOcc
-                              ? 'text-slate-600 hover:text-slate-900'
+                              ? 'line-through decoration-slate-400 text-slate-500 hover:text-slate-800'
                               : 'text-slate-900 hover:text-indigo-700'
                           }`}
                         >
@@ -2219,7 +2291,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                         <div className="flex-1 sm:flex-initial min-w-[140px]">
                           {renderEventActionButton(evt, true, occ)}
                         </div>
-                        {!isPastOcc &&
+                        {canCheckInSessionToday(evt, occ) &&
                           userReg?.status !== 'waitlist' &&
                           userReg?.status !== 'checked_in' &&
                           userReg?.status !== 'attended' && (
@@ -2277,24 +2349,35 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
             <h2 className="font-bold text-slate-900 text-lg sm:text-xl">
               Program Roster
             </h2>
-            <div className="flex items-center gap-3 text-xs sm:text-[13px] text-slate-600 font-semibold tabular-nums">
-              {(() => {
-                const pastCount = orderedFilteredEvents.filter(evt => {
-                  const nextOcc = nextOccurrenceByEventId.get(evt.id);
-                  const temporal = nextOcc
-                    ? getEventTemporalStatus(nextOcc.start_time, nextOcc.end_time, nowMs, nextOcc.status)
-                    : getEventTemporalStatus(evt.start_time, evt.end_time, nowMs, evt.status);
-                  return temporal === 'past';
-                }).length;
-                const activeCount = orderedFilteredEvents.length - pastCount;
-                return (
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 text-xs sm:text-[13px] text-slate-600 font-semibold tabular-nums">
+              <span>
+                {upcomingFilteredEvents.length}{' '}
+                {upcomingFilteredEvents.length === 1 ? 'Upcoming' : 'Upcoming'}
+                {showPastEvents && pastFilteredEvents.length > 0
+                  ? ` · ${pastFilteredEvents.length} Past`
+                  : ''}
+              </span>
+
+              {(pastFilteredEvents.length > 0 || showPastEvents) && (
+                <button
+                  type="button"
+                  onClick={() => setShowPastEvents(prev => !prev)}
+                  aria-pressed={showPastEvents}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap ${
+                    showPastEvents
+                      ? 'bg-slate-900 border-slate-900 text-white'
+                      : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <History size={13} />
                   <span>
-                    {pastCount > 0
-                      ? `${activeCount} Upcoming · ${pastCount} Past`
-                      : `${orderedFilteredEvents.length} ${orderedFilteredEvents.length === 1 ? 'Program' : 'Programs'}`}
+                    {showPastEvents
+                      ? `Hide Past Events (${pastFilteredEvents.length})`
+                      : `View Past Events (${pastFilteredEvents.length})`}
                   </span>
-                );
-              })()}
+                </button>
+              )}
+
               {hasActiveFilters && (
                 <button
                   type="button"
@@ -2308,31 +2391,49 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
             </div>
           </div>
 
-          {orderedFilteredEvents.length === 0 ? (
+          {displayedRosterEvents.length === 0 ? (
             <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 p-8 sm:p-10 text-center space-y-3">
               <Calendar size={36} className="mx-auto text-slate-300" />
               <div className="space-y-1 max-w-md mx-auto">
                 <h3 className="text-base font-bold text-slate-900">
-                  No matching church programs found
+                  {!showPastEvents && pastFilteredEvents.length > 0
+                    ? 'No upcoming church programs listed'
+                    : 'No matching church programs found'}
                 </h3>
                 <p className="text-[13px] sm:text-sm text-slate-500">
-                  Try clearing your search term or switching category, audience, or RSVP filters.
+                  {!showPastEvents && pastFilteredEvents.length > 0
+                    ? `Past events are hidden from the active list. You can view ${pastFilteredEvents.length} completed ${
+                        pastFilteredEvents.length === 1 ? 'program' : 'programs'
+                      } or adjust your filters.`
+                    : 'Try clearing your search term or switching category, audience, or RSVP filters.'}
                 </p>
               </div>
-              {hasActiveFilters && (
-                <button
-                  type="button"
-                  onClick={resetAllFilters}
-                  className="min-h-[44px] sm:min-h-[40px] px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-2"
-                >
-                  <RotateCcw size={14} />
-                  <span>Reset All Filters</span>
-                </button>
-              )}
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {!showPastEvents && pastFilteredEvents.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPastEvents(true)}
+                    className="min-h-[44px] sm:min-h-[40px] px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-2"
+                  >
+                    <History size={14} />
+                    <span>View Past Events ({pastFilteredEvents.length})</span>
+                  </button>
+                )}
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={resetAllFilters}
+                    className="min-h-[44px] sm:min-h-[40px] px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors inline-flex items-center gap-2"
+                  >
+                    <RotateCcw size={14} />
+                    <span>Reset All Filters</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-              {orderedFilteredEvents.map(evt => {
+              {displayedRosterEvents.map(evt => {
                 const nextOcc = nextOccurrenceByEventId.get(evt.id);
                 const displayStart = nextOcc?.start_time || evt.start_time;
                 const displayEnd = nextOcc?.end_time || evt.end_time;
@@ -2449,7 +2550,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                               onClick={() => setSelectedEventDetail({ event: evt, occurrence: nextOcc })}
                               className={`text-left font-bold text-base sm:text-lg leading-snug cursor-pointer transition-colors ${
                                 isPastEvt
-                                  ? 'text-slate-600 hover:text-slate-900'
+                                  ? 'line-through decoration-slate-400 text-slate-500 hover:text-slate-800'
                                   : 'text-slate-900 hover:text-indigo-700'
                               }`}
                             >
@@ -2518,7 +2619,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                        {!isPastEvt &&
+                        {canCheckInSessionToday(evt, nextOcc) &&
                           userReg?.status !== 'waitlist' &&
                           userReg?.status !== 'checked_in' &&
                           userReg?.status !== 'attended' && (
@@ -2740,6 +2841,16 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       Registered: <strong>{regCount} / {maxAtt}</strong>
                     </span>
                   </div>
+                  {!detailIsPast && (occ?.status || evt.status) !== 'cancelled' && (
+                    <div className="flex items-start gap-2.5">
+                      <LocateFixed size={16} className="text-indigo-600 shrink-0 mt-0.5" />
+                      <span className="tabular-nums text-xs sm:text-[13px] text-slate-600">
+                        {canCheckInSessionToday(evt, occ)
+                          ? `GPS Check-In active today within ${configuredRadiusMeters} m of premises`
+                          : `GPS Check-In opens on event day (${configuredRadiusMeters} m perimeter)`}
+                      </span>
+                    </div>
+                  )}
                   {evt.is_virtual && evt.virtual_link && (
                     <div className="flex items-center gap-2.5">
                       <Video size={16} className="text-indigo-600 shrink-0" />
@@ -2772,8 +2883,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                   <div className="flex-1 min-w-[130px]">
                     {renderEventActionButton(evt, true, occ)}
                   </div>
-                  {!detailIsPast &&
-                    (occ?.status || evt.status) !== 'cancelled' &&
+                  {canCheckInSessionToday(evt, occ) &&
                     userReg?.status !== 'waitlist' &&
                     userReg?.status !== 'checked_in' &&
                     userReg?.status !== 'attended' && (
@@ -3002,7 +3112,8 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </p>
             </div>
 
-            {showQRPass.reg.status !== 'checked_in' &&
+            {canCheckInSessionToday(showQRPass.event, showQRPass.occurrence) &&
+              showQRPass.reg.status !== 'checked_in' &&
               showQRPass.reg.status !== 'attended' &&
               showQRPass.reg.status !== 'waitlist' && (
                 <button
@@ -3071,17 +3182,33 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto space-y-4">
+              <div className="p-5 overflow-y-auto space-y-4">
+              {/* Interactive D3.js Premises & User Location Map */}
+              <GeofenceD3Map
+                targetLat={checkInModal.target.lat}
+                targetLng={checkInModal.target.lng}
+                targetLabel={checkInModal.target.label}
+                targetSource={checkInModal.target.source}
+                radiusMeters={checkInModal.radiusMeters}
+                userLat={checkInModal.result?.userLat}
+                userLng={checkInModal.result?.userLng}
+                accuracy={checkInModal.result?.accuracy}
+                distanceMeters={checkInModal.result?.distanceMeters}
+                allowed={checkInModal.result?.allowed}
+                phase={checkInModal.phase}
+                height={235}
+              />
+
               {checkInModal.phase === 'verifying' && (
-                <div className="p-6 rounded-2xl bg-indigo-50/70 border border-indigo-200 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center mx-auto">
-                    <RefreshCw size={22} className="animate-spin" />
+                <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                    <RefreshCw size={18} className="animate-spin" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="min-w-0 space-y-0.5">
                     <p className="text-sm font-bold text-slate-900">
                       Confirming Your Device Location...
                     </p>
-                    <p className="text-xs text-slate-600 max-w-sm mx-auto">
+                    <p className="text-xs text-slate-600">
                       Comparing your live device GPS position against{' '}
                       <strong>{checkInModal.target.label}</strong> ({checkInModal.radiusMeters} m geofence).
                     </p>
@@ -3090,7 +3217,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               )}
 
               {checkInModal.phase === 'verified' && checkInModal.result && (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-start gap-3">
                     <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
                       <ShieldCheck size={20} />
@@ -3131,7 +3258,7 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
               )}
 
               {checkInModal.phase === 'outside' && checkInModal.result && (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
                     <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0">
                       <ShieldAlert size={20} />
@@ -3167,15 +3294,6 @@ export const CalendarPage: React.FC<CalendarPageProps> = ({ profile }) => {
                       </span>
                     </div>
                   </div>
-
-                  <LocationMap
-                    latitude={checkInModal.target.lat}
-                    longitude={checkInModal.target.lng}
-                    title={checkInModal.event.title}
-                    subtitle={checkInModal.locationName}
-                    sourceLabel={`${checkInModal.radiusMeters} m Check-In Geofence`}
-                    height="200px"
-                  />
                 </div>
               )}
 

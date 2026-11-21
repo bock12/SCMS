@@ -13,7 +13,23 @@ import { hasEffectivePermission, hasAnyEffectivePermission, ADMIN_DASHBOARD_PERM
 import { usePermissionResolution } from './usePermissionResolution';
 import { getRecurrenceBadge, getEventAccount, getAllEventAccounts, calculateNextRecurrenceDate, syncPastRecurringEventsAutomatically, detectScheduleConflicts, generateEventOccurrences, saveOccurrenceOverride, saveOccurrenceAttendance, resolveOccurrencePreemption, getEventTemporalStatus } from './eventAccountService';
 import { LocationMap } from './LocationMap';
-import { getChurchProfile, saveChurchProfile, PRESET_CHURCH_LOGOS, PRESET_GPS_LOCATIONS, PRESET_COLOR_THEMES, getCurrentGpsLocation, getNetworkApproximateLocation, GpsAccessError, searchLocationByQuery, parseCoordinatesInput, type PlaceSearchResult } from './churchProfileService';
+import {
+  getChurchProfile,
+  saveChurchProfile,
+  PRESET_CHURCH_LOGOS,
+  PRESET_GPS_LOCATIONS,
+  PRESET_COLOR_THEMES,
+  getCurrentGpsLocation,
+  getNetworkApproximateLocation,
+  GpsAccessError,
+  searchLocationByQuery,
+  parseCoordinatesInput,
+  MIN_GEOFENCE_RADIUS_METERS,
+  MAX_GEOFENCE_RADIUS_METERS,
+  DEFAULT_GEOFENCE_RADIUS_METERS,
+  normalizeGeofenceRadius,
+  type PlaceSearchResult
+} from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { getProfileRoleData, assignProfileRole, deactivateProfileRoleAssignment, type SystemRole, type ProfileRoleAssignment } from './profileRoleAssignmentService';
 import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember, ensureMinistryLeaderInRoster } from './ministryMemberService';
@@ -30,7 +46,7 @@ import {
   Clock, AlertCircle, ChevronDown, ChevronRight, ChevronLeft, Video, Calendar as CalendarIcon, Play, Key, RefreshCw, ArrowLeft, Settings, Square, Send, MessageSquare, Eye,
   DollarSign, Heart, Sparkles, ShieldCheck, Download, CheckCircle2, Layers, Church,
   UserPlus, UserMinus, UserCheck, Filter, Edit, Copy, FileText, ClipboardList, LayoutGrid, List, Phone, Mail, Shield, Upload,
-  Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette, Award
+  Printer, ExternalLink, Share2, CreditCard, Landmark, Smartphone, Sliders, Compass, Globe, Image as ImageIcon, Palette, Award, LocateFixed
 } from 'lucide-react';
 
 const PermissionRestrictedCard = ({ requiredPermission, profile, resolution }: { requiredPermission: string; profile: Profile | null; resolution: PermissionResolution | null }) => {
@@ -5616,8 +5632,14 @@ const ChurchSettingsTab = () => {
 
   const handleSaveChurchProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    saveChurchProfile(profileData);
-    showToast('Church Profile, Logo & GPS Location settings saved.');
+    const normalizedRadius = normalizeGeofenceRadius(profileData.geofence_radius_meters);
+    const updatedProfile = {
+      ...profileData,
+      geofence_radius_meters: normalizedRadius
+    };
+    setProfileData(updatedProfile);
+    saveChurchProfile(updatedProfile);
+    showToast(`Church Profile, GPS Location & Geofence Radius (${normalizedRadius} m) saved.`);
   };
 
   const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -6470,6 +6492,92 @@ const ChurchSettingsTab = () => {
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className="col-span-2 pt-3 border-t border-slate-100 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <LocateFixed size={15} className="text-indigo-600 shrink-0" />
+                        <div className="min-w-0">
+                          <label htmlFor="geofence-radius-range" className="font-bold text-slate-800 block">
+                            Event GPS Check-In Geofence Radius
+                          </label>
+                          <span className="text-[11px] text-slate-500 block">
+                            Allowed distance from church or event pin on event day ({MIN_GEOFENCE_RADIUS_METERS}–{MAX_GEOFENCE_RADIUS_METERS} m).
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number"
+                          aria-label="Geofence radius in meters"
+                          min={MIN_GEOFENCE_RADIUS_METERS}
+                          max={MAX_GEOFENCE_RADIUS_METERS}
+                          step={10}
+                          value={normalizeGeofenceRadius(profileData.geofence_radius_meters)}
+                          onChange={e => {
+                            const val = Number(e.target.value);
+                            if (!Number.isFinite(val)) return;
+                            setProfileData(prev => ({
+                              ...prev,
+                              geofence_radius_meters: Math.min(
+                                MAX_GEOFENCE_RADIUS_METERS,
+                                Math.max(MIN_GEOFENCE_RADIUS_METERS, Math.round(val))
+                              )
+                            }));
+                          }}
+                          className="w-20 min-h-[36px] px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-xs text-slate-900 tabular-nums text-right focus:bg-white focus:border-indigo-500 focus:outline-none"
+                        />
+                        <span className="text-xs font-bold text-slate-500 font-mono">m</span>
+                      </div>
+                    </div>
+
+                    <input
+                      id="geofence-radius-range"
+                      type="range"
+                      min={MIN_GEOFENCE_RADIUS_METERS}
+                      max={MAX_GEOFENCE_RADIUS_METERS}
+                      step={10}
+                      value={normalizeGeofenceRadius(profileData.geofence_radius_meters)}
+                      onChange={e =>
+                        setProfileData(prev => ({
+                          ...prev,
+                          geofence_radius_meters: normalizeGeofenceRadius(e.target.value)
+                        }))
+                      }
+                      className="w-full accent-indigo-600 cursor-pointer"
+                    />
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[
+                        { label: '50 m · Room', value: 50 },
+                        { label: '100 m · Hall', value: 100 },
+                        { label: '250 m · Campus', value: DEFAULT_GEOFENCE_RADIUS_METERS },
+                        { label: '350 m · Grounds', value: 350 },
+                        { label: '500 m · Complex', value: 500 }
+                      ].map(preset => {
+                        const currentVal = normalizeGeofenceRadius(profileData.geofence_radius_meters);
+                        const active = currentVal === preset.value;
+                        return (
+                          <button
+                            key={preset.value}
+                            type="button"
+                            onClick={() =>
+                              setProfileData(prev => ({
+                                ...prev,
+                                geofence_radius_meters: preset.value
+                              }))
+                            }
+                            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap tabular-nums ${
+                              active
+                                ? 'bg-indigo-600 border-indigo-600 text-white'
+                                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 

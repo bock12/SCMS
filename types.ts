@@ -70,6 +70,7 @@ export interface ChurchProfile {
   logo_url: string;
   latitude: number;
   longitude: number;
+  geofence_radius_meters?: number;
   service_times: string[];
   website?: string;
   mission_statement?: string;

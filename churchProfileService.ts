@@ -2,6 +2,16 @@ import { ChurchProfile } from './types';
 
 const STORAGE_KEY = 'faithconnect_church_profile_v1';
 
+export const MIN_GEOFENCE_RADIUS_METERS = 50;
+export const MAX_GEOFENCE_RADIUS_METERS = 500;
+export const DEFAULT_GEOFENCE_RADIUS_METERS = 250;
+
+export function normalizeGeofenceRadius(value: unknown): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return DEFAULT_GEOFENCE_RADIUS_METERS;
+  return Math.min(MAX_GEOFENCE_RADIUS_METERS, Math.max(MIN_GEOFENCE_RADIUS_METERS, Math.round(num)));
+}
+
 export const DEFAULT_CHURCH_PROFILE: ChurchProfile = {
   name: 'FaithConnect Grace Cathedral',
   main_title: 'FaithConnect',
@@ -15,6 +25,7 @@ export const DEFAULT_CHURCH_PROFILE: ChurchProfile = {
   logo_url: 'https://images.unsplash.com/photo-1548625361-185b1e6002f2?auto=format&fit=crop&q=80&w=200&h=200',
   latitude: 8.484,
   longitude: -13.229,
+  geofence_radius_meters: DEFAULT_GEOFENCE_RADIUS_METERS,
   website: 'https://faithconnect.church',
   mission_statement: 'Empowering believer communities, promoting transformation, and spreading love and hope worldwide.',
   primary_color: '#4f46e5',
@@ -34,9 +45,12 @@ export function getChurchProfile(): ChurchProfile {
       return DEFAULT_CHURCH_PROFILE;
     }
     const parsed = JSON.parse(raw);
-    const profile = {
+    const profile: ChurchProfile = {
       ...DEFAULT_CHURCH_PROFILE,
-      ...parsed
+      ...parsed,
+      geofence_radius_meters: normalizeGeofenceRadius(
+        parsed?.geofence_radius_meters ?? DEFAULT_CHURCH_PROFILE.geofence_radius_meters
+      )
     };
     applyChurchTheme(profile);
     return profile;
@@ -49,13 +63,21 @@ export function getChurchProfile(): ChurchProfile {
 
 export function saveChurchProfile(profile: ChurchProfile): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
-    applyChurchTheme(profile);
-    // Dispatch custom event for real-time reactivity in UI header/brand
-    window.dispatchEvent(new CustomEvent('church-profile-updated', { detail: profile }));
+    const normalizedProfile: ChurchProfile = {
+      ...profile,
+      geofence_radius_meters: normalizeGeofenceRadius(profile.geofence_radius_meters)
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedProfile));
+    applyChurchTheme(normalizedProfile);
+    // Dispatch custom event for real-time reactivity in UI header/brand & geofence radius
+    window.dispatchEvent(new CustomEvent('church-profile-updated', { detail: normalizedProfile }));
   } catch (e) {
     console.error('Failed to save church profile to localStorage:', e);
   }
+}
+
+export function getConfiguredGeofenceRadius(): number {
+  return normalizeGeofenceRadius(getChurchProfile().geofence_radius_meters);
 }
 
 export function applyChurchTheme(profile: ChurchProfile): void {
@@ -430,8 +452,6 @@ export async function getCurrentGpsLocation(): Promise<GpsLocationResult> {
   });
 }
 
-export const DEFAULT_GEOFENCE_RADIUS_METERS = 250;
-
 export interface GeofenceVerificationResult {
   allowed: boolean;
   distanceMeters: number;
@@ -577,7 +597,7 @@ export async function verifyGeofencePresence(
   targetLat: number,
   targetLng: number,
   targetSource: 'event' | 'church_profile' = 'event',
-  radiusMeters: number = DEFAULT_GEOFENCE_RADIUS_METERS
+  radiusMeters: number = getConfiguredGeofenceRadius()
 ): Promise<GeofenceVerificationResult> {
   if (
     !Number.isFinite(targetLat) ||
@@ -588,6 +608,7 @@ export async function verifyGeofencePresence(
     throw new GpsAccessError('Event premises GPS coordinates are invalid or not configured.', 'UNAVAILABLE');
   }
 
+  const normalizedRadius = normalizeGeofenceRadius(radiusMeters);
   const deviceLoc = await getDeviceGpsPreciseOnly();
   const distanceMeters = calculateDistanceMeters(
     deviceLoc.lat,
@@ -595,15 +616,18 @@ export async function verifyGeofencePresence(
     targetLat,
     targetLng
   );
-  // Allow modest indoor GPS accuracy tolerance (up to +50m) on top of the configured perimeter
-  const accuracyBuffer = Math.min(50, Math.round((deviceLoc.accuracy || 0) * 0.5));
-  const effectiveAllowanceMeters = radiusMeters + accuracyBuffer;
+  // Allow modest indoor GPS accuracy tolerance (up to 20% of radius, capped at 50m) when GPS reports accuracy
+  const maxBufferForRadius = Math.min(50, Math.max(10, Math.round(normalizedRadius * 0.2)));
+  const accuracyBuffer = deviceLoc.accuracy
+    ? Math.min(maxBufferForRadius, Math.round(deviceLoc.accuracy * 0.5))
+    : 0;
+  const effectiveAllowanceMeters = normalizedRadius + accuracyBuffer;
   const allowed = distanceMeters <= effectiveAllowanceMeters;
 
   return {
     allowed,
     distanceMeters,
-    radiusMeters,
+    radiusMeters: normalizedRadius,
     effectiveAllowanceMeters,
     userLat: deviceLoc.lat,
     userLng: deviceLoc.lng,
