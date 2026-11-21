@@ -157,6 +157,19 @@ BEGIN
     RAISE EXCEPTION 'An identical receipt retry created a new document or journal';
   END IF;
 
+  BEGIN
+    PERFORM public.create_financial_document_transaction(
+      'receipt', '2026-11-17', v_branch_id, NULL, 'Test Donor', 126,
+      'SLE', 'mobile_money', v_financial_account_id, v_income_chart_id,
+      NULL, 'FIN-INT-RECEIPT', 'Receipt lifecycle test', 1,
+      '97000000-0000-4000-8000-000000000002'
+    );
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_IDEMPOTENCY_CONFLICT';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_IDEMPOTENCY_CONFLICT' THEN RAISE; END IF;
+    IF position('different transaction details' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
   v_document_id := (v_receipt->>'document_id')::uuid;
   v_journal_id := (v_receipt->>'journal_entry_id')::uuid;
 
