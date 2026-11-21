@@ -61,7 +61,7 @@ export async function createFinancialDocumentTransaction(
   input: CreateFinancialDocumentTransactionInput,
   client: RpcClient = defaultRpcClient
 ): Promise<RpcResponse<FinancialDocumentTransactionResult>> {
-  return client.rpc('create_financial_document_transaction', {
+  return client.rpc('create_financial_document_transaction_idempotent', {
     p_document_type: input.documentType,
     p_transaction_date: input.transactionDate,
     p_branch_id: input.branchId,
