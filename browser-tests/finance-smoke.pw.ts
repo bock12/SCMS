@@ -363,5 +363,21 @@ test.describe('SCMS finance browser smoke', () => {
     expect(stillRejectedJournal.status).toBe('draft');
     expect(stillRejectedJournal.source_type).toBe('financial_document_pending');
     expect(postedState.journals.filter((journal: any) => journal.status === 'posted')).toHaveLength(1);
+
+    // Open the canonical receipt detail and exercise its print action without
+    // launching a native print dialog in CI.
+    const postedReceiptCard = page.locator('article').filter({ hasText: 'Browser Test Offering' }).first();
+    await postedReceiptCard.getByRole('button', { name: 'View details' }).click();
+    const detailDialog = page.getByRole('dialog', { name: 'Financial document detail' });
+    await expect(detailDialog).toBeVisible();
+    await expect(detailDialog.getByText('REC-000001')).toBeVisible();
+    await expect(detailDialog.getByText('OFFICIAL RECEIPT')).toBeVisible();
+    await expect(detailDialog.getByText('Browser smoke test receipt')).toBeVisible();
+    await page.evaluate(() => {
+      (window as any).__financePrintCalled = false;
+      window.print = () => { (window as any).__financePrintCalled = true; };
+    });
+    await detailDialog.getByRole('button', { name: 'Print' }).click();
+    expect(await page.evaluate(() => (window as any).__financePrintCalled)).toBe(true);
   });
 });
