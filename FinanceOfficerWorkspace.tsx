@@ -25,13 +25,15 @@ import {
 
 interface FinanceOfficerWorkspaceProps {
   profile: Profile | null;
+  databaseBranchId?: string | null;
 }
 
 type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
 
 const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
-const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
+const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId }) => {
+  const financeBranchId = databaseBranchId ?? profile?.branch_id ?? null;
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
     || hasEffectivePermission(financePermissions, 'manage_finances');
@@ -1083,10 +1085,10 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
       {workspaceTab === 'ledger' && (
         <div className="space-y-6">
           {hasEffectivePermission(financePermissions, 'manage_finances') && (
-            <FinanceTransactionEntryWorkspace branchId={profile?.branch_id || null} />
+            <FinanceTransactionEntryWorkspace branchId={financeBranchId} />
           )}
-          <FinanceDocumentWorkflowWorkspace branchId={profile?.branch_id || null} />
-          <FinanceJournalWorkspace branchId={profile?.branch_id || null} />
+          <FinanceDocumentWorkflowWorkspace branchId={financeBranchId} />
+          <FinanceJournalWorkspace branchId={financeBranchId} />
           {/* Revenue, expenditure and net-position figures are now rendered from
               posted journal lines in FinanceJournalWorkspace above. Do not restore
               the legacy FinancialRecord-derived summary cards here. */}
@@ -1390,7 +1392,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* --- WORKSPACE TAB 2: MINISTRY PROPOSALS & EXPENSE INVOICES --- */}
       {workspaceTab === 'setup' && (
-        <FinanceConfigurationWorkspace branchId={profile?.branch_id || null} />
+        <FinanceConfigurationWorkspace branchId={financeBranchId} />
       )}
 
       {workspaceTab === 'requisitions' && (
@@ -2541,7 +2543,8 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
   <FinanceDatabaseSessionGate mockProfile={profile}>
     {databaseProfile => (
       <FinanceOfficerWorkspaceContent
-        profile={profile ? { ...profile, branch_id: databaseProfile.branch_id } : profile}
+        profile={profile}
+        databaseBranchId={databaseProfile.branch_id}
       />
     )}
   </FinanceDatabaseSessionGate>

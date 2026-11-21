@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { AlertCircle, CheckCircle2, Loader2, LockKeyhole, Mail } from 'lucide-react';
-import { financeSupabase, isFinanceSupabaseConfigured } from './financeSupabaseClient';
+import { financeSupabase, isFinanceSupabaseConfigured, isFinanceSupabaseMockMode } from './financeSupabaseClient';
 import type { Profile } from './types';
 
 interface FinanceDatabaseProfile {
@@ -71,6 +71,19 @@ export const FinanceDatabaseSessionGate: React.FC<Props> = ({ mockProfile, child
     setBusy(true); const { error: signOutError } = await financeSupabase.auth.signOut();
     if (signOutError) setError(signOutError.message); setBusy(false);
   };
+
+  if (isFinanceSupabaseMockMode && mockProfile) {
+    return <>{children({
+      id: mockProfile.id,
+      auth_user_id: mockProfile.auth_user_id || mockProfile.id,
+      email: mockProfile.email || 'mock-user@development.invalid',
+      first_name: mockProfile.first_name || '',
+      last_name: mockProfile.last_name || '',
+      branch_id: mockProfile.branch_id,
+      portal_access_status: 'active',
+      record_status: 'active'
+    })}</>;
+  }
 
   if (!isFinanceSupabaseConfigured) return (
     <section className="mx-auto max-w-2xl rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-950">

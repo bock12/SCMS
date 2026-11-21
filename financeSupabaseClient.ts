@@ -6,6 +6,7 @@ const publishableKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.
 const integrationEnabled = (import.meta.env.VITE_SUPABASE_INTEGRATION || '').toLowerCase() === 'finance';
 
 export const isFinanceSupabaseConfigured = Boolean(supabaseUrl && publishableKey && integrationEnabled);
+export const isFinanceSupabaseMockMode = (import.meta.env.VITE_SUPABASE_INTEGRATION || '').toLowerCase() === 'mock';
 
 /** Real, session-aware client for Finance only. Unmigrated modules keep the mock client. */
 export const financeSupabase: SupabaseClient = isFinanceSupabaseConfigured

@@ -41,3 +41,4 @@ jobs:
         run: npx playwright test
         env:
           CI: 'true'
+          VITE_SUPABASE_INTEGRATION: 'mock'
