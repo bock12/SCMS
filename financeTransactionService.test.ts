@@ -17,7 +17,8 @@ const baseInput: CreateFinancialDocumentTransactionInput = {
   financialAccountId: 'cash-account-1',
   categoryAccountId: 'income-account-1',
   externalReference: '  TX-100  ',
-  description: '  Sunday offering  '
+  description: '  Sunday offering  ',
+  idempotencyKey: '00000000-0000-4000-8000-000000000001'
 };
 
 describe('finance transaction RPC service', () => {
@@ -49,7 +50,8 @@ describe('finance transaction RPC service', () => {
       p_fund_id: null,
       p_external_reference: 'TX-100',
       p_description: 'Sunday offering',
-      p_exchange_rate_to_base: 1
+      p_exchange_rate_to_base: 1,
+      p_idempotency_key: '00000000-0000-4000-8000-000000000001'
     });
     expect(result.error).toBeNull();
     expect(result.data?.document_id).toBe('doc-1');
