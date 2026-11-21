@@ -370,7 +370,7 @@ test.describe('SCMS finance browser smoke', () => {
     await postedReceiptCard.getByRole('button', { name: 'View details' }).click();
     const detailDialog = page.getByRole('dialog', { name: 'Financial document detail' });
     await expect(detailDialog).toBeVisible();
-    await expect(detailDialog.getByText('REC-000001')).toBeVisible();
+    await expect(detailDialog.getByRole('heading', { name: 'REC-000001' })).toBeVisible();
     await expect(detailDialog.getByText('OFFICIAL RECEIPT')).toBeVisible();
     await expect(detailDialog.getByText('Browser smoke test receipt')).toBeVisible();
     await page.evaluate(() => {
