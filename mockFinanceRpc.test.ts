@@ -61,7 +61,8 @@ const args = {
   p_profile_id: null, p_party_name: ' Sunday Service ', p_amount: 250,
   p_currency_code: 'SLL', p_payment_method: 'cash', p_financial_account_id: 'cash-account',
   p_category_account_id: 'income-chart', p_fund_id: 'fund-a',
-  p_external_reference: ' RCPT-1 ', p_description: ' Sunday offering ', p_exchange_rate_to_base: 1
+  p_external_reference: ' RCPT-1 ', p_description: ' Sunday offering ', p_exchange_rate_to_base: 1,
+  p_idempotency_key: '00000000-0000-4000-8000-000000000001'
 };
 
 describe('mock finance permission scope bridge', () => {
