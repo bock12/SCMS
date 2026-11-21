@@ -135,6 +135,39 @@ export function createMockFinanceRpc(
     if (!hasPermission(state, actor.id, 'manage_finances', branchId)) {
       return fail('Insufficient permission to create financial transactions in this branch', '42501');
     }
+    const idempotencyKey = String(args.p_idempotency_key || '').trim();
+    if (!idempotencyKey) return fail('A transaction idempotency key is required');
+    const requestFingerprint = JSON.stringify({
+      document_type: args.p_document_type,
+      transaction_date: args.p_transaction_date,
+      branch_id: branchId,
+      profile_id: args.p_profile_id ?? null,
+      party_name: String(args.p_party_name || '').trim(),
+      amount: Number(args.p_amount),
+      currency_code: String(args.p_currency_code || '').trim().toUpperCase(),
+      payment_method: args.p_payment_method,
+      financial_account_id: args.p_financial_account_id,
+      category_account_id: args.p_category_account_id,
+      fund_id: args.p_fund_id ?? null,
+      external_reference: String(args.p_external_reference || '').trim() || null,
+      description: String(args.p_description || '').trim(),
+      exchange_rate_to_base: Number(args.p_exchange_rate_to_base ?? 1)
+    });
+    const priorDocument = state.documents.find(document =>
+      document.created_by_profile_id === actor.id && document.idempotency_key === idempotencyKey);
+    if (priorDocument) {
+      if (priorDocument.idempotency_fingerprint !== requestFingerprint) {
+        return fail('This idempotency key was already used with different transaction details');
+      }
+      const priorJournal = state.journals.find(journal =>
+        journal.source_id === priorDocument.id && ['financial_document', 'financial_document_pending'].includes(journal.source_type));
+      return success({
+        document_id: priorDocument.id,
+        journal_entry_id: priorJournal?.id ?? priorDocument.journal_entry_id ?? null,
+        approval_request_id: priorDocument.approval_request_id ?? null,
+        status: priorDocument.status
+      });
+    }
     const amount = Number(args.p_amount);
     const rate = Number(args.p_exchange_rate_to_base ?? 1);
     const date = args.p_transaction_date;
@@ -191,7 +224,8 @@ export function createMockFinanceRpc(
     const requestId = policySteps.length ? id(state, 'approval') : null;
     const docStatus = policySteps.length ? 'pending_approval' : 'approved';
     const document = {
-      id: documentId, document_type: type, transaction_date: date, branch_id: branchId,
+      id: documentId, idempotency_key: idempotencyKey, idempotency_fingerprint: requestFingerprint,
+      document_type: type, transaction_date: date, branch_id: branchId,
       profile_id: args.p_profile_id ?? null, payee_or_payer_name: party, amount, currency_code: currency,
       payment_method: method, financial_account_id: financialAccount.id, fund_id: args.p_fund_id ?? null,
       external_reference: String(args.p_external_reference || '').trim() || null,
