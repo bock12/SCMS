@@ -17,6 +17,7 @@ on:
       - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql"
       - "supabase/migrations/20261121000100_add_financial_document_idempotency.sql"
+      - "supabase/migrations/20261121000200_expose_financial_document_numbers.sql"
       - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
       - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
       - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
@@ -980,6 +981,9 @@ jobs:
 
       - name: Apply scoped financial-document listing RPC
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261118000100_get_finance_documents_read_api.sql
+
+      - name: Expose generated financial-document numbers
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261121000200_expose_financial_document_numbers.sql
 
       - name: Apply controlled journal posting and ledger APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql
