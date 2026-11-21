@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 
 export type FinanceChartAccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 export type FinanceOperationalAccountType = 'cash' | 'bank' | 'mobile_money' | 'clearing';
@@ -43,7 +43,7 @@ export interface FinanceConfiguration {
 
 type RpcResponse<T> = { data: T | null; error: { message: string; code?: string } | null };
 type RpcClient = { rpc: (name: string, args?: Record<string, unknown>) => Promise<RpcResponse<any>> };
-const defaultRpcClient = supabase as unknown as RpcClient;
+const defaultRpcClient = financeSupabase as unknown as RpcClient;
 
 export async function getFinanceConfiguration(
   branchId: string | null = null,

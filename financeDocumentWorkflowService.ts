@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import { decideFinancialDocumentApproval, type DecideFinancialDocumentApprovalResult } from './financeTransactionService';
 
 export interface FinanceWorkflowDocument {
@@ -29,7 +29,7 @@ type RpcClient = {
   rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: any; error: { message: string; code?: string } | null }>;
 };
 
-const rpc = supabase as unknown as RpcClient;
+const rpc = financeSupabase as unknown as RpcClient;
 
 export async function getFinanceWorkflowDocuments(branchId: string | null): Promise<{
   data: { actor_profile_id: string; documents: FinanceWorkflowDocument[] } | null;

@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 
 export type FinancialDocumentType = 'receipt' | 'payment';
 export type FinancialPaymentMethod =
@@ -47,7 +47,7 @@ type RpcClient = {
   rpc: (name: string, args: Record<string, unknown>) => Promise<RpcResponse<any>>;
 };
 
-const defaultRpcClient = supabase as unknown as RpcClient;
+const defaultRpcClient = financeSupabase as unknown as RpcClient;
 
 /**
  * Typed boundary for the secure database transaction RPC.

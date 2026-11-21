@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ReceiptText, Wallet } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import { getFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 import { createFinancialDocumentTransaction, type FinancialDocumentTransactionResult, type FinancialPaymentMethod } from './financeTransactionService';
 
@@ -54,7 +54,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
     setError(null);
     const [configResult, memberResult] = await Promise.all([
       getFinanceConfiguration(branchId),
-      supabase.from('profiles').select('id,first_name,last_name,status,branch_id').order('first_name', { ascending: true })
+      financeSupabase.from('profiles').select('id,first_name,last_name,status,branch_id').order('first_name', { ascending: true })
     ]);
     if (configResult.error) {
       setError(configResult.error.message);

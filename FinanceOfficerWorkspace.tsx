@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { FinanceDatabaseSessionGate } from './FinanceDatabaseSessionGate';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { getFinanceLedgerEntries, mapFinanceLedgerEntriesToWorkspaceRecords } from './financeLedgerService';
@@ -30,7 +31,7 @@ type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gatewa
 
 const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
-export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
+const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => {
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
     || hasEffectivePermission(financePermissions, 'manage_finances');
@@ -2533,3 +2534,15 @@ export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = (
     </div>
   );
 };
+
+
+/** Keep mock login for UI testing, but gate Finance behind verified Supabase Auth. */
+export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => (
+  <FinanceDatabaseSessionGate mockProfile={profile}>
+    {databaseProfile => (
+      <FinanceOfficerWorkspaceContent
+        profile={profile ? { ...profile, branch_id: databaseProfile.branch_id } : profile}
+      />
+    )}
+  </FinanceDatabaseSessionGate>
+);

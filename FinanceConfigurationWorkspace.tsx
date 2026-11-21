@@ -358,7 +358,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         </div>
       </section>
 
-      <p className="text-xs text-slate-500">In development, finance configuration is persisted by the mock RPC adapter. The authenticated PostgreSQL configuration RPCs are covered by disposable CI tests; this migration has not been applied to a live Supabase project.</p>
+      <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, branch scope, validation and audit controls.</p>
 
       <FinanceTransactionEntryWorkspace branchId={branchId} />
     </div>

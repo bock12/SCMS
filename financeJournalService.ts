@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 
 export interface FinanceJournalLine {
   id: string;
@@ -67,7 +67,7 @@ type RpcClient = {
   }>;
 };
 
-const rpc = supabase as unknown as RpcClient;
+const rpc = financeSupabase as unknown as RpcClient;
 
 export async function getFinanceJournalLedger(branchId: string | null): Promise<{
   data: FinanceJournalLedger | null;

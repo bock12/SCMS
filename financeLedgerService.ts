@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import type { FinancialRecord } from './types';
 
 export type FinancialDocumentType = 'receipt' | 'payment' | 'transfer' | 'adjustment';
@@ -105,7 +105,7 @@ export const getFinanceLedgerEntries = async (): Promise<{
   data: FinanceLedgerEntry[] | null;
   error: { message: string; code?: string } | null;
 }> => {
-  const { data: documents, error: documentError } = await supabase
+  const { data: documents, error: documentError } = await financeSupabase
     .from('financial_documents')
     .select('*')
     .order('transaction_date', { ascending: false });
@@ -119,7 +119,7 @@ export const getFinanceLedgerEntries = async (): Promise<{
     return { data: [], error: null };
   }
 
-  const { data: givingRecords, error: givingError } = await supabase
+  const { data: givingRecords, error: givingError } = await financeSupabase
     .from('giving_records')
     .select('*');
 
