@@ -326,17 +326,53 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
 
 // --- Sub Components ---
 
-const StatsCard = ({ title, value, icon: Icon, color, subtitle }: any) => (
-  <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-    <div className="flex items-center justify-between mb-4">
-      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${color} text-white shadow-sm`}>
-        <Icon size={24} />
+const StatsCard = ({ title, value, icon: Icon, color, subtitle, compact = false }: any) => (
+  <div
+    className={`bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow h-full flex flex-col justify-between ${
+      compact ? 'p-2.5 sm:p-4 lg:p-6 rounded-2xl lg:rounded-3xl' : 'p-6 rounded-3xl'
+    }`}
+  >
+    <div className={`flex items-center justify-between ${compact ? 'mb-2 sm:mb-3 lg:mb-4' : 'mb-4'}`}>
+      <div
+        className={`flex items-center justify-center ${color} text-white shadow-sm shrink-0 ${
+          compact ? 'w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl' : 'w-12 h-12 rounded-2xl'
+        }`}
+      >
+        <Icon className={compact ? 'w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6' : 'w-6 h-6'} />
       </div>
-      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Metrics</span>
+      <span
+        className={`font-black text-slate-400 uppercase tracking-wider ${
+          compact ? 'hidden sm:inline text-[10px]' : 'text-[10px]'
+        }`}
+      >
+        Metrics
+      </span>
     </div>
-    <div className="text-3xl font-black text-slate-900 tracking-tight">{value}</div>
-    <div className="text-sm font-bold text-slate-700 mt-1">{title}</div>
-    {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
+    <div>
+      <div
+        className={`font-black text-slate-900 tracking-tight tabular-nums leading-none ${
+          compact ? 'text-xl sm:text-2xl lg:text-3xl' : 'text-3xl'
+        }`}
+      >
+        {value}
+      </div>
+      <div
+        className={`font-bold text-slate-700 leading-snug ${
+          compact ? 'text-[11px] sm:text-xs lg:text-sm mt-1.5' : 'text-sm mt-1'
+        }`}
+      >
+        {title}
+      </div>
+      {subtitle && (
+        <p
+          className={`text-slate-400 mt-0.5 leading-tight ${
+            compact ? 'hidden sm:block text-[11px] lg:text-xs' : 'text-xs'
+          }`}
+        >
+          {subtitle}
+        </p>
+      )}
+    </div>
   </div>
 );
 
@@ -389,15 +425,15 @@ const OverviewTab = ({ onSwitchTab }: { onSwitchTab: (tab: string) => void }) =>
           <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Resources & Event Feedback</h3>
           <p className="text-xs text-slate-500 mt-1">Live totals from the local development database</p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
-          <button type="button" onClick={() => onSwitchTab('resources')} className="text-left">
-            <StatsCard title="Published Resources" value={stats.resources} subtitle="Available in the member portal" icon={FileText} color="bg-cyan-600" />
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 lg:gap-5">
+          <button type="button" onClick={() => onSwitchTab('resources')} className="text-left h-full w-full min-w-0 cursor-pointer">
+            <StatsCard compact title="Published Resources" value={stats.resources} subtitle="Available in the member portal" icon={FileText} color="bg-cyan-600" />
           </button>
-          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left">
-            <StatsCard title="Published Surveys" value={stats.publishedSurveys} subtitle="Available for member feedback" icon={ClipboardList} color="bg-violet-600" />
+          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left h-full w-full min-w-0 cursor-pointer">
+            <StatsCard compact title="Published Surveys" value={stats.publishedSurveys} subtitle="Available for member feedback" icon={ClipboardList} color="bg-violet-600" />
           </button>
-          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left">
-            <StatsCard title="Survey Responses" value={stats.surveyResponses} subtitle="Submissions received" icon={MessageSquare} color="bg-rose-600" />
+          <button type="button" onClick={() => onSwitchTab('surveys')} className="text-left h-full w-full min-w-0 cursor-pointer">
+            <StatsCard compact title="Survey Responses" value={stats.surveyResponses} subtitle="Submissions received" icon={MessageSquare} color="bg-rose-600" />
           </button>
         </div>
       </section>

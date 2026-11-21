@@ -68,3 +68,24 @@ export async function deactivateProfileRoleAssignment(assignmentId: string): Pro
 
   if (result.error) throw new Error(result.error.message || 'Unable to remove member role assignment.');
 }
+
+export interface RolePermissionLink {
+  role_id: string;
+  permission_id: string;
+}
+
+export async function updateRolePermissions(
+  roleId: string,
+  permissionIds: string[]
+): Promise<RolePermissionLink[]> {
+  const result = await supabase.rpc('update_role_permissions', {
+    p_role_id: roleId,
+    p_permission_ids: permissionIds
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message || 'Unable to update role permissions.');
+  }
+
+  return (result.data || []) as RolePermissionLink[];
+}

@@ -12,11 +12,23 @@ export function usePermissionResolution(
   profileId?: string | null,
   branchId?: string | null
 ): PermissionResolutionState {
+  const [refreshTick, setRefreshTick] = useState(0);
   const [state, setState] = useState<PermissionResolutionState>({
     resolution: null,
     loading: Boolean(profileId),
     error: null
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleRefresh = () => setRefreshTick(tick => tick + 1);
+    window.addEventListener('role_permissions_updated', handleRefresh);
+    window.addEventListener('profile_role_assignments_updated', handleRefresh);
+    return () => {
+      window.removeEventListener('role_permissions_updated', handleRefresh);
+      window.removeEventListener('profile_role_assignments_updated', handleRefresh);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -25,7 +37,7 @@ export function usePermissionResolution(
       return () => { active = false; };
     }
 
-    setState({ resolution: null, loading: true, error: null });
+    setState(prev => ({ resolution: prev.resolution, loading: prev.resolution === null, error: null }));
     loadPermissionResolution(profileId, branchId)
       .then(resolution => {
         if (active) setState({ resolution, loading: false, error: null });
@@ -39,7 +51,7 @@ export function usePermissionResolution(
       });
 
     return () => { active = false; };
-  }, [profileId, branchId]);
+  }, [profileId, branchId, refreshTick]);
 
   return state;
 }

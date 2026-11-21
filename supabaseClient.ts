@@ -1115,6 +1115,8 @@ function loadLocalDatabase() {
         ...initialPermissions.filter(permission => !existingPermissionKeys.has(permission.key))
       ];
       if (!Array.isArray(parsed.role_permissions)) parsed.role_permissions = [];
+      if (!Array.isArray(parsed.customized_role_permission_ids)) parsed.customized_role_permission_ids = [];
+      const customizedRolePermissionIds = new Set<string>(parsed.customized_role_permission_ids);
       const roleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
       const permissionIdsByKey = new Map((parsed.permissions || []).map((permission: any) => [permission.key, permission.id]));
       const seededRolePermissionLinks = initialRolePermissions.map(link => {
@@ -1124,7 +1126,7 @@ function loadLocalDatabase() {
           role_id: seedRole ? roleIdsByName.get(seedRole.name) : null,
           permission_id: seedPermission ? permissionIdsByKey.get(seedPermission.key) : null
         };
-      }).filter((link: any) => link.role_id && link.permission_id);
+      }).filter((link: any) => link.role_id && link.permission_id && !customizedRolePermissionIds.has(link.role_id));
       const existingRolePermissionKeys = new Set(parsed.role_permissions.map((link: any) => `${link.role_id}:${link.permission_id}`));
       parsed.role_permissions = [
         ...parsed.role_permissions,
@@ -1168,6 +1170,7 @@ function loadLocalDatabase() {
     roles: initialSystemRoles,
     permissions: initialPermissions,
     role_permissions: initialRolePermissions,
+    customized_role_permission_ids: [] as string[],
     profile_role_assignments: initialProfiles.map(profile => ({
       id: `mock-assignment-${profile.id}`,
       profile_id: profile.id,
@@ -2154,6 +2157,7 @@ export const supabase = {
       };
       localDb.profile_role_assignments = [...(localDb.profile_role_assignments || []), assignment];
       saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
       return { data: assignment, error: null };
     }
 
@@ -2169,7 +2173,49 @@ export const supabase = {
         item.id === assignment.id ? { ...item, is_active: false } : item
       );
       saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
       return { data: true, error: null };
+    }
+
+    if (functionName === 'update_role_permissions') {
+      const { p_role_id, p_permission_ids = [] } = args;
+      const canCustomizeRoles = actorAssignments.some((assignment: any) => assignment.scope_type === 'church');
+      if (!canCustomizeRoles) {
+        return { data: null, error: { code: '42501', message: 'You need church-wide manage_roles permission to customize role permissions.' } };
+      }
+      const role = (localDb.roles || []).find((item: any) => item.id === p_role_id && item.is_active);
+      if (!role) {
+        return { data: null, error: { code: '23503', message: 'The selected role is unavailable.' } };
+      }
+      if (!Array.isArray(p_permission_ids)) {
+        return { data: null, error: { code: '22023', message: 'A valid list of permissions is required.' } };
+      }
+      const uniquePermissionIds = Array.from(new Set(p_permission_ids.filter((id: unknown) => typeof id === 'string' && id.length > 0)));
+      const validPermissionIds = new Set((localDb.permissions || []).map((permission: any) => permission.id));
+      if (uniquePermissionIds.some(id => !validPermissionIds.has(id))) {
+        return { data: null, error: { code: '23503', message: 'One or more selected permissions do not exist.' } };
+      }
+
+      const manageRolesPermission = (localDb.permissions || []).find((permission: any) => permission.key === 'manage_roles');
+      if (role.name === 'super_admin' && manageRolesPermission && !uniquePermissionIds.includes(manageRolesPermission.id)) {
+        return {
+          data: null,
+          error: { code: '42501', message: 'Super Admin must retain manage_roles so system governance remains accessible.' }
+        };
+      }
+
+      const preservedLinks = (localDb.role_permissions || []).filter((link: any) => link.role_id !== p_role_id);
+      const updatedLinks = uniquePermissionIds.map(permissionId => ({
+        role_id: p_role_id,
+        permission_id: permissionId
+      }));
+      localDb.role_permissions = [...preservedLinks, ...updatedLinks];
+      const customized = new Set<string>(Array.isArray(localDb.customized_role_permission_ids) ? localDb.customized_role_permission_ids : []);
+      customized.add(p_role_id);
+      localDb.customized_role_permission_ids = Array.from(customized);
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('role_permissions_updated'));
+      return { data: updatedLinks, error: null };
     }
 
     return { data: null, error: { message: `Mock RPC function not implemented: ${functionName}` } };
