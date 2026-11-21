@@ -16,6 +16,7 @@ on:
       - "supabase/migrations/20261113000100_secure_explicit_profile_auth_linking.sql"
       - "supabase/migrations/20261117000400_harden_auth_linking_trigger_search_path.sql"
       - "supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql"
+      - "supabase/migrations/20261121000100_add_financial_document_idempotency.sql"
       - "supabase/migrations/20261118000100_get_finance_documents_read_api.sql"
       - "supabase/migrations/20261118000200_finance_journal_posting_and_ledger_api.sql"
       - "supabase/migrations/20261119000100_add_event_budget_approval_and_payment_rpc.sql"
@@ -974,6 +975,9 @@ jobs:
       - name: Apply secure financial-document transaction RPCs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261117000500_create_secure_financial_document_transactions.sql
 
+      - name: Apply financial document idempotency
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261121000100_add_financial_document_idempotency.sql
+
       - name: Apply scoped financial-document listing RPC
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261118000100_get_finance_documents_read_api.sql
 
@@ -987,22 +991,26 @@ jobs:
           BEGIN
             IF NOT has_function_privilege(
               'authenticated',
-              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character, text,uuid,uuid,uuid,text,text,numeric)',
+              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
               'EXECUTE'
             ) THEN
-              RAISE EXCEPTION 'Authenticated role is missing the narrow finance transaction RPC grant.';
+              RAISE EXCEPTION 'Authenticated role is missing the keyed finance transaction RPC grant.';
             END IF;
 
             IF has_function_privilege(
               'anon',
-              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric)',
+              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
               'EXECUTE'
             ) OR has_function_privilege(
               'service_role',
+              'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)',
+              'EXECUTE'
+            ) OR has_function_privilege(
+              'authenticated',
               'public.create_financial_document_transaction(text,date,uuid,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric)',
               'EXECUTE'
             ) THEN
-              RAISE EXCEPTION 'Finance transaction RPC must not be executable by anon or service_role.';
+              RAISE EXCEPTION 'Only the keyed finance transaction RPC may be executable by authenticated clients.';
             END IF;
 
             IF NOT has_function_privilege(
