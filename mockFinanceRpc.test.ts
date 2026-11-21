@@ -81,7 +81,7 @@ describe('mock finance permission scope bridge', () => {
 describe('deterministic mock financial-document RPC', () => {
   test('creates a balanced pending receipt and persists canonical records', async () => {
     const ctx = fixture();
-    const result = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const result = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error).toBeNull();
     expect(result.data.status).toBe('pending_approval');
     const state = ctx.read();
@@ -97,7 +97,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('creates a balanced pending payment with expense debit and cash credit', async () => {
     const ctx = fixture();
-    const result = await ctx.rpc.rpc('create_financial_document_transaction', {
+    const result = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', {
       ...args, p_document_type: 'payment', p_category_account_id: 'expense-chart',
       p_party_name: 'Utility provider', p_external_reference: 'PAY-1'
     });
@@ -121,7 +121,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('approves and posts a payment into expense and cash ledger balances', async () => {
     const ctx = fixture();
-    const created = await ctx.rpc.rpc('create_financial_document_transaction', {
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', {
       ...args, p_document_type: 'payment', p_category_account_id: 'expense-chart'
     });
     expect(created.error).toBeNull();
@@ -157,7 +157,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('lists canonical documents with approval progress and only the signed-in approver action', async () => {
     const ctx = fixture();
-    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(created.error).toBeNull();
     ctx.setUser('user-approver-1');
     const listed = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
@@ -188,7 +188,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('does not expose finance documents to an unrelated branch or unauthorized profile', async () => {
     const ctx = fixture();
-    await ctx.rpc.rpc('create_financial_document_transaction', args);
+    await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     ctx.setUser('user-creator');
     const crossBranch = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-b' });
     expect(crossBranch.data.documents).toHaveLength(0);
@@ -206,14 +206,14 @@ describe('deterministic mock financial-document RPC', () => {
       load: () => structuredClone(state),
       save: () => { throw new Error('unexpected persistence'); }
     }, () => ({ userId: 'user-creator' }));
-    const result = await isolated.rpc('create_financial_document_transaction', args);
+    const result = await isolated.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error?.message).toContain('No active financial-document approval policy');
     expect(state.documents).toHaveLength(0);
   });
 
   test('rejects cross-branch creation without writing data', async () => {
     const ctx = fixture();
-    const result = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_branch_id: 'branch-b' });
+    const result = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', { ...args, p_branch_id: 'branch-b' });
     expect(result.error?.code).toBe('42501');
     expect(ctx.read().documents).toHaveLength(0);
   });
@@ -221,14 +221,14 @@ describe('deterministic mock financial-document RPC', () => {
   test('requires an authenticated linked profile', async () => {
     const ctx = fixture();
     ctx.setUser(null);
-    const result = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const result = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error?.code).toBe('42501');
     expect(ctx.read().documents).toHaveLength(0);
   });
 
   test('requires first approval before second and links journal only after final approval', async () => {
     const ctx = fixture();
-    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     const steps = ctx.read().approvalSteps;
     ctx.setUser('user-approver-2');
     const outOfOrder = await ctx.rpc.rpc('decide_financial_document_approval', {
@@ -254,7 +254,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('rejection leaves the journal pending and unlinked', async () => {
     const ctx = fixture();
-    await ctx.rpc.rpc('create_financial_document_transaction', args);
+    await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     const step = ctx.read().approvalSteps[0];
     ctx.setUser('user-approver-1');
     const result = await ctx.rpc.rpc('decide_financial_document_approval', {
@@ -279,7 +279,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('does not post an unapproved pending journal or include it in account balances', async () => {
     const ctx = fixture();
-    await ctx.rpc.rpc('create_financial_document_transaction', args);
+    await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     const journal = ctx.read().journals[0];
     expect(journal.status).toBe('draft');
     expect(journal.source_type).toBe('financial_document_pending');
@@ -295,7 +295,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('posts only after final approval and derives balances from posted journal lines', async () => {
     const ctx = fixture();
-    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     const steps = ctx.read().approvalSteps;
     ctx.setUser('user-approver-1');
     const first = await ctx.rpc.rpc('decide_financial_document_approval', {
@@ -337,7 +337,7 @@ describe('deterministic mock financial-document RPC', () => {
 
   test('requires post_journals permission and respects closed periods', async () => {
     const ctx = fixture();
-    const created = await ctx.rpc.rpc('create_financial_document_transaction', args);
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     const steps = ctx.read().approvalSteps;
     ctx.setUser('user-approver-1');
     await ctx.rpc.rpc('decide_financial_document_approval', { p_request_step_id: steps[0].id, p_decision: 'approved' });
@@ -456,10 +456,10 @@ describe('canonical finance configuration RPCs', () => {
     };
     const saved = await ctx.rpc.rpc('save_finance_configuration', { p_branch_id: 'branch-a', p_configuration: configuration });
     expect(saved.error).toBeNull();
-    const uncovered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 150 });
+    const uncovered = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', { ...args, p_fund_id: null, p_amount: 150 });
     expect(uncovered.error?.message).toContain('No approval threshold band covers');
     expect(ctx.read().documents).toHaveLength(0);
-    const covered = await ctx.rpc.rpc('create_financial_document_transaction', { ...args, p_fund_id: null, p_amount: 50 });
+    const covered = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', { ...args, p_fund_id: null, p_amount: 50 });
     expect(covered.error).toBeNull();
     expect(ctx.read().approvalSteps).toHaveLength(1);
   });
@@ -469,7 +469,7 @@ describe('canonical finance configuration RPCs', () => {
     const state = ctx.read();
     state.approvalPolicySteps = [{ id: 'two-approvals', band_id: 'band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 2, prohibit_submitter_approval: true }];
     const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-creator' }));
-    const created = await rpc.rpc('create_financial_document_transaction', args);
+    const created = await rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(created.error).toBeNull();
     const stepId = state.approvalSteps[0].id;
     const ctxRpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-approver-1' }));
@@ -488,7 +488,7 @@ describe('canonical finance configuration RPCs', () => {
     const state = ctx.read();
     state.approvalPolicySteps = [];
     const rpc = createMockFinanceRpc({ load: () => structuredClone(state), save: next => Object.assign(state, structuredClone(next)) }, () => ({ userId: 'user-creator' }));
-    const result = await rpc.rpc('create_financial_document_transaction', args);
+    const result = await rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error).toBeNull();
     expect(result.data.status).toBe('approved');
     expect(result.data.approval_request_id).toBeNull();
@@ -618,7 +618,7 @@ describe('canonical finance transaction setup guards', () => {
       load: () => structuredClone(state),
       save: () => { throw new Error('unexpected persistence'); }
     }, () => ({ userId: 'user-creator' }));
-    const result = await rpc.rpc('create_financial_document_transaction', args);
+    const result = await rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error?.message).toContain('Financial account is inactive');
     expect(state.documents).toHaveLength(0);
   });
@@ -631,7 +631,7 @@ describe('canonical finance transaction setup guards', () => {
       load: () => structuredClone(state),
       save: () => { throw new Error('unexpected persistence'); }
     }, () => ({ userId: 'user-creator' }));
-    const result = await rpc.rpc('create_financial_document_transaction', args);
+    const result = await rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error?.message).toContain('No open financial period');
     expect(state.documents).toHaveLength(0);
   });
