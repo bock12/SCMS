@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, Link, useNavigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, Link, useNavigate, useLocation, useInRouterContext } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
   Home, Users, Calendar, DollarSign, Video, Settings, 
@@ -122,7 +122,8 @@ const getPortalPageMeta = (pathname: string, search: string): { section: string;
       ministries: 'Departments & Teams',
       financials: 'Tithes & Giving Ledger',
       streaming: 'Broadcast Studio',
-      multitenant: 'Multi-Tenant Roadmap',
+      multitenant: 'Branches & Districts',
+      audit: 'Governance Audit Logs',
       settings: 'Church Settings'
     };
     return {
@@ -425,10 +426,24 @@ const Sidebar: React.FC<SidebarProps> = ({
     { to: '/portal/profile', icon: User, label: 'My Profile', isDefault: false }
   ];
 
+  const canAccessLeaderFinance =
+    can('manage_ministries') ||
+    can('submit_requisitions') ||
+    can('manage_finances') ||
+    can('view_finances');
+  const canAccessLeaderWelfare =
+    can('manage_ministries') ||
+    can('manage_welfare') ||
+    can('submit_requisitions');
+
   const leaderLinks = [
-    { to: '/portal/leader?tab=finance', icon: Landmark, label: 'Department Financials', isDefault: true },
-    { to: '/portal/leader?tab=roster', icon: Users, label: 'Team Roster', isDefault: false },
-    { to: '/portal/leader?tab=welfare', icon: Heart, label: 'Welfare & Dues', isDefault: false }
+    ...(canAccessLeaderFinance
+      ? [{ to: '/portal/leader?tab=finance', icon: Landmark, label: 'Department Financials', isDefault: true }]
+      : []),
+    { to: '/portal/leader?tab=roster', icon: Users, label: 'Team Roster', isDefault: !canAccessLeaderFinance },
+    ...(canAccessLeaderWelfare
+      ? [{ to: '/portal/leader?tab=welfare', icon: Heart, label: 'Welfare & Dues', isDefault: false }]
+      : [])
   ];
 
   const financeLinks = [
@@ -436,21 +451,25 @@ const Sidebar: React.FC<SidebarProps> = ({
     { to: '/portal/finance?tab=requisitions', icon: ShoppingCart, label: 'Ministry Proposals', isDefault: false },
     { to: '/portal/finance?tab=event_budgets', icon: Calendar, label: 'Event Budgets', isDefault: false },
     { to: '/portal/finance?tab=gateways', icon: CreditCard, label: 'Gateways & Funds', isDefault: false },
-    { to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger', isDefault: false }
+    ...(can('manage_finances') || can('view_finances')
+      ? [{ to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger', isDefault: false }]
+      : [])
   ];
 
-  const adminLinks = [
+  const allAdminLinks: Array<{ to: string; icon: any; label: string; isDefault: boolean; permission?: string }> = [
     { to: '/portal/admin?tab=overview', icon: LayoutDashboard, label: 'Admin Overview', isDefault: true },
-    { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar', isDefault: false },
-    { to: '/portal/admin?tab=resources', icon: FileText, label: 'Church Resources', isDefault: false },
-    { to: '/portal/admin?tab=surveys', icon: ClipboardList, label: 'Post-Event Surveys', isDefault: false },
-    { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster', isDefault: false },
-    { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance', isDefault: false },
-    { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams', isDefault: false },
-    { to: '/portal/admin?tab=streaming', icon: Video, label: 'Broadcast Studio', isDefault: false },
-    { to: '/portal/admin?tab=multitenant', icon: Layers, label: 'Multi-Tenant Roadmap', isDefault: false },
-    { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings', isDefault: false }
+    { to: '/portal/admin?tab=events', icon: Calendar, label: 'Events & Calendar', isDefault: false, permission: 'manage_events' },
+    { to: '/portal/admin?tab=resources', icon: FileText, label: 'Church Resources', isDefault: false, permission: 'manage_resources' },
+    { to: '/portal/admin?tab=surveys', icon: ClipboardList, label: 'Post-Event Surveys', isDefault: false, permission: 'manage_surveys' },
+    { to: '/portal/admin?tab=users', icon: Users, label: 'Congregation Roster', isDefault: false, permission: 'manage_members' },
+    { to: '/portal/admin?tab=roles', icon: ShieldCheck, label: 'Roles & Governance', isDefault: false, permission: 'manage_roles' },
+    { to: '/portal/admin?tab=ministries', icon: Building2, label: 'Departments & Teams', isDefault: false, permission: 'manage_ministries' },
+    { to: '/portal/admin?tab=streaming', icon: Video, label: 'Broadcast Studio', isDefault: false, permission: 'manage_streams' },
+    { to: '/portal/admin?tab=multitenant', icon: Layers, label: 'Branches & Districts', isDefault: false, permission: 'manage_branches' },
+    { to: '/portal/admin?tab=audit', icon: ClipboardList, label: 'Audit Logs', isDefault: false, permission: 'view_audit_logs' },
+    { to: '/portal/admin?tab=settings', icon: Settings, label: 'Church Settings', isDefault: false, permission: 'manage_branches' }
   ];
+  const adminLinks = allAdminLinks.filter(link => !link.permission || can(link.permission));
 
   const consoleConfig: Record<
     ConsoleKey,
@@ -4059,6 +4078,16 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const canLeaderFinance =
+    canLeader('manage_ministries') ||
+    canLeader('submit_requisitions') ||
+    canLeader('manage_finances') ||
+    canLeader('view_finances');
+  const canLeaderWelfare =
+    canLeader('manage_ministries') ||
+    canLeader('manage_welfare') ||
+    canLeader('submit_requisitions');
+
   // Cross-department administration requires an explicit database permission.
   const canSwitchDepts = hasAnyEffectivePermission(leaderPermissions, MEMBER_ADMIN_PERMISSION_KEYS);
   
@@ -4067,7 +4096,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
   const resolveLeaderTab = (search: string): 'finance' | 'roster' | 'welfare' => {
     const raw = new URLSearchParams(search).get('tab');
-    return raw === 'roster' || raw === 'welfare' ? raw : 'finance';
+    if (raw === 'roster') return 'roster';
+    if (raw === 'welfare' && canLeaderWelfare) return 'welfare';
+    if (raw === 'finance' && canLeaderFinance) return 'finance';
+    return canLeaderFinance ? 'finance' : 'roster';
   };
 
   const [activeDept, setActiveDept] = useState(canSwitchDepts ? 'Media & IT Ministry' : userAssignedDept);
@@ -4078,9 +4110,11 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   useEffect(() => {
     const nextTab = resolveLeaderTab(location.search);
     setLeaderConsoleSubTabState(prev => (prev === nextTab ? prev : nextTab));
-  }, [location.search]);
+  }, [location.search, canLeaderFinance, canLeaderWelfare]);
 
   const setLeaderConsoleSubTab = (tab: 'finance' | 'roster' | 'welfare') => {
+    if (tab === 'finance' && !canLeaderFinance) return;
+    if (tab === 'welfare' && !canLeaderWelfare) return;
     setLeaderConsoleSubTabState(tab);
     navigate(`/portal/leader?tab=${tab}`, { replace: true });
   };
@@ -5528,60 +5562,70 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       </div>
 
       {/* Console Sub-Tab Switcher - Fits 1 line with zero scrollbar */}
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
-        <button
-          type="button"
-          onClick={() => setLeaderConsoleSubTab('finance')}
-          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
-            leaderConsoleSubTab === 'finance'
-              ? 'bg-white text-indigo-700 shadow-xs font-black'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Landmark size={16} className="shrink-0 text-indigo-600" />
-          <span className="truncate">💳 Financials</span>
-          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 shrink-0">
-            {requisitions.length + deptLedgerRecords.length}
-          </span>
-        </button>
+      {(() => {
+        const visibleTabCount = 1 + (canLeaderFinance ? 1 : 0) + (canLeaderWelfare ? 1 : 0);
+        const gridClass = visibleTabCount === 3 ? 'grid-cols-3' : visibleTabCount === 2 ? 'grid-cols-2' : 'grid-cols-1';
+        return (
+          <div className={`grid ${gridClass} gap-1.5 sm:gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200`}>
+            {canLeaderFinance && (
+              <button
+                type="button"
+                onClick={() => setLeaderConsoleSubTab('finance')}
+                className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
+                  leaderConsoleSubTab === 'finance'
+                    ? 'bg-white text-indigo-700 shadow-xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Landmark size={16} className="shrink-0 text-indigo-600" />
+                <span className="truncate">💳 Financials</span>
+                <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 shrink-0">
+                  {requisitions.length + deptLedgerRecords.length}
+                </span>
+              </button>
+            )}
 
-        <button
-          type="button"
-          onClick={() => setLeaderConsoleSubTab('roster')}
-          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
-            leaderConsoleSubTab === 'roster'
-              ? 'bg-white text-indigo-700 shadow-xs font-black'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Users size={16} className="shrink-0 text-indigo-600" />
-          <span className="truncate">👥 Team Roster</span>
-          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800 shrink-0">
-            {deptRoster.length} Active
-          </span>
-          {pendingJoinRequests.length > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white shrink-0">
-              {pendingJoinRequests.length}
-            </span>
-          )}
-        </button>
+            <button
+              type="button"
+              onClick={() => setLeaderConsoleSubTab('roster')}
+              className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
+                leaderConsoleSubTab === 'roster'
+                  ? 'bg-white text-indigo-700 shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Users size={16} className="shrink-0 text-indigo-600" />
+              <span className="truncate">👥 Team Roster</span>
+              <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-800 shrink-0">
+                {deptRoster.length} Active
+              </span>
+              {pendingJoinRequests.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white shrink-0">
+                  {pendingJoinRequests.length}
+                </span>
+              )}
+            </button>
 
-        <button
-          type="button"
-          onClick={() => setLeaderConsoleSubTab('welfare')}
-          className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
-            leaderConsoleSubTab === 'welfare'
-              ? 'bg-white text-purple-700 shadow-xs font-black'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Heart size={16} className="shrink-0 text-purple-600" />
-          <span className="truncate">🤝 Welfare & Dues</span>
-          <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 shrink-0">
-            {memberContributions.length} Records
-          </span>
-        </button>
-      </div>
+            {canLeaderWelfare && (
+              <button
+                type="button"
+                onClick={() => setLeaderConsoleSubTab('welfare')}
+                className={`py-2.5 px-1.5 sm:px-4 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1 sm:gap-2 truncate ${
+                  leaderConsoleSubTab === 'welfare'
+                    ? 'bg-white text-purple-700 shadow-xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Heart size={16} className="shrink-0 text-purple-600" />
+                <span className="truncate">🤝 Welfare & Dues</span>
+                <span className="hidden lg:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 shrink-0">
+                  {memberContributions.length} Records
+                </span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* MEMBER TASKS & ACTION ITEMS WIDGET */}
       {(() => {
@@ -12242,7 +12286,7 @@ const LandingPage = ({
 
 // --- Main App Root ---
 
-const App = () => {
+const AppShell = () => {
   const location = useLocation();
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -12427,6 +12471,17 @@ const App = () => {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </div>
+  );
+};
+
+const App = () => {
+  const inRouter = useInRouterContext();
+  return inRouter ? (
+    <AppShell />
+  ) : (
+    <HashRouter>
+      <AppShell />
+    </HashRouter>
   );
 };
 

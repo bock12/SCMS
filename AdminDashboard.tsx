@@ -8,6 +8,8 @@ import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } fro
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { ResourcesAdminTab } from './ResourcesAdminTab';
 import { EventSurveysAdminTab } from './EventSurveysAdminTab';
+import { BranchesAndDistrictsTab } from './BranchesAndDistrictsTab';
+import { AuditLogsAdminTab } from './AuditLogsAdminTab';
 import { getCustomRoles, getRoleAssignments } from './roleService';
 import { hasEffectivePermission, hasAnyEffectivePermission, ADMIN_DASHBOARD_PERMISSION_KEYS, PERMISSION_LABELS, type PermissionResolution } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
@@ -41,7 +43,7 @@ import {
   MINISTRY_JOIN_REQUESTS_UPDATED_EVENT
 } from './ministryJoinRequestService';
 import { 
-  Users, Building2, Map, MapPin, Radio, Activity, Plus, Search, 
+  Users, Building2, Map as MapIcon, MapPin, Radio, Activity, Plus, Search, 
   Trash2, ShieldAlert, Check, X, MoreHorizontal, ArrowRightLeft,
   Clock, AlertCircle, ChevronDown, ChevronRight, ChevronLeft, Video, Calendar as CalendarIcon, Play, Key, RefreshCw, ArrowLeft, Settings, Square, Send, MessageSquare, Eye,
   DollarSign, Heart, Sparkles, ShieldCheck, Download, CheckCircle2, Layers, Church,
@@ -109,6 +111,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
   const currentTab = (searchParams.get('tab') as any) || 'overview';
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
+  const [rolesRefreshTick, setRolesRefreshTick] = useState(0);
+  const [rolesRefreshing, setRolesRefreshing] = useState(false);
 
   useEffect(() => {
     const handleUpdate = (e: any) => {
@@ -140,30 +144,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
     setShowMobileMoreMenu(false);
   };
 
-  const tabs = [
-    { id: 'overview', label: 'Church Overview', icon: Activity, shortLabel: 'Overview' },
-    { id: 'events', label: 'Events & Calendar', icon: CalendarIcon, shortLabel: 'Events' },
-    { id: 'resources', label: 'Church Resources', icon: FileText, shortLabel: 'Resources' },
-    { id: 'surveys', label: 'Post-Event Surveys', icon: ClipboardList, shortLabel: 'Surveys' },
-    { id: 'users', label: 'Congregation Roster', icon: Users, shortLabel: 'Roster' },
-    { id: 'roles', label: 'Roles & Governance', icon: ShieldCheck, shortLabel: 'Roles' },
-    { id: 'ministries', label: 'Ministries & Teams', icon: Building2, shortLabel: 'Ministries' },
-    { id: 'financials', label: 'Tithes & Giving', icon: DollarSign, shortLabel: 'Giving' },
-    { id: 'streaming', label: 'Live Broadcasts', icon: Video, shortLabel: 'Streams' },
-    { id: 'multitenant', label: 'Multi-Tenant Roadmap', icon: Map, shortLabel: 'Roadmap' },
-    { id: 'settings', label: 'Church Settings', icon: Settings, shortLabel: 'Settings' }
+  const allTabs = [
+    { id: 'overview', label: 'Church Overview', icon: Activity, shortLabel: 'Overview', permission: null as string | null },
+    { id: 'events', label: 'Events & Calendar', icon: CalendarIcon, shortLabel: 'Events', permission: 'manage_events' },
+    { id: 'resources', label: 'Church Resources', icon: FileText, shortLabel: 'Resources', permission: 'manage_resources' },
+    { id: 'surveys', label: 'Post-Event Surveys', icon: ClipboardList, shortLabel: 'Surveys', permission: 'manage_surveys' },
+    { id: 'users', label: 'Congregation Roster', icon: Users, shortLabel: 'Roster', permission: 'manage_members' },
+    { id: 'roles', label: 'Roles & Governance', icon: ShieldCheck, shortLabel: 'Roles', permission: 'manage_roles' },
+    { id: 'ministries', label: 'Ministries & Teams', icon: Building2, shortLabel: 'Ministries', permission: 'manage_ministries' },
+    { id: 'financials', label: 'Tithes & Giving', icon: DollarSign, shortLabel: 'Giving', permission: 'manage_finances' },
+    { id: 'streaming', label: 'Live Broadcasts', icon: Video, shortLabel: 'Streams', permission: 'manage_streams' },
+    { id: 'multitenant', label: 'Branches & Districts', icon: Layers, shortLabel: 'Branches', permission: 'manage_branches' },
+    { id: 'audit', label: 'Governance Audit Logs', icon: ClipboardList, shortLabel: 'Audit', permission: 'view_audit_logs' },
+    { id: 'settings', label: 'Church Settings', icon: Settings, shortLabel: 'Settings', permission: 'manage_branches' }
   ];
+
+  const tabs = allTabs.filter(t => !t.permission || can(t.permission));
 
   // Primary bottom mobile tabs (Expanded by 2 to include Roles & Ministries)
   const primaryMobileTabs = ['overview', 'events', 'users', 'financials', 'roles', 'ministries'];
 
-  const activeTabInfo = tabs.find(t => t.id === currentTab) || tabs[0];
+  const activeTabInfo = allTabs.find(t => t.id === currentTab) || tabs[0] || allTabs[0];
 
   return (
     <div className="min-h-screen pb-24 md:pb-12 space-y-6">
       {/* Unified Page Header (Navigation handled by main portal Sidebar) */}
-      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className={`relative bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between gap-3 ${
+        currentTab === 'roles' ? 'sm:items-start' : 'sm:items-center'
+      }`}>
+        <div className={`flex items-center gap-3 min-w-0 ${currentTab === 'roles' && can('manage_roles') ? 'pr-12 sm:pr-0' : ''}`}>
           <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-md shadow-indigo-100 shrink-0">
             <Church size={20} />
           </div>
@@ -177,9 +186,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           </div>
         </div>
 
-        <div className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-800 text-[10px] font-black uppercase flex items-center gap-1.5 w-fit shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>Single Church Mode</span>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-800 text-[10px] font-black uppercase flex items-center gap-1.5 w-fit shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Single Church Mode</span>
+          </div>
+          {currentTab === 'roles' && can('manage_roles') && (
+            <button
+              type="button"
+              onClick={() => setRolesRefreshTick(tick => tick + 1)}
+              disabled={rolesRefreshing}
+              aria-label="Refresh roles and permissions"
+              title="Refresh roles and permissions"
+              className="absolute top-3.5 right-3.5 sm:static w-10 h-10 sm:w-11 sm:h-11 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw size={16} className={rolesRefreshing ? 'animate-spin text-indigo-600' : ''} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -210,7 +233,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           )}
           {currentTab === 'roles' && (
             can('manage_roles') 
-              ? <RolesAndPermissionsTab /> 
+              ? <RolesAndPermissionsTab profile={profile} refreshTrigger={rolesRefreshTick} onRefreshingChange={setRolesRefreshing} /> 
               : <PermissionRestrictedCard requiredPermission="manage_members" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'ministries' && (
@@ -229,7 +252,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
               : <PermissionRestrictedCard requiredPermission="manage_streams" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'multitenant' && (
-            can('manage_branches') ? <MultiTenantTab /> : <PermissionRestrictedCard requiredPermission="manage_branches" profile={profile} resolution={resolution} />
+            can('manage_branches') ? <BranchesAndDistrictsTab profile={profile} /> : <PermissionRestrictedCard requiredPermission="manage_branches" profile={profile} resolution={resolution} />
+          )}
+          {currentTab === 'audit' && (
+            can('view_audit_logs') ? <AuditLogsAdminTab /> : <PermissionRestrictedCard requiredPermission="view_audit_logs" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'settings' && (
             can('manage_branches') ? <ChurchSettingsTab /> : <PermissionRestrictedCard requiredPermission="manage_branches" profile={profile} resolution={resolution} />
@@ -5592,7 +5618,7 @@ const MultiTenantTab = () => {
           </div>
           <div className="bg-white p-5 rounded-2xl border border-indigo-100">
             <h4 className="font-bold text-slate-900 text-sm mb-1 flex items-center gap-2">
-              <Map size={16} className="text-emerald-600" /> District Hierarchy
+              <MapIcon size={16} className="text-emerald-600" /> District Hierarchy
             </h4>
             <p className="text-xs text-slate-500">Bishops and District Overseers can monitor aggregate growth across cities and regions.</p>
           </div>

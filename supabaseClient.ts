@@ -72,7 +72,7 @@ const initialPermissions = [
 const initialRolePermissions = [
   ['super_admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance','view_audit_logs']],
   ['admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance','view_audit_logs']],
-  ['district_admin', ['view_members','manage_members','manage_member_transfers','manage_ministries','manage_events','manage_attendance']],
+  ['district_admin', ['view_members','manage_members','manage_member_transfers','manage_roles','manage_branches','manage_ministries','manage_events','manage_attendance']],
   ['pastor', ['view_members','manage_ministries','manage_events','manage_attendance']],
   ['leader', ['submit_requisitions']],
   ['pastor', ['submit_requisitions']],
@@ -1138,18 +1138,21 @@ function loadLocalDatabase() {
       let migratedLegacyRoleAssignments = false;
       if (!Array.isArray(parsed.profile_role_assignments)) {
         const roleIds = new Map(initialSystemRoles.map(role => [role.name, role.id]));
-        parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => ({
-          id: `mock-assignment-${profile.id}`,
-          profile_id: profile.id,
-          role_id: roleIds.get(profile.primary_role || 'member') || roleIds.get('member'),
-          scope_type: 'church',
-          branch_id: null,
-          district_id: null,
-          assigned_by_profile_id: 'usr-admin-1',
-          assigned_at: profile.created_at || new Date().toISOString(),
-          expires_at: null,
-          is_active: true
-        }));
+        parsed.profile_role_assignments = (parsed.profiles || []).map((profile: any) => {
+          const isDistrictAdmin = profile.primary_role === 'district_admin';
+          return {
+            id: `mock-assignment-${profile.id}`,
+            profile_id: profile.id,
+            role_id: roleIds.get(profile.primary_role || 'member') || roleIds.get('member'),
+            scope_type: isDistrictAdmin ? 'district' : 'church',
+            branch_id: null,
+            district_id: isDistrictAdmin ? 'dist-1' : null,
+            assigned_by_profile_id: 'usr-admin-1',
+            assigned_at: profile.created_at || new Date().toISOString(),
+            expires_at: null,
+            is_active: true
+          };
+        });
         migratedLegacyRoleAssignments = true;
       }
 
@@ -1171,18 +1174,21 @@ function loadLocalDatabase() {
     permissions: initialPermissions,
     role_permissions: initialRolePermissions,
     customized_role_permission_ids: [] as string[],
-    profile_role_assignments: initialProfiles.map(profile => ({
-      id: `mock-assignment-${profile.id}`,
-      profile_id: profile.id,
-      role_id: initialSystemRoles.find(role => role.name === profile.primary_role)?.id || 'mock-role-member',
-      scope_type: 'church',
-      branch_id: null,
-      district_id: null,
-      assigned_by_profile_id: 'usr-admin-1',
-      assigned_at: profile.created_at,
-      expires_at: null,
-      is_active: true
-    })),
+    profile_role_assignments: initialProfiles.map(profile => {
+      const isDistrictAdmin = profile.primary_role === 'district_admin';
+      return {
+        id: `mock-assignment-${profile.id}`,
+        profile_id: profile.id,
+        role_id: initialSystemRoles.find(role => role.name === profile.primary_role)?.id || 'mock-role-member',
+        scope_type: isDistrictAdmin ? 'district' : 'church',
+        branch_id: null,
+        district_id: isDistrictAdmin ? 'dist-1' : null,
+        assigned_by_profile_id: 'usr-admin-1',
+        assigned_at: profile.created_at,
+        expires_at: null,
+        is_active: true
+      };
+    }),
     member_transfers: initialTransfers,
     streams: initialStreams,
     stream_chat_messages: initialMessages,
@@ -2091,20 +2097,25 @@ export const supabase = {
       return { data: null, error: { code: '42501', message: 'An authenticated church profile is required.' } };
     }
 
-    const actorAssignments = (localDb.profile_role_assignments || []).filter((item: any) =>
-      item.profile_id === actor.id && item.is_active &&
-      new Date(item.assigned_at || 0).getTime() <= Date.now() &&
-      (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()) &&
-      (localDb.roles || []).some((role: any) => role.id === item.role_id && role.is_active) &&
-      (localDb.role_permissions || []).some((link: any) =>
-        link.role_id === item.role_id &&
-        (localDb.permissions || []).some((permission: any) =>
-          permission.id === link.permission_id && permission.key === 'manage_roles'
+    const getActorAssignmentsForPermission = (permissionKey: string) =>
+      (localDb.profile_role_assignments || []).filter((item: any) =>
+        item.profile_id === actor.id && item.is_active &&
+        new Date(item.assigned_at || 0).getTime() <= Date.now() &&
+        (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()) &&
+        (localDb.roles || []).some((role: any) => role.id === item.role_id && role.is_active) &&
+        (localDb.role_permissions || []).some((link: any) =>
+          link.role_id === item.role_id &&
+          (localDb.permissions || []).some((permission: any) =>
+            permission.id === link.permission_id && permission.key === permissionKey
+          )
         )
-      )
-    );
-    const actorCanManageScope = (scopeType: string, branchId: string | null, districtId: string | null) =>
-      actorAssignments.some((assignment: any) => {
+      );
+
+    const actorAssignments = getActorAssignmentsForPermission('manage_roles');
+    const actorBranchAssignments = getActorAssignmentsForPermission('manage_branches');
+
+    const actorCanManageScopeWith = (assignmentsList: any[], scopeType: string, branchId: string | null, districtId: string | null) =>
+      assignmentsList.some((assignment: any) => {
         if (assignment.scope_type === 'church') return true;
         if (scopeType === 'church') return false;
         if (scopeType === 'branch') {
@@ -2119,6 +2130,17 @@ export const supabase = {
         return false;
       });
 
+    const actorCanManageScope = (scopeType: string, branchId: string | null, districtId: string | null) =>
+      actorCanManageScopeWith(actorAssignments, scopeType, branchId, districtId);
+
+    const actorCanManageTargetRole = (roleName: string | undefined) => {
+      if (!roleName) return false;
+      if (['super_admin', 'admin', 'district_admin'].includes(roleName)) {
+        return actorAssignments.some((assignment: any) => assignment.scope_type === 'church');
+      }
+      return true;
+    };
+
     if (functionName === 'assign_profile_role') {
       const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
       const targetExists = (localDb.profiles || []).some((item: any) => item.id === p_profile_id);
@@ -2132,6 +2154,9 @@ export const supabase = {
       }
       if (!targetExists || !role || !validScope) {
         return { data: null, error: { code: '22023', message: 'The selected member, role, or assignment scope is invalid.' } };
+      }
+      if (!actorCanManageTargetRole(role.name)) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may assign Super Admin, Admin, or District Admin roles.' } };
       }
       const existing = (localDb.profile_role_assignments || []).find((item: any) =>
         item.profile_id === p_profile_id &&
@@ -2175,6 +2200,212 @@ export const supabase = {
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
       return { data: true, error: null };
+    }
+
+    if (functionName === 'reactivate_profile_role_assignment') {
+      const assignment = (localDb.profile_role_assignments || []).find((item: any) => item.id === args.p_assignment_id);
+      if (!assignment) {
+        return { data: null, error: { code: '23503', message: 'The selected role assignment does not exist.' } };
+      }
+      if (!actorCanManageScope(assignment.scope_type, assignment.branch_id, assignment.district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
+      const role = (localDb.roles || []).find((item: any) => item.id === assignment.role_id && item.is_active);
+      if (!role) {
+        return { data: null, error: { code: '23503', message: 'The assigned role is no longer active.' } };
+      }
+      if (!actorCanManageTargetRole(role.name)) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may reactivate Super Admin, Admin, or District Admin roles.' } };
+      }
+      const nowIso = new Date().toISOString();
+      const updated = {
+        ...assignment,
+        is_active: true,
+        expires_at: null,
+        assigned_at: new Date(assignment.assigned_at || 0).getTime() > Date.now() ? nowIso : assignment.assigned_at,
+        assigned_by_profile_id: actor.id
+      };
+      localDb.profile_role_assignments = localDb.profile_role_assignments.map((item: any) =>
+        item.id === assignment.id ? updated : item
+      );
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'update_profile_role_assignment') {
+      const {
+        p_assignment_id,
+        p_role_id,
+        p_scope_type = 'church',
+        p_branch_id = null,
+        p_district_id = null
+      } = args;
+      const existing = (localDb.profile_role_assignments || []).find((item: any) => item.id === p_assignment_id);
+      if (!existing) {
+        return { data: null, error: { code: '23503', message: 'The selected role assignment does not exist.' } };
+      }
+      const validScope =
+        (p_scope_type === 'church' && p_branch_id === null && p_district_id === null) ||
+        (p_scope_type === 'branch' && Boolean(p_branch_id) && p_district_id === null) ||
+        (p_scope_type === 'district' && Boolean(p_district_id) && p_branch_id === null);
+      if (!validScope) {
+        return { data: null, error: { code: '22023', message: 'Role assignment scope identifiers do not match the selected scope.' } };
+      }
+      if (!actorCanManageScope(existing.scope_type, existing.branch_id, existing.district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
+      if (!actorCanManageScope(p_scope_type, p_branch_id, p_district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to assign roles for the target scope.' } };
+      }
+      const existingRole = (localDb.roles || []).find((item: any) => item.id === existing.role_id);
+      const role = (localDb.roles || []).find((item: any) => item.id === p_role_id && item.is_active);
+      if (!role) {
+        return { data: null, error: { code: '23503', message: 'The selected role is unavailable.' } };
+      }
+      if (!actorCanManageTargetRole(existingRole?.name) || !actorCanManageTargetRole(role.name)) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may modify Super Admin, Admin, or District Admin role assignments.' } };
+      }
+      if (p_scope_type === 'branch' && !(localDb.church_branches || []).some((b: any) => b.id === p_branch_id)) {
+        return { data: null, error: { code: '23503', message: 'The selected branch does not exist.' } };
+      }
+      if (p_scope_type === 'district' && !(localDb.districts || []).some((d: any) => d.id === p_district_id)) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
+      }
+      const updated = {
+        ...existing,
+        role_id: p_role_id,
+        scope_type: p_scope_type,
+        branch_id: p_branch_id,
+        district_id: p_district_id,
+        assigned_by_profile_id: actor.id
+      };
+      localDb.profile_role_assignments = localDb.profile_role_assignments.map((item: any) =>
+        item.id === existing.id ? updated : item
+      );
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'delete_profile_role_assignment') {
+      const assignment = (localDb.profile_role_assignments || []).find((item: any) => item.id === args.p_assignment_id);
+      if (!assignment) return { data: false, error: null };
+      if (!actorCanManageScope(assignment.scope_type, assignment.branch_id, assignment.district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
+      const existingRole = (localDb.roles || []).find((item: any) => item.id === assignment.role_id);
+      if (!actorCanManageTargetRole(existingRole?.name)) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may remove Super Admin, Admin, or District Admin role assignments.' } };
+      }
+      localDb.profile_role_assignments = localDb.profile_role_assignments.filter((item: any) => item.id !== assignment.id);
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('profile_role_assignments_updated'));
+      return { data: true, error: null };
+    }
+
+    if (functionName === 'create_district') {
+      const { p_name = '', p_region = '', p_country = '' } = args;
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      if (!hasChurchBranchPerm) {
+        return { data: null, error: { code: '42501', message: 'Church-wide manage_branches permission is required to create districts.' } };
+      }
+      if (!String(p_name).trim() || !String(p_region).trim() || !String(p_country).trim()) {
+        return { data: null, error: { code: '22023', message: 'District name, region, and country are required.' } };
+      }
+      const district: District = {
+        id: `dist-${createMockUuid().slice(0, 8)}`,
+        name: String(p_name).trim(),
+        region: String(p_region).trim(),
+        country: String(p_country).trim()
+      };
+      localDb.districts = [...(localDb.districts || []), district];
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
+      return { data: district, error: null };
+    }
+
+    if (functionName === 'create_church_branch') {
+      const {
+        p_district_id,
+        p_name = '',
+        p_address = '',
+        p_city = '',
+        p_state = '',
+        p_is_main_branch = false
+      } = args;
+      if (!(localDb.districts || []).some((d: any) => d.id === p_district_id)) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
+      }
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      if (!hasChurchBranchPerm && !actorCanManageScopeWith(actorBranchAssignments, 'district', null, p_district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to create branches in this district.' } };
+      }
+      if (Boolean(p_is_main_branch) && !hasChurchBranchPerm) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may designate the main headquarters branch.' } };
+      }
+      if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
+        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state are required.' } };
+      }
+      const branch: ChurchBranch = {
+        id: `branch-${createMockUuid().slice(0, 8)}`,
+        district_id: p_district_id,
+        name: String(p_name).trim(),
+        address: String(p_address).trim(),
+        city: String(p_city).trim(),
+        state: String(p_state).trim(),
+        is_main_branch: Boolean(p_is_main_branch)
+      };
+      localDb.church_branches = [...(localDb.church_branches || []), branch];
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
+      return { data: branch, error: null };
+    }
+
+    if (functionName === 'update_church_branch') {
+      const {
+        p_branch_id,
+        p_district_id,
+        p_name = '',
+        p_address = '',
+        p_city = '',
+        p_state = '',
+        p_is_main_branch = false
+      } = args;
+      const existing = (localDb.church_branches || []).find((b: any) => b.id === p_branch_id);
+      if (!existing) {
+        return { data: null, error: { code: '23503', message: 'The selected branch does not exist.' } };
+      }
+      if (!(localDb.districts || []).some((d: any) => d.id === p_district_id)) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
+      }
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      if (!hasChurchBranchPerm) {
+        const canManageSource = actorCanManageScopeWith(actorBranchAssignments, 'district', null, existing.district_id);
+        const canManageTarget = actorCanManageScopeWith(actorBranchAssignments, 'district', null, p_district_id);
+        if (!canManageSource || !canManageTarget) {
+          return { data: null, error: { code: '42501', message: 'You do not have permission to update this branch or move it across districts.' } };
+        }
+        if (Boolean(p_is_main_branch) !== Boolean(existing.is_main_branch)) {
+          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change main branch designation.' } };
+        }
+      }
+      if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
+        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state are required.' } };
+      }
+      const updated: ChurchBranch = {
+        ...existing,
+        district_id: p_district_id,
+        name: String(p_name).trim(),
+        address: String(p_address).trim(),
+        city: String(p_city).trim(),
+        state: String(p_state).trim(),
+        is_main_branch: Boolean(p_is_main_branch)
+      };
+      localDb.church_branches = localDb.church_branches.map((b: any) => (b.id === p_branch_id ? updated : b));
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
+      return { data: updated, error: null };
     }
 
     if (functionName === 'update_role_permissions') {

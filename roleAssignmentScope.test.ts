@@ -181,4 +181,104 @@ describe('mock role-assignment scope enforcement', () => {
     expect(result.data).toEqual([]);
   });
 
+  test('church-wide managers can deactivate, reactivate, update role/scope, and remove assignments', async () => {
+    await setActorAssignment('church', null, null);
+
+    const created = await supabase.rpc('assign_profile_role', {
+      p_profile_id: 'usr-pastor-1',
+      p_role_id: 'mock-role-worker',
+      p_scope_type: 'branch',
+      p_branch_id: 'branch-1',
+      p_district_id: null
+    });
+    expect(created.error).toBeNull();
+    const assignmentId = created.data.id;
+
+    const deactivated = await supabase.rpc('deactivate_profile_role_assignment', {
+      p_assignment_id: assignmentId
+    });
+    expect(deactivated.data).toBe(true);
+
+    const reactivated = await supabase.rpc('reactivate_profile_role_assignment', {
+      p_assignment_id: assignmentId
+    });
+    expect(reactivated.error).toBeNull();
+    expect(reactivated.data?.is_active).toBe(true);
+
+    const updated = await supabase.rpc('update_profile_role_assignment', {
+      p_assignment_id: assignmentId,
+      p_role_id: 'mock-role-leader',
+      p_scope_type: 'district',
+      p_branch_id: null,
+      p_district_id: 'dist-1'
+    });
+    expect(updated.error).toBeNull();
+    expect(updated.data?.role_id).toBe('mock-role-leader');
+    expect(updated.data?.scope_type).toBe('district');
+    expect(updated.data?.district_id).toBe('dist-1');
+    expect(updated.data?.branch_id).toBeNull();
+
+    const deleted = await supabase.rpc('delete_profile_role_assignment', {
+      p_assignment_id: assignmentId
+    });
+    expect(deleted.error).toBeNull();
+    expect(deleted.data).toBe(true);
+
+    const lookup = await supabase.from('profile_role_assignments').select('*').eq('id', assignmentId);
+    expect(lookup.data).toEqual([]);
+  });
+
+  test('branch-scoped managers cannot escalate assignment scope or reactivate/delete higher-scope assignments', async () => {
+    await setActorAssignment('branch', 'branch-1', null);
+
+    const branchAssignment = await supabase.rpc('assign_profile_role', {
+      p_profile_id: 'usr-pastor-1',
+      p_role_id: 'mock-role-worker',
+      p_scope_type: 'branch',
+      p_branch_id: 'branch-1',
+      p_district_id: null
+    });
+    expect(branchAssignment.error).toBeNull();
+
+    const escalateToDistrict = await supabase.rpc('update_profile_role_assignment', {
+      p_assignment_id: branchAssignment.data.id,
+      p_role_id: 'mock-role-leader',
+      p_scope_type: 'district',
+      p_branch_id: null,
+      p_district_id: 'dist-1'
+    });
+    expect(escalateToDistrict.error?.code).toBe('42501');
+
+    const escalateToChurch = await supabase.rpc('update_profile_role_assignment', {
+      p_assignment_id: branchAssignment.data.id,
+      p_role_id: 'mock-role-leader',
+      p_scope_type: 'church',
+      p_branch_id: null,
+      p_district_id: null
+    });
+    expect(escalateToChurch.error?.code).toBe('42501');
+
+    await supabase.from('profile_role_assignments').insert({
+      id: 'district-inactive-assignment',
+      profile_id: 'usr-pastor-1',
+      role_id: 'mock-role-pastor',
+      scope_type: 'district',
+      branch_id: null,
+      district_id: 'dist-1',
+      assigned_at: '2026-01-01T00:00:00.000Z',
+      expires_at: null,
+      is_active: false
+    });
+
+    const reactivateDistrict = await supabase.rpc('reactivate_profile_role_assignment', {
+      p_assignment_id: 'district-inactive-assignment'
+    });
+    expect(reactivateDistrict.error?.code).toBe('42501');
+
+    const deleteDistrict = await supabase.rpc('delete_profile_role_assignment', {
+      p_assignment_id: 'district-inactive-assignment'
+    });
+    expect(deleteDistrict.error?.code).toBe('42501');
+  });
+
 });

@@ -37,13 +37,38 @@ export const ADMIN_CONSOLE_PERMISSION_KEYS = [
   'manage_ministries',
   'manage_resources',
   'manage_surveys',
-  'manage_streams'
+  'manage_streams',
+  'manage_branches',
+  'view_audit_logs'
 ] as const;
 
 export const ADMIN_DASHBOARD_PERMISSION_KEYS = [
   ...ADMIN_CONSOLE_PERMISSION_KEYS,
   'manage_finances'
 ] as const;
+
+export const HIGH_PRIVILEGE_GOVERNANCE_ROLES = [
+  'super_admin',
+  'admin',
+  'district_admin'
+] as const;
+
+export const BRANCH_LEADERSHIP_ROLE_NAMES = [
+  'pastor',
+  'finance_officer',
+  'leader',
+  'worker'
+] as const;
+
+export function canManageTargetRoleByScope(
+  actorHasChurchManageRoles: boolean,
+  targetRoleName: string
+): boolean {
+  if ((HIGH_PRIVILEGE_GOVERNANCE_ROLES as readonly string[]).includes(targetRoleName)) {
+    return actorHasChurchManageRoles;
+  }
+  return true;
+}
 
 export const LEADER_CONSOLE_PERMISSION_KEYS = [
   'view_leader_console',

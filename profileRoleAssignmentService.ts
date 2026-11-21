@@ -69,6 +69,50 @@ export async function deactivateProfileRoleAssignment(assignmentId: string): Pro
   if (result.error) throw new Error(result.error.message || 'Unable to remove member role assignment.');
 }
 
+export async function reactivateProfileRoleAssignment(assignmentId: string): Promise<ProfileRoleAssignment> {
+  const result = await supabase.rpc('reactivate_profile_role_assignment', {
+    p_assignment_id: assignmentId
+  });
+
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || 'Unable to reactivate member role assignment.');
+  }
+
+  return result.data as ProfileRoleAssignment;
+}
+
+export async function updateProfileRoleAssignment(input: {
+  id: string;
+  role_id: string;
+  scope_type: 'church' | 'district' | 'branch';
+  branch_id?: string | null;
+  district_id?: string | null;
+}): Promise<ProfileRoleAssignment> {
+  const result = await supabase.rpc('update_profile_role_assignment', {
+    p_assignment_id: input.id,
+    p_role_id: input.role_id,
+    p_scope_type: input.scope_type,
+    p_branch_id: input.scope_type === 'branch' ? (input.branch_id ?? null) : null,
+    p_district_id: input.scope_type === 'district' ? (input.district_id ?? null) : null
+  });
+
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || 'Unable to update member role assignment.');
+  }
+
+  return result.data as ProfileRoleAssignment;
+}
+
+export async function deleteProfileRoleAssignment(assignmentId: string): Promise<void> {
+  const result = await supabase.rpc('delete_profile_role_assignment', {
+    p_assignment_id: assignmentId
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message || 'Unable to remove member role assignment.');
+  }
+}
+
 export interface RolePermissionLink {
   role_id: string;
   permission_id: string;
