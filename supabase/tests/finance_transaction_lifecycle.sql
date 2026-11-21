@@ -152,6 +152,7 @@ BEGIN
     '97000000-0000-4000-8000-000000000002'
   );
   IF v_receipt_retry->>'document_id' IS DISTINCT FROM v_receipt->>'document_id'
+     OR v_receipt_retry->>'document_number' IS DISTINCT FROM v_receipt->>'document_number'
      OR v_receipt_retry->>'journal_entry_id' IS DISTINCT FROM v_receipt->>'journal_entry_id'
      OR v_receipt_retry->>'idempotent_replay' <> 'true' THEN
     RAISE EXCEPTION 'An identical receipt retry created a new document or journal';
@@ -174,6 +175,7 @@ BEGIN
   v_journal_id := (v_receipt->>'journal_entry_id')::uuid;
 
   IF v_document_id IS NULL OR v_journal_id IS NULL
+     OR coalesce((v_receipt->>'document_number')::bigint, 0) <= 0
      OR v_receipt->>'status' <> 'approved' THEN
     RAISE EXCEPTION 'Receipt RPC did not return an immediately approved document and journal';
   END IF;
