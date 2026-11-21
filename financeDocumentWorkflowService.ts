@@ -3,6 +3,7 @@ import { decideFinancialDocumentApproval, type DecideFinancialDocumentApprovalRe
 
 export interface FinanceWorkflowDocument {
   id: string;
+  document_number: number;
   document_type: 'receipt' | 'payment';
   transaction_date: string;
   branch_id: string | null;
