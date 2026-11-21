@@ -43,6 +43,11 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<FinancialDocumentTransactionResult | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const changeField = <T,>(setter: React.Dispatch<React.SetStateAction<T>>) => (value: T) => {
+    setIdempotencyKey(crypto.randomUUID());
+    setter(value);
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -127,7 +132,8 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
         fundId: fundId || null,
         externalReference,
         description,
-        exchangeRateToBase: Number(exchangeRate)
+        exchangeRateToBase: Number(exchangeRate),
+        idempotencyKey
       });
       if (result.error) {
         setError(result.error.message || 'The transaction could not be created.');
@@ -135,6 +141,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
         setError('The transaction service returned no document confirmation.');
       } else {
         setCreated(result.data);
+        setIdempotencyKey(crypto.randomUUID());
         setAmount('');
         setExternalReference('');
         setDescription('');
@@ -194,23 +201,23 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
       </div>}
 
       <div className="flex gap-2">
-        <button type="button" onClick={() => { setEntryType('receipt'); setCreated(null); setError(null); }} className={`rounded-xl px-4 py-2 text-sm font-bold ${entryType === 'receipt' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}><ReceiptText size={15} className="mr-1 inline" /> Receipt</button>
-        <button type="button" onClick={() => { setEntryType('payment'); setCreated(null); setError(null); }} className={`rounded-xl px-4 py-2 text-sm font-bold ${entryType === 'payment' ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-600'}`}><Wallet size={15} className="mr-1 inline" /> Payment</button>
+        <button type="button" onClick={() => { changeField(setEntryType)('receipt'); setCreated(null); setError(null); }} className={`rounded-xl px-4 py-2 text-sm font-bold ${entryType === 'receipt' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}><ReceiptText size={15} className="mr-1 inline" /> Receipt</button>
+        <button type="button" onClick={() => { changeField(setEntryType)('payment'); setCreated(null); setError(null); }} className={`rounded-xl px-4 py-2 text-sm font-bold ${entryType === 'payment' ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-600'}`}><Wallet size={15} className="mr-1 inline" /> Payment</button>
       </div>
 
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div><label className={labelClass}>Transaction date *</label><input className={inputClass} type="date" required value={transactionDate} onChange={e => setTransactionDate(e.target.value)} /></div>
-        <div><label className={labelClass}>{entryType === 'receipt' ? 'Received from *' : 'Paid to *'}</label><input className={inputClass} required value={partyName} onChange={e => { setPartyName(e.target.value); setProfileId(''); }} placeholder="Person or organisation" /></div>
-        <div><label className={labelClass}>Link member (optional)</label><select className={inputClass} value={profileId} onChange={e => { setProfileId(e.target.value); const person = members.find(item => item.id === e.target.value); if (person) setPartyName(person.label); }}><option value="">No member link</option>{members.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}</select></div>
-        <div><label className={labelClass}>Amount *</label><input className={inputClass} type="number" min="0.01" step="0.01" required value={amount} onChange={e => setAmount(e.target.value)} /></div>
-        <div><label className={labelClass}>Currency *</label><select className={inputClass} required value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}><option value="">Select currency</option>{configuration.currencies.map(code => <option key={code} value={code}>{code}</option>)}</select></div>
-        <div><label className={labelClass}>Exchange rate to {configuration.baseCurrencyCode || 'base'} *</label><input className={inputClass} type="number" min="0.000001" step="0.000001" required value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} disabled={currencyCode === configuration.baseCurrencyCode} /></div>
-        <div><label className={labelClass}>Financial account *</label><select className={inputClass} required value={financialAccountId} onChange={e => setFinancialAccountId(e.target.value)}><option value="">Select account</option>{accountsForCurrency.map(account => <option key={account.id} value={account.id}>{account.name} · {account.account_type}</option>)}</select></div>
-        <div><label className={labelClass}>{entryType === 'receipt' ? 'Income account *' : 'Expense account *'}</label><select className={inputClass} required value={categoryAccountId} onChange={e => setCategoryAccountId(e.target.value)}><option value="">Select chart account</option>{categoryAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></div>
-        <div><label className={labelClass}>Fund (optional)</label><select className={inputClass} value={fundId} onChange={e => setFundId(e.target.value)}><option value="">No fund</option>{configuration.funds.filter(fund => fund.is_active).map(fund => <option key={fund.id} value={fund.id}>{fund.code} — {fund.name}</option>)}</select></div>
-        <div><label className={labelClass}>Payment method *</label><select className={inputClass} required value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as FinancialPaymentMethod)}>{(['cash','bank_transfer','mobile_money','card','cheque','other'] as FinancialPaymentMethod[]).map(method => <option key={method} value={method}>{method.replace('_', ' ')}</option>)}</select></div>
-        <div><label className={labelClass}>Reference</label><input className={inputClass} value={externalReference} onChange={e => setExternalReference(e.target.value)} placeholder="Receipt / transfer reference" /></div>
-        <div className="sm:col-span-2 lg:col-span-3"><label className={labelClass}>Description *</label><textarea className={inputClass} required rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Purpose or details of this transaction" /></div>
+        <div><label className={labelClass}>Transaction date *</label><input className={inputClass} type="date" required value={transactionDate} onChange={e => changeField(setTransactionDate)(e.target.value)} /></div>
+        <div><label className={labelClass}>{entryType === 'receipt' ? 'Received from *' : 'Paid to *'}</label><input className={inputClass} required value={partyName} onChange={e => { changeField(setPartyName)(e.target.value); changeField(setProfileId)(''); }} placeholder="Person or organisation" /></div>
+        <div><label className={labelClass}>Link member (optional)</label><select className={inputClass} value={profileId} onChange={e => { changeField(setProfileId)(e.target.value); const person = members.find(item => item.id === e.target.value); if (person) setPartyName(person.label); }}><option value="">No member link</option>{members.map(person => <option key={person.id} value={person.id}>{person.label}</option>)}</select></div>
+        <div><label className={labelClass}>Amount *</label><input className={inputClass} type="number" min="0.01" step="0.01" required value={amount} onChange={e => changeField(setAmount)(e.target.value)} /></div>
+        <div><label className={labelClass}>Currency *</label><select className={inputClass} required value={currencyCode} onChange={e => changeField(setCurrencyCode)(e.target.value)}><option value="">Select currency</option>{configuration.currencies.map(code => <option key={code} value={code}>{code}</option>)}</select></div>
+        <div><label className={labelClass}>Exchange rate to {configuration.baseCurrencyCode || 'base'} *</label><input className={inputClass} type="number" min="0.000001" step="0.000001" required value={exchangeRate} onChange={e => changeField(setExchangeRate)(e.target.value)} disabled={currencyCode === configuration.baseCurrencyCode} /></div>
+        <div><label className={labelClass}>Financial account *</label><select className={inputClass} required value={financialAccountId} onChange={e => changeField(setFinancialAccountId)(e.target.value)}><option value="">Select account</option>{accountsForCurrency.map(account => <option key={account.id} value={account.id}>{account.name} · {account.account_type}</option>)}</select></div>
+        <div><label className={labelClass}>{entryType === 'receipt' ? 'Income account *' : 'Expense account *'}</label><select className={inputClass} required value={categoryAccountId} onChange={e => changeField(setCategoryAccountId)(e.target.value)}><option value="">Select chart account</option>{categoryAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></div>
+        <div><label className={labelClass}>Fund (optional)</label><select className={inputClass} value={fundId} onChange={e => changeField(setFundId)(e.target.value)}><option value="">No fund</option>{configuration.funds.filter(fund => fund.is_active).map(fund => <option key={fund.id} value={fund.id}>{fund.code} — {fund.name}</option>)}</select></div>
+        <div><label className={labelClass}>Payment method *</label><select className={inputClass} required value={paymentMethod} onChange={e => changeField(setPaymentMethod)(e.target.value as FinancialPaymentMethod)}>{(['cash','bank_transfer','mobile_money','card','cheque','other'] as FinancialPaymentMethod[]).map(method => <option key={method} value={method}>{method.replace('_', ' ')}</option>)}</select></div>
+        <div><label className={labelClass}>Reference</label><input className={inputClass} value={externalReference} onChange={e => changeField(setExternalReference)(e.target.value)} placeholder="Receipt / transfer reference" /></div>
+        <div className="sm:col-span-2 lg:col-span-3"><label className={labelClass}>Description *</label><textarea className={inputClass} required rows={2} value={description} onChange={e => changeField(setDescription)(e.target.value)} placeholder="Purpose or details of this transaction" /></div>
         <div className="sm:col-span-2 lg:col-span-3 flex justify-end"><button type="submit" disabled={submitting || noSetup || !branchId} className={`rounded-xl px-5 py-2.5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50 ${entryType === 'receipt' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>{submitting ? 'Submitting…' : entryType === 'receipt' ? 'Create receipt' : 'Create payment'}</button></div>
       </form>
     </section>
