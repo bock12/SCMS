@@ -192,7 +192,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertCircle size={17} />{error}</div>}
       {created && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
         <div className="flex items-center gap-2 font-bold"><CheckCircle2 size={17} /> Financial document created — {created.status === 'approved' ? 'approved' : created.status.replace('_', ' ')}</div>
-        <p className="mt-1 text-xs">Document: <strong>{created.document_id}</strong> · Approval request: <strong>{created.approval_request_id || 'Not returned'}</strong> · Status: <strong>{created.status}</strong></p>
+        <p className="mt-1 text-xs">Document number: <strong>{entryType === 'receipt' ? 'REC' : 'PAY'}-{String(created.document_number).padStart(6, '0')}</strong> · Approval request: <strong>{created.approval_request_id || 'Not returned'}</strong> · Status: <strong>{created.status}</strong></p>
         <p className="mt-1 text-xs">{created.status === 'approved' ? 'The draft journal is linked and may be posted only through the controlled posting workflow.' : 'The draft journal is not yet a posted ledger entry. It becomes eligible for posting only after approval.'}</p>
       </div>}
 
