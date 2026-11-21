@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock3, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock3, Printer, RefreshCw, ShieldCheck, XCircle, X } from 'lucide-react';
 import { decideFinanceWorkflowApproval, getFinanceWorkflowDocuments, type FinanceWorkflowDocument } from './financeDocumentWorkflowService';
 
 interface Props { branchId: string | null; }
@@ -18,6 +18,7 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
+  const [selectedDocument, setSelectedDocument] = useState<FinanceWorkflowDocument | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -99,7 +100,10 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
                 </div>
                 <div className={`text-lg font-black ${isReceipt ? 'text-emerald-700' : 'text-rose-700'}`}>{document.currency_code} {Number(document.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
               </div>
-              {document.description && <p className="mt-2 text-sm text-slate-600">{document.description}</p>}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-slate-600">{document.description}</p>
+                <button type="button" onClick={() => setSelectedDocument(document)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">View details</button>
+              </div>
               {document.external_reference && <p className="mt-1 text-xs text-slate-500">Reference: {document.external_reference}</p>}
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                 <Clock3 size={14} />
@@ -132,6 +136,45 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
             </article>;
           })}
         </div>}
+
+      {selectedDocument && (() => {
+        const selectedIsReceipt = selectedDocument.document_type === 'receipt';
+        const selectedReference = `${selectedIsReceipt ? 'REC' : 'PAY'}-${String(selectedDocument.document_number).padStart(6, '0')}`;
+        return <div className="finance-detail-overlay" role="dialog" aria-modal="true" aria-labelledby="finance-document-detail-title">
+          <div className="finance-detail-panel">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3 print:hidden">
+              <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Financial document detail</p><h3 id="finance-document-detail-title" className="text-lg font-black text-slate-900">{selectedReference}</h3></div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white"><Printer size={14} /> Print</button>
+                <button type="button" aria-label="Close document details" onClick={() => setSelectedDocument(null)} className="rounded-lg border border-slate-300 p-2 text-slate-600"><X size={16} /></button>
+              </div>
+            </div>
+            <div className="finance-print-sheet">
+              <div className="mb-6 border-b-2 border-slate-900 pb-4">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Church financial record</p>
+                <h2 className="mt-2 text-2xl font-black text-slate-900">{selectedIsReceipt ? 'OFFICIAL RECEIPT' : 'PAYMENT VOUCHER'}</h2>
+                <p className="mt-1 text-sm font-bold text-slate-600">{selectedReference}</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div><p className="text-xs uppercase text-slate-500">{selectedIsReceipt ? 'Received from' : 'Paid to'}</p><p className="mt-1 font-bold text-slate-900">{selectedDocument.payee_or_payer_name}</p></div>
+                <div><p className="text-xs uppercase text-slate-500">Transaction date</p><p className="mt-1 font-bold text-slate-900">{selectedDocument.transaction_date}</p></div>
+                <div><p className="text-xs uppercase text-slate-500">Amount</p><p className="mt-1 text-xl font-black text-slate-900">{selectedDocument.currency_code} {Number(selectedDocument.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
+                <div><p className="text-xs uppercase text-slate-500">Payment method</p><p className="mt-1 font-bold capitalize text-slate-900">{selectedDocument.payment_method?.replace('_', ' ') || '—'}</p></div>
+                <div><p className="text-xs uppercase text-slate-500">Status</p><p className="mt-1 font-bold capitalize text-slate-900">{selectedDocument.status.replace('_', ' ')}</p></div>
+                <div><p className="text-xs uppercase text-slate-500">External reference</p><p className="mt-1 font-bold text-slate-900">{selectedDocument.external_reference || '—'}</p></div>
+              </div>
+              <div className="mt-5 rounded-lg border border-slate-200 p-4"><p className="text-xs uppercase text-slate-500">Description / purpose</p><p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{selectedDocument.description || '—'}</p></div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 text-xs text-slate-600">
+                <p>Document ID: {selectedDocument.id}</p><p>Journal entry: {selectedDocument.journal_entry_id || 'Not yet linked'}</p>
+                <p>Approval progress: {selectedDocument.approval_steps_completed}/{selectedDocument.approval_steps_total}</p><p>Approval request: {selectedDocument.approval_request_id || '—'}</p>
+              </div>
+              {selectedDocument.approval_steps.length > 0 && <div className="mt-5 border-t border-slate-200 pt-4"><h4 className="text-xs font-black uppercase tracking-wide text-slate-600">Approval history</h4><ol className="mt-2 space-y-2">{selectedDocument.approval_steps.map(step => <li key={step.id} className="text-xs text-slate-700">Step {step.step_order}: <strong className="capitalize">{step.status}</strong>{step.decision ? ` — ${step.decision}` : ''}{step.comments ? ` — ${step.comments}` : ''}</li>)}</ol></div>}
+              <div className="mt-10 grid grid-cols-2 gap-10 text-center text-xs text-slate-500"><div className="border-t border-slate-400 pt-2">Prepared / received by</div><div className="border-t border-slate-400 pt-2">Authorised by</div></div>
+              <p className="mt-8 text-center text-[10px] text-slate-400">This printout records the transaction workflow status. It is not proof of posting unless the status is posted.</p>
+            </div>
+          </div>
+        </div>;
+      })()}
       <p className="text-xs text-slate-400">Signed in profile: {actorId || 'Not available'}. Approval decisions are checked again by the transaction service; hiding an action in this interface is not an authorization boundary.</p>
     </section>
   );
