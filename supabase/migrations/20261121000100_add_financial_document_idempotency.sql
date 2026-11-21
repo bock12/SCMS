@@ -10,7 +10,7 @@ create unique index if not exists uq_financial_documents_creator_idempotency
   on public.financial_documents (created_by_profile_id, idempotency_key)
   where idempotency_key is not null;
 
-create or replace function public.create_financial_document_transaction(
+create or replace function public.create_financial_document_transaction_idempotent(
   p_document_type text,
   p_transaction_date date,
   p_branch_id uuid,
@@ -148,10 +148,10 @@ revoke all on function public.create_financial_document_transaction(
   text, date, uuid, uuid, text, numeric, char, text, uuid, uuid, uuid, text, text, numeric
 ) from public, anon, authenticated, service_role;
 
-revoke all on function public.create_financial_document_transaction(
+revoke all on function public.create_financial_document_transaction_idempotent(
   text, date, uuid, uuid, text, numeric, char, text, uuid, uuid, uuid, text, text, numeric, uuid
 ) from public, anon, service_role;
-grant execute on function public.create_financial_document_transaction(
+grant execute on function public.create_financial_document_transaction_idempotent(
   text, date, uuid, uuid, text, numeric, char, text, uuid, uuid, uuid, text, text, numeric, uuid
 ) to authenticated;
 
