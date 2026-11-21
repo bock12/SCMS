@@ -1618,7 +1618,7 @@ export function createMockFinanceRpc(
         if (name === 'get_finance_journals') return getFinanceJournals(args);
         if (name === 'post_finance_journal_entry') return postJournalEntry(args);
         if (name === 'save_finance_configuration') return saveFinanceConfiguration(args);
-        if (name === 'create_financial_document_transaction') return createTransaction(args);
+        if (name === 'create_financial_document_transaction_idempotent' || name === 'create_financial_document_transaction') return createTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
         if (name === 'post_journal_entry') return postJournalEntry(args);
         return fail(`Mock RPC function not implemented: ${name}`);
