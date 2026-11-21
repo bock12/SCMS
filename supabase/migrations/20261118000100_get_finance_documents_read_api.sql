@@ -48,7 +48,6 @@ begin
       fd.id,
       jsonb_build_object(
         'id', fd.id,
-        'document_number', fd.document_number,
         'document_type', fd.document_type,
         'transaction_date', fd.transaction_date,
         'branch_id', fd.branch_id,
