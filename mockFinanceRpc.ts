@@ -593,7 +593,8 @@ export function createMockFinanceRpc(
       p_document_type: 'payment',
       p_branch_id: budget.branch_id,
       p_currency_code: budget.currency_code,
-      p_exchange_rate_to_base: rate
+      p_exchange_rate_to_base: rate,
+      p_idempotency_key: args.p_idempotency_key || `event-budget-${budget.id}`
     };
     const created = createTransaction(txArgs, state, false);
     if (created.error) return created;
@@ -810,7 +811,8 @@ export function createMockFinanceRpc(
       p_branch_id: requisition.branch_id,
       p_currency_code: requisition.currency,
       p_exchange_rate_to_base: rate,
-      p_description: String(args.p_description || '').trim() || requisition.title
+      p_description: String(args.p_description || '').trim() || requisition.title,
+      p_idempotency_key: args.p_idempotency_key || requestKey
     };
     const created = createTransaction(txArgs, state, false);
     if (created.error) return created;
