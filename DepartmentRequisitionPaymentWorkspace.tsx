@@ -5,7 +5,7 @@ import {
   getDatabaseRequisitionPaymentSummary,
   type DepartmentRequisitionPaymentSummary
 } from './requisitionService';
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 
 type RequisitionRow = {
   id: string;
@@ -77,7 +77,7 @@ export const DepartmentRequisitionPaymentWorkspace: React.FC<DepartmentRequisiti
     setError(null);
     try {
       const [configuration, paymentSummary] = await Promise.all([
-        supabase.rpc('get_finance_configuration', { p_branch_id: branchId }),
+        financeSupabase.rpc('get_finance_configuration', { p_branch_id: branchId }),
         getDatabaseRequisitionPaymentSummary(branchId)
       ]);
       if (configuration.error) throw new Error(configuration.error.message);

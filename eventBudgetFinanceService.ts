@@ -1,10 +1,10 @@
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import { getFinanceEventUuid, type FinanceEventIdentity } from './eventFinanceIdentity';
 import type { FinancialPaymentMethod } from './financeTransactionService';
 
 type RpcResponse<T> = { data: T | null; error: { message: string; code?: string } | null };
 type RpcClient = { rpc: (name: string, args: Record<string, unknown>) => Promise<RpcResponse<any>> };
-const defaultRpcClient = supabase as unknown as RpcClient;
+const defaultRpcClient = financeSupabase as unknown as RpcClient;
 
 export interface EventBudgetLineInput {
   accountId: string;

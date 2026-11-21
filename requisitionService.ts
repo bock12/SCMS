@@ -1,5 +1,5 @@
 import { DepartmentRequisition, DepartmentFinancialStanding } from './types';
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 
 const STORAGE_KEY = 'faithconnect_department_requisitions_v2';
 
@@ -322,7 +322,7 @@ type RequisitionRpcResponse<T> = {
 type RequisitionRpcClient = {
   rpc: (name: string, args?: Record<string, unknown>) => Promise<RequisitionRpcResponse<any>>;
 };
-const defaultRequisitionRpcClient = supabase as unknown as RequisitionRpcClient;
+const defaultRequisitionRpcClient = financeSupabase as unknown as RequisitionRpcClient;
 
 export interface SubmitDepartmentRequisitionInput {
   branchId: string;

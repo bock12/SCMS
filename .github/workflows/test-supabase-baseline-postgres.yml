@@ -28,6 +28,7 @@ on:
       - "supabase/migrations/20261119000600_add_department_requisition_read_api.sql"
       - "supabase/migrations/20261119000700_add_requisition_submission_options_api.sql"
       - "supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql"
+      - "supabase/migrations/20261121234500_add_secure_event_budget_read_api.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
@@ -1142,6 +1143,9 @@ jobs:
       - name: Apply department requisition payment linkage
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql
 
+      - name: Apply secure event budget read API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261121234500_add_secure_event_budget_read_api.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1154,7 +1158,8 @@ jobs:
               'public.decide_event_budget_approval(uuid,text,text)',
               'public.create_event_budget_payment(uuid,date,uuid,text,numeric,text,uuid,uuid,uuid,text,text,numeric)',
               'public.get_event_budget_submission_options(uuid)',
-              'public.get_my_event_budgets(uuid)'
+              'public.get_my_event_budgets(uuid)',
+              'public.get_event_budgets(uuid)'
             ] LOOP
               IF NOT has_function_privilege('authenticated', v_signature, 'EXECUTE') THEN
                 RAISE EXCEPTION 'Authenticated role is missing event budget RPC grant: %', v_signature;

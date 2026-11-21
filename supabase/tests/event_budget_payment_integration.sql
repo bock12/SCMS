@@ -26,6 +26,8 @@ DECLARE
   v_journal_id uuid;
   v_unapproved_budget_id uuid;
   v_total_actual numeric(20,4);
+  v_event_budgets jsonb;
+  v_listed_budget jsonb;
 BEGIN
   INSERT INTO auth.users (id, email) VALUES
     (v_submitter_auth, 'fin-int-002-submitter@example.invalid'),
@@ -252,6 +254,33 @@ BEGIN
     RAISE EXCEPTION 'Posted event payment did not contribute exactly once to source actuals';
   END IF;
 
-  RAISE NOTICE 'FIN-INT-002 event budget approval, payment linkage and posted actual checks passed';
+  -- Verify the finance read API returns only persisted budgets and posted actuals.
+  PERFORM set_config('request.jwt.claim.sub', v_approver_auth::text, true);
+  v_event_budgets := public.get_event_budgets(v_branch_id);
+  SELECT item INTO v_listed_budget
+  FROM jsonb_array_elements(v_event_budgets->'budgets') item
+  WHERE item->>'id' = v_budget_id::text;
+
+  IF v_listed_budget IS NULL
+     OR v_listed_budget->>'event_title' <> 'FIN-INT-002 Test Event'
+     OR (v_listed_budget->>'total_actual')::numeric <> 200
+     OR v_listed_budget->'payment_document'->>'status' <> 'posted'
+     OR v_listed_budget->>'payment_document_id' <> v_document_id::text THEN
+    RAISE EXCEPTION 'Event budget read API did not return the canonical payment and posted actual';
+  END IF;
+
+  SELECT item INTO v_listed_budget
+  FROM jsonb_array_elements(v_event_budgets->'budgets') item
+  WHERE item->>'id' = v_unapproved_budget_id::text;
+
+  IF v_listed_budget IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(v_listed_budget->'approval_steps') step
+       WHERE (step->>'actor_can_decide')::boolean IS TRUE
+     ) THEN
+    RAISE EXCEPTION 'Event budget read API did not expose the approver authorized pending step';
+  END IF;
+
+  RAISE NOTICE 'FIN-INT-002 event budget approval, payment linkage, posted actuals and read API checks passed';
 END
 $event_budget_payment$;

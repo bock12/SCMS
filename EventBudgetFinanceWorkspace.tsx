@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, RefreshCw, Wallet, ShieldCheck, Plus } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import {
   createEventBudgetPayment,
   decideEventBudgetApproval,
@@ -57,7 +57,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
       : getFinanceConfiguration();
     const eventRequest = fixedEvent
       ? Promise.resolve({ data: null, error: null })
-      : supabase.from('events').select('*').order('title', { ascending: true });
+      : financeSupabase.from('events').select('*').order('title', { ascending: true });
     const [budgetResult, configResult, eventResult] = await Promise.all([
       budgetRequest, configurationRequest, eventRequest
     ]);
@@ -159,7 +159,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
 
   const decide = async (budget: BudgetRecord, decision: 'approved' | 'rejected') => {
     const step = (budget.approval_steps || []).find((item: any) =>
-      item.status === 'pending' && item.approver_profile_id === profileId);
+      item.actor_can_decide === true);
     if (!step) { setError('No pending approval step is assigned to your profile for this budget.'); return; }
     const comments = decision === 'rejected'
       ? window.prompt('Enter the reason for rejecting this event budget:')
@@ -217,7 +217,7 @@ export const EventBudgetFinanceWorkspace: React.FC<Props> = ({ branchId, profile
         <div className="grid gap-3">
           {budgets.map(budget => {
             const myStep = (budget.approval_steps || []).find((step: any) =>
-              step.status === 'pending' && step.approver_profile_id === profileId);
+              step.actor_can_decide === true);
             const canPay = budget.status === 'approved' && !budget.payment_document_id;
             return (
               <article key={budget.id} className="rounded-xl border border-slate-200 bg-white p-4">
