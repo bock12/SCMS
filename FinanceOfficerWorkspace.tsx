@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { FinanceDatabaseSessionGate } from './FinanceDatabaseSessionGate';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from './supabaseClient';
+import { financeSupabase } from './financeSupabaseClient';
 import { getFinanceLedgerEntries, mapFinanceLedgerEntriesToWorkspaceRecords } from './financeLedgerService';
 import { hasEffectivePermission } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
@@ -153,18 +153,16 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [expenseNotes, setExpenseNotes] = useState('');
 
   const fetchMembers = async () => {
-    const { data } = await supabase.from('profiles').select('*').order('first_name', { ascending: true });
-    if (data && data.length > 0) {
-      setMembersList(data as unknown as Profile[]);
-    } else {
-      setMembersList([
-        { id: 'm-1', first_name: 'Grace', last_name: 'Campbell', primary_role: 'Congregant', phone: '077 444 555', email: 'grace@cathedral.org' } as any,
-        { id: 'm-2', first_name: 'Sahr', last_name: 'Sesay', primary_role: 'Financial Officer', phone: '076 100 200', email: 'sahr@cathedral.org' } as any,
-        { id: 'm-3', first_name: 'David', last_name: 'Miller', primary_role: 'Deacon', phone: '078 123 456', email: 'david@cathedral.org' } as any,
-        { id: 'm-4', first_name: 'Hannah', last_name: 'Adams', primary_role: 'Worship Lead', phone: '079 888 999', email: 'hannah@cathedral.org' } as any,
-        { id: 'm-5', first_name: 'Rev. Sarah', last_name: 'Johnson', primary_role: 'Senior Pastor', phone: '076 999 000', email: 'pastor@cathedral.org' } as any,
-      ]);
+    const { data, error } = await financeSupabase
+      .from('profiles')
+      .select('id,first_name,last_name,email,phone,branch_id')
+      .order('first_name', { ascending: true });
+    if (error) {
+      setMembersList([]);
+      setLedgerError(current => current || error.message);
+      return;
     }
+    setMembersList((data || []) as unknown as Profile[]);
   };
 
   const handleSelectIncomeMember = (memberId: string) => {
