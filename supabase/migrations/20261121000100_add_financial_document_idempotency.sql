@@ -90,7 +90,6 @@ begin
       from public.journal_entries
       where source_id = v_existing.id
         and source_type in ('financial_document', 'financial_document_pending')
-      order by created_at desc
       limit 1;
     end if;
 
