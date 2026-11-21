@@ -94,6 +94,7 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${statusClass(document.status)}`}>{document.status.replace('_', ' ')}</span>
                   </div>
                   <h4 className="mt-2 font-bold text-slate-900">{document.payee_or_payer_name}</h4>
+                  <p className="text-xs font-semibold text-slate-600">{isReceipt ? 'REC' : 'PAY'}-{String(document.document_number).padStart(6, '0')}</p>
                   <p className="text-xs text-slate-500">{document.id} · {document.transaction_date} · {document.payment_method?.replace('_', ' ')}</p>
                 </div>
                 <div className={`text-lg font-black ${isReceipt ? 'text-emerald-700' : 'text-rose-700'}`}>{document.currency_code} {Number(document.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
