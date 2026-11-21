@@ -4332,6 +4332,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [localRequisitionDrafts, setLocalRequisitionDrafts] = useState<DepartmentRequisition[]>(() => getRequisitions().filter(item => item.status === 'draft'));
   const [showProposalModal, setShowProposalModal] = useState(false);
   const [proposalSuccessToast, setProposalSuccessToast] = useState<string | null>(null);
+  const [editingReqId, setEditingReqId] = useState<string | null>(null);
+  const [editingReqNum, setEditingReqNum] = useState<string | null>(null);
 
   // Proposal & Proforma Invoice Preview / Edit Modal State
   const [showProposalPreviewModal, setShowProposalPreviewModal] = useState(false);
@@ -5241,9 +5243,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setNewNoticeText('');
   };
 
-  // Editing Existing Proposal State
-  const [editingReqId, setEditingReqId] = useState<string | null>(null);
-  const [editingReqNum, setEditingReqNum] = useState<string | null>(null);
+  // Proposal Form Helpers & Submission Actions
 
   const openNewProposalModal = () => {
     setEditingReqId(null);
