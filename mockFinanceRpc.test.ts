@@ -84,6 +84,7 @@ describe('deterministic mock financial-document RPC', () => {
     const result = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
     expect(result.error).toBeNull();
     expect(result.data.status).toBe('pending_approval');
+    expect(result.data.document_number).toBe(1);
     const state = ctx.read();
     expect(state.documents).toHaveLength(1);
     expect(state.journals[0].source_type).toBe('financial_document_pending');
@@ -93,6 +94,21 @@ describe('deterministic mock financial-document RPC', () => {
     expect(state.journalLines.reduce((n, l) => n + l.base_debit_amount, 0)).toBe(250);
     expect(state.journalLines.reduce((n, l) => n + l.base_credit_amount, 0)).toBe(250);
     expect(state.documents[0].payee_or_payer_name).toBe('Sunday Service');
+    expect(state.documents[0].document_number).toBe(1);
+  });
+
+  test('assigns unique sequential numbers across receipt and payment documents', async () => {
+    const ctx = fixture();
+    const receipt = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
+    const payment = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_document_type: 'payment', p_category_account_id: 'expense-chart',
+      p_idempotency_key: '00000000-0000-4000-8000-000000000002'
+    });
+    expect(receipt.error).toBeNull();
+    expect(payment.error).toBeNull();
+    expect(receipt.data.document_number).toBe(1);
+    expect(payment.data.document_number).toBe(2);
+    expect(ctx.read().documents.map(document => document.document_number)).toEqual([1, 2]);
   });
 
   test('creates a balanced pending payment with expense debit and cash credit', async () => {
