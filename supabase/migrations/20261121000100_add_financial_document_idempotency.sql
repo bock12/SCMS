@@ -97,7 +97,6 @@ begin
     from public.approval_requests
     where transaction_type = 'financial_document'
       and target_id = v_existing.id
-    order by created_at desc
     limit 1;
 
     return jsonb_build_object(
@@ -150,7 +149,7 @@ revoke all on function public.create_financial_document_transaction(
 
 revoke all on function public.create_financial_document_transaction_idempotent(
   text, date, uuid, uuid, text, numeric, char, text, uuid, uuid, uuid, text, text, numeric, uuid
-) from public, anon, service_role;
+) from public, anon, authenticated, service_role;
 grant execute on function public.create_financial_document_transaction_idempotent(
   text, date, uuid, uuid, text, numeric, char, text, uuid, uuid, uuid, text, text, numeric, uuid
 ) to authenticated;
