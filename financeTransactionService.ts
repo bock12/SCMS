@@ -29,6 +29,7 @@ export interface CreateFinancialDocumentTransactionInput {
 
 export interface FinancialDocumentTransactionResult {
   document_id: string;
+  document_number: number;
   journal_entry_id: string;
   approval_request_id: string | null;
   status: string;
