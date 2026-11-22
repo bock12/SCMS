@@ -22,7 +22,7 @@ export interface MockFinanceState {
   budgetLines: Array<Record<string, any>>;
   approvalPolicies: Array<{
     id: string; is_active: boolean; transaction_type: 'financial_document' | 'budget' | 'requisition';
-    branch_id: string | null; min_amount: number; max_amount: number | null;
+    branch_id: string | null; district_id?: string | null; min_amount: number; max_amount: number | null;
     approver_profile_ids: string[];
   }>;
   documents: Array<Record<string, any>>;
@@ -673,7 +673,7 @@ export function createMockFinanceRpc(
     const scopeType = String(args.p_scope_type || '');
     const scopeId = args.p_scope_id ?? null;
     const scope = resolveMockFinanceScope(state, scopeType, scopeId);
-    if (scope.error) return fail(scope.error);
+    if ('error' in scope) return fail(scope.error);
     const canView = scopeType === 'church'
       ? hasPermission(state, actor.id, 'view_finances', null) || hasPermission(state, actor.id, 'manage_finances', null) || hasPermission(state, actor.id, 'approve_finances', null)
       : scopeType === 'district'
