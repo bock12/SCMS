@@ -734,7 +734,8 @@ export function createMockFinanceRpc(
         return fail('Financial account requires an active currency and active non-control asset chart account');
       }
       if ((item.branch_id ?? null) !== scope.branchId ||
-          (item.district_id ?? null) !== scope.districtId) return fail('Financial account ownership does not match the requested scope');
+          (scopeType === 'branch' && item.district_id != null && item.district_id !== scope.districtId) ||
+          (scopeType !== 'branch' && (item.district_id ?? null) !== scope.districtId)) return fail('Financial account ownership does not match the requested scope');
       const existing = state.financialAccounts.find(account => account.id === accountId);
       if (existing) {
         const same = existing.chart_account_id === chartId && (existing.branch_id ?? null) === scope.branchId &&
@@ -761,7 +762,8 @@ export function createMockFinanceRpc(
         return fail('Fund requires an ID, code, name and valid fund type');
       }
       if ((item.branch_id ?? null) !== scope.branchId ||
-          (item.district_id ?? null) !== scope.districtId) return fail('Fund ownership does not match the requested scope');
+          (scopeType === 'branch' && item.district_id != null && item.district_id !== scope.districtId) ||
+          (scopeType !== 'branch' && (item.district_id ?? null) !== scope.districtId)) return fail('Fund ownership does not match the requested scope');
       const existing = state.funds.find(fund => fund.id === fundId);
       if (existing) {
         const same = existing.name === name && existing.code === code &&
