@@ -283,6 +283,13 @@ BEGIN
   IF NOT has_function_privilege('authenticated', 'private.has_permission_for_district(text,uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Authenticated role is missing district permission helper execution';
   END IF;
+  IF has_function_privilege('anon', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Scoped finance configuration API must not be executable by anon or service_role';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Authenticated role is missing scoped finance configuration API execution';
+  END IF;
 END
 $finance_org_security$;
 
