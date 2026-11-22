@@ -24,7 +24,8 @@ function fixture(options: { churchFinance?: boolean; districtFinance?: boolean; 
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
-    branches: [{ id: 'branch-a', district_id: 'district-a' }],
+    districts: [{ id: 'district-a', name: 'District A', status: 'active' }, { id: 'district-b', name: 'District B', status: 'active' }],
+    branches: [{ id: 'branch-a', district_id: 'district-a', name: 'Branch A', status: 'active' }],
     ministries: [{ id: 'ministry-a', branch_id: 'branch-a', name: 'Worship Ministry', entity_type: 'department', status: 'active' }],
     currencies: ['SLL', 'USD'],
     baseCurrencyCode: 'SLL',
@@ -938,5 +939,82 @@ describe('mock department requisition lifecycle RPCs', () => {
     const unauthorized = await ctx.rpc.rpc('submit_department_requisition', requisitionArgs);
     expect(unauthorized.error?.message).toContain('Insufficient permission');
     expect(ctx.read().requisitions).toHaveLength(0);
+  });
+});
+
+describe('mock finance scope discovery RPC', () => {
+  test('returns only branch scopes for a branch-scoped finance user', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual([
+      { scope_type: 'branch', scope_id: 'branch-a', scope_name: 'Branch A', district_id: 'district-a', branch_id: 'branch-a' }
+    ]);
+  });
+
+  test('returns district and its branches for a district-scoped finance user', async () => {
+    const ctx = fixture({ districtFinance: true });
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data.map((scope: any) => scope.scope_type + ':' + (scope.scope_id || 'church'))).toEqual([
+      'district:district-a', 'branch:branch-a'
+    ]);
+  });
+
+  test('returns church, districts and branches only when church finance permission exists', async () => {
+    const ctx = fixture({ churchFinance: true });
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data.map((scope: any) => scope.scope_type)).toEqual([
+      'church', 'district', 'district', 'branch'
+    ]);
+  });
+
+  test('fails closed for unauthenticated and unrelated users', async () => {
+    const ctx = fixture();
+    ctx.setUser(null);
+    const anonymous = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(anonymous.error?.code).toBe('42501');
+    ctx.setUser('not-linked');
+    const unlinked = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(unlinked.error?.code).toBe('42501');
+  });
+});
+describe('mock finance scope discovery RPC', () => {
+  test('returns only branch scopes for a branch-scoped finance user', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data).toEqual([
+      { scope_type: 'branch', scope_id: 'branch-a', scope_name: 'Branch A', district_id: 'district-a', branch_id: 'branch-a' }
+    ]);
+  });
+
+  test('returns district and its branches for a district-scoped finance user', async () => {
+    const ctx = fixture({ districtFinance: true });
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data.map((scope: any) => scope.scope_type + ':' + (scope.scope_id || 'church'))).toEqual([
+      'district:district-a', 'branch:branch-a'
+    ]);
+  });
+
+  test('returns church, districts and branches only when church finance permission exists', async () => {
+    const ctx = fixture({ churchFinance: true });
+    const result = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(result.error).toBeNull();
+    expect(result.data.map((scope: any) => scope.scope_type)).toEqual([
+      'church', 'district', 'district', 'branch'
+    ]);
+  });
+
+  test('fails closed for unauthenticated and unlinked users', async () => {
+    const ctx = fixture();
+    ctx.setUser(null);
+    const anonymous = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(anonymous.error?.code).toBe('42501');
+    ctx.setUser('not-linked');
+    const unlinked = await ctx.rpc.rpc('get_my_finance_scopes');
+    expect(unlinked.error?.code).toBe('42501');
   });
 });

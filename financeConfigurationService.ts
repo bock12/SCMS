@@ -7,6 +7,20 @@ export type FinanceOwnershipScope =
   | { type: 'church'; id: null }
   | { type: 'district' | 'branch'; id: string };
 
+export interface FinanceScopeOption {
+  scope_type: 'church' | 'district' | 'branch';
+  scope_id: string | null;
+  scope_name: string;
+  district_id: string | null;
+  branch_id: string | null;
+}
+
+export async function getMyFinanceScopes(
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceScopeOption[]>> {
+  return client.rpc('get_my_finance_scopes');
+}
+
 export interface FinanceConfiguration {
   currencies: string[];
   baseCurrencyCode: string | null;

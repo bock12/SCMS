@@ -7,7 +7,8 @@ export interface MockFinanceState {
   requisitions: Array<Record<string, any>>;
   requisitionItems: Array<Record<string, any>>;
   permissions: Array<{ profile_id: string; permission: string; branch_id: string | null; district_id?: string | null }>;
-  branches: Array<{ id: string; district_id: string | null }>;
+  branches: Array<{ id: string; district_id: string | null; name?: string; code?: string; status?: string }>;
+  districts: Array<{ id: string; name: string; status?: string }>;
   currencies: string[];
   baseCurrencyCode: string | null;
   financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
@@ -69,6 +70,7 @@ export function createBrowserMockFinanceStorage(
       }
       parsed.approvalDecisions = Array.isArray(parsed.approvalDecisions) ? parsed.approvalDecisions : [];
       parsed.branches = Array.isArray(parsed.branches) ? parsed.branches : [];
+      parsed.districts = Array.isArray(parsed.districts) ? parsed.districts : [];
       parsed.ministries = Array.isArray(parsed.ministries) ? parsed.ministries : [];
       parsed.requisitions = Array.isArray(parsed.requisitions) ? parsed.requisitions : [];
       parsed.requisitionItems = Array.isArray(parsed.requisitionItems) ? parsed.requisitionItems : [];
@@ -103,7 +105,7 @@ export function expandMockFinancePermissions(
 
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
-    profiles: [], permissions: [], branches: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
+    profiles: [], permissions: [], branches: [], districts: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
     documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
@@ -121,9 +123,14 @@ export function createMockFinanceRpc(
   getAuth: () => MockFinanceAuth
 ) {
   const id = (state: MockFinanceState, prefix: string) => `${prefix}-${state.nextId++}`;
-  const hasPermission = (state: MockFinanceState, profileId: string, permission: string, branchId: string | null) =>
-    state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
-      (p.district_id == null && (p.branch_id === null || p.branch_id === branchId)));
+  const hasPermission = (state: MockFinanceState, profileId: string, permission: string, branchId: string | null) => {
+    const branchDistrictId = branchId
+      ? state.branches.find(branch => branch.id === branchId)?.district_id ?? null
+      : null;
+    return state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
+      ((p.district_id == null && (p.branch_id === null || p.branch_id === branchId)) ||
+       (branchDistrictId !== null && p.district_id === branchDistrictId)));
+  };
 
   function createTransaction(args: Record<string, any>, stateOverride?: MockFinanceState, persist = true) {
     const state = stateOverride ?? clone(storage.load());
@@ -649,6 +656,38 @@ export function createMockFinanceRpc(
   function hasDistrictPermission(state: MockFinanceState, profileId: string, permission: string, districtId: string) {
     return state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
       p.district_id === districtId);
+  }
+
+  function getMyFinanceScopes() {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const permissionKeys = ['view_finances', 'manage_finances', 'approve_finances'];
+    const canAtChurch = permissionKeys.some(permission => hasPermission(state, actor.id, permission, null));
+    const scopes: Array<{ scope_type: 'church' | 'district' | 'branch'; scope_id: string | null; scope_name: string; district_id: string | null; branch_id: string | null }> = [];
+    if (canAtChurch) {
+      scopes.push({ scope_type: 'church', scope_id: null, scope_name: 'Church-wide', district_id: null, branch_id: null });
+    }
+    for (const district of state.districts.filter(item => item.status !== 'inactive' && item.status !== 'archived')) {
+      const allowed = canAtChurch || permissionKeys.some(permission =>
+        hasDistrictPermission(state, actor.id, permission, district.id));
+      if (allowed) scopes.push({
+        scope_type: 'district', scope_id: district.id, scope_name: district.name,
+        district_id: district.id, branch_id: null
+      });
+    }
+    for (const branch of state.branches.filter(item => item.status !== 'inactive' && item.status !== 'archived')) {
+      const allowed = permissionKeys.some(permission => hasPermission(state, actor.id, permission, branch.id));
+      if (allowed) scopes.push({
+        scope_type: 'branch', scope_id: branch.id, scope_name: branch.name || branch.id,
+        district_id: branch.district_id ?? null, branch_id: branch.id
+      });
+    }
+    const rank = { church: 0, district: 1, branch: 2 };
+    scopes.sort((a, b) => rank[a.scope_type] - rank[b.scope_type] || a.scope_name.localeCompare(b.scope_name));
+    return success(scopes);
   }
 
   function resolveMockFinanceScope(state: MockFinanceState, scopeType: string, scopeId: string | null) {
@@ -1742,6 +1781,7 @@ export function createMockFinanceRpc(
   return {
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
+        if (name === 'get_my_finance_scopes') return getMyFinanceScopes();
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'get_finance_scope_configuration') return getFinanceScopeConfiguration(args);
         if (name === 'save_finance_scope_resources') return saveFinanceScopeResources(args);

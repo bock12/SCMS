@@ -351,6 +351,41 @@ END
 $branch_resource_write$;
 ROLLBACK;
 
+-- Scope discovery mirrors the exact scopes granted by the finance permission catalog.
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000001', true);
+DO $district_scope_discovery$
+DECLARE v_scopes jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object('type', scope_type, 'id', scope_id)), '[]'::jsonb)
+  INTO v_scopes FROM public.get_my_finance_scopes();
+  IF jsonb_array_length(v_scopes) <> 3
+     OR NOT (v_scopes @> '[{"type":"district","id":"97000000-0000-4000-8000-000000000001"}]'::jsonb)
+     OR NOT (v_scopes @> '[{"type":"branch","id":"97100000-0000-4000-8000-000000000001"}]'::jsonb)
+     OR NOT (v_scopes @> '[{"type":"branch","id":"97100000-0000-4000-8000-000000000002"}]'::jsonb) THEN
+    RAISE EXCEPTION 'District finance user received incorrect authorized scope list: %', v_scopes;
+  END IF;
+END
+$district_scope_discovery$;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000002', true);
+DO $branch_scope_discovery$
+DECLARE v_scopes jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object('type', scope_type, 'id', scope_id)), '[]'::jsonb)
+  INTO v_scopes FROM public.get_my_finance_scopes();
+  IF jsonb_array_length(v_scopes) <> 1
+     OR NOT (v_scopes @> '[{"type":"branch","id":"97100000-0000-4000-8000-000000000001"}]'::jsonb) THEN
+    RAISE EXCEPTION 'Branch finance user received scopes outside its branch: %', v_scopes;
+  END IF;
+END
+$branch_scope_discovery$;
+ROLLBACK;
+
 DO $finance_org_security$
 BEGIN
   IF has_function_privilege('anon', 'private.has_permission_for_district(text,uuid)', 'EXECUTE')
@@ -359,6 +394,13 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('authenticated', 'private.has_permission_for_district(text,uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Authenticated role is missing district permission helper execution';
+  END IF;
+  IF has_function_privilege('anon', 'public.get_my_finance_scopes()', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.get_my_finance_scopes()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Finance scope discovery must not be executable by anon or service_role';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.get_my_finance_scopes()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Authenticated role is missing finance scope discovery execution';
   END IF;
   IF has_function_privilege('anon', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE')
      OR has_function_privilege('service_role', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE') THEN

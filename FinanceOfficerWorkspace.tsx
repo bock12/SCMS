@@ -12,7 +12,7 @@ import { getEventBudgets } from './eventBudgetFinanceService';
 import { getEventBudgetApprovals } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
-import type { FinanceOwnershipScope } from './financeConfigurationService';
+import { getMyFinanceScopes, type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
@@ -39,6 +39,42 @@ const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'ev
 
 const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId, databaseProfileId, financeScope }) => {
   const financeBranchId = databaseBranchId ?? profile?.branch_id ?? null;
+  const [availableFinanceScopes, setAvailableFinanceScopes] = useState<FinanceScopeOption[]>([]);
+  const [selectedFinanceScope, setSelectedFinanceScope] = useState<FinanceOwnershipScope | null>(null);
+  const [financeScopeLoading, setFinanceScopeLoading] = useState(true);
+  const [financeScopeError, setFinanceScopeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFinanceScopeLoading(true);
+    setFinanceScopeError(null);
+    getMyFinanceScopes().then(result => {
+      if (cancelled) return;
+      if (result.error) {
+        setAvailableFinanceScopes([]);
+        setSelectedFinanceScope(null);
+        setFinanceScopeError(result.error.message);
+        return;
+      }
+      const scopes = result.data || [];
+      setAvailableFinanceScopes(scopes);
+      const matches = (scope: FinanceOwnershipScope | undefined) => scope
+        ? scopes.find(item => item.scope_type === scope.type && item.scope_id === scope.id)
+        : undefined;
+      const requested = matches(financeScope);
+      const branchDefault = financeBranchId
+        ? scopes.find(item => item.scope_type === 'branch' && item.scope_id === financeBranchId)
+        : undefined;
+      const selected = requested || branchDefault || scopes[0];
+      setSelectedFinanceScope(selected
+        ? { type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope
+        : null);
+      if (!selected) setFinanceScopeError('Your authenticated account has no finance configuration scope.');
+    }).finally(() => {
+      if (!cancelled) setFinanceScopeLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [databaseProfileId, financeBranchId, financeScope?.type, financeScope?.id]);
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
     || hasEffectivePermission(financePermissions, 'manage_finances');
@@ -1399,10 +1435,48 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* --- WORKSPACE TAB 2: MINISTRY PROPOSALS & EXPENSE INVOICES --- */}
       {workspaceTab === 'setup' && (
-        <FinanceConfigurationWorkspace
-          branchId={financeBranchId}
-          scope={financeScope ?? (financeBranchId ? { type: 'branch', id: financeBranchId } : { type: 'church', id: null })}
-        />
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <label htmlFor="finance-configuration-scope" className="block text-xs font-black uppercase tracking-wide text-indigo-900">Finance configuration scope</label>
+                <p className="mt-1 text-xs leading-5 text-indigo-800">Only church, district and branch scopes authorized by your authenticated Supabase account are listed here.</p>
+              </div>
+              <select
+                id="finance-configuration-scope"
+                aria-label="Finance configuration scope"
+                value={selectedFinanceScope ? `${selectedFinanceScope.type}:${selectedFinanceScope.id ?? 'church'}` : ''}
+                onChange={event => {
+                  const selected = availableFinanceScopes.find(item =>
+                    `${item.scope_type}:${item.scope_id ?? 'church'}` === event.target.value);
+                  setSelectedFinanceScope(selected
+                    ? { type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope
+                    : null);
+                }}
+                disabled={financeScopeLoading || availableFinanceScopes.length <= 1}
+                className="min-w-56 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60"
+              >
+                {availableFinanceScopes.map(item => (
+                  <option key={`${item.scope_type}:${item.scope_id ?? 'church'}`} value={`${item.scope_type}:${item.scope_id ?? 'church'}`}>
+                    {item.scope_type === 'church' ? 'Church-wide' : `${item.scope_type === 'district' ? 'District' : 'Branch'} — ${item.scope_name}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {financeScopeLoading && <p className="mt-2 text-xs text-indigo-700">Loading authorized finance scopes…</p>}
+            {financeScopeError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{financeScopeError}</p>}
+          </div>
+          {selectedFinanceScope ? (
+            <FinanceConfigurationWorkspace
+              branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+              scope={selectedFinanceScope}
+            />
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Finance configuration is unavailable until an authorized scope can be confirmed by Supabase.
+            </div>
+          )}
+        </section>
       )}
 
       {workspaceTab === 'requisitions' && (

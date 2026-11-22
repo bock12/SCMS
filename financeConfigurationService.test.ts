@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, getMyFinanceScopes, saveFinanceConfiguration, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
 
 const config: FinanceConfiguration = {
   currencies: ['SLE', 'USD'], baseCurrencyCode: 'SLE',
@@ -20,6 +20,27 @@ const config: FinanceConfiguration = {
 };
 
 describe('finance configuration service', () => {
+  test('loads only the authorized finance scopes returned by the database', async () => {
+    let called = '';
+    const scopes = [
+      { scope_type: 'church' as const, scope_id: null, scope_name: 'Church-wide', district_id: null, branch_id: null },
+      { scope_type: 'branch' as const, scope_id: 'branch-a', scope_name: 'Main Branch', district_id: null, branch_id: 'branch-a' }
+    ];
+    const result = await getMyFinanceScopes({
+      rpc: async name => { called = name; return { data: scopes, error: null }; }
+    });
+    expect(called).toBe('get_my_finance_scopes');
+    expect(result.data).toEqual(scopes);
+  });
+
+  test('propagates finance scope discovery authorization failures', async () => {
+    const result = await getMyFinanceScopes({
+      rpc: async () => ({ data: null, error: { code: '42501', message: 'Authentication required' } })
+    });
+    expect(result.error?.code).toBe('42501');
+    expect(result.data).toBeNull();
+  });
+
   test('loads canonical configuration through the mock/database RPC boundary', async () => {
     let called = '';
     const result = await getFinanceConfiguration(null, {
