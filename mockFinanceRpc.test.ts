@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createBrowserMockFinanceStorage, createEmptyMockFinanceState, createMockFinanceRpc, expandMockFinancePermissions, type MockFinanceState } from './mockFinanceRpc';
 
-function fixture(options: { churchFinance?: boolean; emptyApprovalPolicy?: boolean } = {}) {
+function fixture(options: { churchFinance?: boolean; districtFinance?: boolean; emptyApprovalPolicy?: boolean } = {}) {
   const state: MockFinanceState = {
     ...createEmptyMockFinanceState(),
     profiles: [
@@ -16,10 +16,15 @@ function fixture(options: { churchFinance?: boolean; emptyApprovalPolicy?: boole
       { profile_id: 'approver-1', permission: 'approve_requisitions', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_requisitions', branch_id: 'branch-a' },
       ...(options.churchFinance ? [{ profile_id: 'creator', permission: 'manage_finances', branch_id: null }] : []),
+      ...(options.districtFinance ? [
+        { profile_id: 'creator', permission: 'manage_finances', branch_id: null, district_id: 'district-a' },
+        { profile_id: 'creator', permission: 'view_finances', branch_id: null, district_id: 'district-a' }
+      ] : []),
       { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-a' },
       { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
       { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-a' }
     ],
+    branches: [{ id: 'branch-a', district_id: 'district-a' }],
     ministries: [{ id: 'ministry-a', branch_id: 'branch-a', name: 'Worship Ministry', entity_type: 'department', status: 'active' }],
     currencies: ['SLL', 'USD'],
     baseCurrencyCode: 'SLL',
@@ -29,7 +34,7 @@ function fixture(options: { churchFinance?: boolean; emptyApprovalPolicy?: boole
       { id: 'expense-chart', code: '5000', name: 'Operating Expense', normal_balance: 'debit', is_active: true, account_type: 'expense', is_control_account: false }
     ],
     financialAccounts: [
-      { id: 'cash-account', branch_id: 'branch-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' }
+      { id: 'cash-account', branch_id: 'branch-a', district_id: 'district-a', name: 'Main Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' }
     ],
     funds: [{ id: 'fund-a', code: 'GEN', name: 'General Fund', fund_type: 'general', is_default: true, is_active: true }],
     financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
