@@ -24,9 +24,13 @@ const {
 } = await import('./permissionResolutionService');
 const {
   createDistrict,
+  updateDistrict,
+  deleteDistrict,
   createChurchBranch,
   updateChurchBranch,
-  resolveActorBranchGovernanceScope
+  resolveActorBranchGovernanceScope,
+  buildDistrictPortalSummaries,
+  getBranchGovernanceData
 } = await import('./branchManagementService');
 
 beforeEach(() => {
@@ -229,5 +233,199 @@ describe('two-tier branch and leadership governance', () => {
   test('ADMIN_CONSOLE_PERMISSION_KEYS includes manage_branches and view_audit_logs', () => {
     expect(ADMIN_CONSOLE_PERMISSION_KEYS).toContain('manage_branches');
     expect(ADMIN_CONSOLE_PERMISSION_KEYS).toContain('view_audit_logs');
+  });
+
+  test('church-wide admin can customize districts, switch HQ via updateDistrict, and delete empty districts', async () => {
+    await signInAsChurchAdmin();
+
+    const createdDistrict = await createDistrict({
+      name: 'Midwest Heritage District',
+      region: 'Midwest',
+      country: 'United States',
+      description: 'Original regional coverage'
+    });
+    expect(createdDistrict.description).toBe('Original regional coverage');
+
+    const b1 = await createChurchBranch({
+      district_id: createdDistrict.id,
+      name: 'Chicago Central',
+      address: '100 State St',
+      city: 'Chicago',
+      state: 'IL',
+      is_main_branch: true
+    });
+    const b2 = await createChurchBranch({
+      district_id: createdDistrict.id,
+      name: 'Evanston Sanctuary',
+      address: '200 Ridge Ave',
+      city: 'Evanston',
+      state: 'IL',
+      is_main_branch: false
+    });
+    expect(b1.is_main_branch).toBe(true);
+    expect(b2.is_main_branch).toBe(false);
+
+    // Non-empty district cannot be deleted
+    await expect(deleteDistrict(createdDistrict.id)).rejects.toThrow();
+
+    // Customize district metadata + transfer District HQ to b2
+    const customized = await updateDistrict({
+      id: createdDistrict.id,
+      name: 'Great Lakes District',
+      region: 'Upper Midwest',
+      country: 'United States',
+      description: 'Expanded Illinois and Wisconsin parishes',
+      hq_branch_id: b2.id,
+      update_hq: true
+    });
+    expect(customized.name).toBe('Great Lakes District');
+    expect(customized.region).toBe('Upper Midwest');
+    expect(customized.description).toBe('Expanded Illinois and Wisconsin parishes');
+
+    const { data: districtBranches } = await supabase
+      .from('church_branches')
+      .select('*')
+      .eq('district_id', createdDistrict.id);
+    const hqBranches = (districtBranches || []).filter((b: { is_main_branch: boolean }) => b.is_main_branch);
+    expect(hqBranches).toHaveLength(1);
+    expect(hqBranches[0].id).toBe(b2.id);
+
+    // Empty district can be created and deleted cleanly
+    const emptyDistrict = await createDistrict({
+      name: 'Temporary Holding District',
+      region: 'East',
+      country: 'United States'
+    });
+    const deleted = await deleteDistrict(emptyDistrict.id);
+    expect(deleted).toBe(true);
+
+    const { data: remainingDistricts } = await supabase.from('districts').select('*');
+    expect((remainingDistricts || []).some((d: { id: string }) => d.id === emptyDistrict.id)).toBe(false);
+  });
+
+  test('enforces strictly one HQ branch per district while allowing independent HQs across different districts', async () => {
+    await signInAsChurchAdmin();
+
+    // Promote branch-2 inside dist-1 -> should demote branch-1 in dist-1
+    await updateChurchBranch({
+      id: 'branch-2',
+      district_id: 'dist-1',
+      name: 'Brooklyn Heights Sanctuary',
+      address: '420 Atlantic Avenue',
+      city: 'Brooklyn',
+      state: 'NY',
+      is_main_branch: true
+    });
+
+    // Promote branch-3 inside dist-2 -> should NOT affect dist-1 HQ (branch-2)
+    await updateChurchBranch({
+      id: 'branch-3',
+      district_id: 'dist-2',
+      name: 'West Coast Lighthouse',
+      address: '890 Sunset Boulevard',
+      city: 'Los Angeles',
+      state: 'CA',
+      is_main_branch: true
+    });
+
+    const { data: allBranches } = await supabase.from('church_branches').select('*');
+    const dist1Hqs = (allBranches || []).filter(
+      (b: { district_id: string; is_main_branch: boolean }) => b.district_id === 'dist-1' && b.is_main_branch
+    );
+    const dist2Hqs = (allBranches || []).filter(
+      (b: { district_id: string; is_main_branch: boolean }) => b.district_id === 'dist-2' && b.is_main_branch
+    );
+
+    expect(dist1Hqs).toHaveLength(1);
+    expect(dist1Hqs[0].id).toBe('branch-2');
+    expect(dist2Hqs).toHaveLength(1);
+    expect(dist2Hqs[0].id).toBe('branch-3');
+  });
+
+  test('district_admin can customize their own district details but cannot modify other districts or change HQ', async () => {
+    await signInAsDistrictAdmin('dist-1');
+
+    const updatedOwn = await updateDistrict({
+      id: 'dist-1',
+      name: 'Metro Northeast Hub',
+      region: 'Tri-State North',
+      country: 'United States',
+      description: 'Updated by district overseer',
+      update_hq: false
+    });
+    expect(updatedOwn.name).toBe('Metro Northeast Hub');
+    expect(updatedOwn.description).toBe('Updated by district overseer');
+
+    // Cannot update District HQ designation
+    await expect(
+      updateDistrict({
+        id: 'dist-1',
+        name: 'Metro Northeast Hub',
+        region: 'Tri-State North',
+        country: 'United States',
+        hq_branch_id: 'branch-2',
+        update_hq: true
+      })
+    ).rejects.toThrow();
+
+    // Cannot customize another district
+    await expect(
+      updateDistrict({
+        id: 'dist-2',
+        name: 'Unauthorized Rename',
+        region: 'West',
+        country: 'United States',
+        update_hq: false
+      })
+    ).rejects.toThrow();
+
+    // Cannot delete any district
+    await expect(deleteDistrict('dist-1')).rejects.toThrow();
+  });
+
+  test('buildDistrictPortalSummaries aggregates branch member counts, identifies HQ branch first, and tracks district leadership', async () => {
+    await signInAsChurchAdmin();
+
+    const emptyDistrict = await createDistrict({
+      name: 'Frontier Mission District',
+      region: 'Northwest',
+      country: 'United States'
+    });
+
+    const data = await getBranchGovernanceData();
+    const summaries = buildDistrictPortalSummaries({
+      districts: data.districts,
+      branches: data.branches,
+      profiles: data.profiles,
+      assignments: data.assignments,
+      roles: data.roles
+    });
+
+    const dist1Summary = summaries.find(s => s.district.id === 'dist-1');
+    expect(dist1Summary).toBeDefined();
+    expect(dist1Summary?.totalBranches).toBe(2);
+    expect(dist1Summary?.hqBranch?.id).toBe('branch-1');
+    expect(dist1Summary?.branchSummaries[0]?.branch.id).toBe('branch-1');
+    expect(dist1Summary?.branchSummaries[0]?.branch.is_main_branch).toBe(true);
+    expect(dist1Summary?.totalMembers).toBe(7);
+    expect(dist1Summary?.activeMembers).toBe(6);
+
+    const dist2Summary = summaries.find(s => s.district.id === 'dist-2');
+    expect(dist2Summary).toBeDefined();
+    expect(dist2Summary?.totalBranches).toBe(1);
+    expect(dist2Summary?.hqBranch).toBeNull();
+    expect(dist2Summary?.totalMembers).toBe(1);
+
+    const dist3Summary = summaries.find(s => s.district.id === 'dist-3');
+    expect(dist3Summary).toBeDefined();
+    expect(dist3Summary?.totalBranches).toBe(1);
+    expect(dist3Summary?.hqBranch).toBeNull();
+    expect(dist3Summary?.totalMembers).toBe(1);
+
+    const emptySummary = summaries.find(s => s.district.id === emptyDistrict.id);
+    expect(emptySummary).toBeDefined();
+    expect(emptySummary?.totalBranches).toBe(0);
+    expect(emptySummary?.totalMembers).toBe(0);
+    expect(emptySummary?.hqBranch).toBeNull();
   });
 });

@@ -31,10 +31,14 @@ import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
 import { getChurchProfile } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updateMembershipStatus, updatePortalAccountStatus, enablePortalAccess, disablePortalAccess, type PortalInvitationInfo } from './memberService';
+import { MemberWelfarePassbookModal } from './MemberWelfarePassbookModal';
+import { MemberWelfarePassbookPortalPage } from './MemberWelfarePassbookPortalPage';
 import { 
   getMemberContributions, 
   saveMemberContribution, 
   getMemberWelfareCard, 
+  getMemberPassbookDetails,
+  matchesWelfareCardSearch,
   getDeptWelfareSummary, 
   getWelfareReasonLabel, 
   getCategoryBadgeColor, 
@@ -45,7 +49,7 @@ import {
   getMemberReciprocityRating,
   getMemberActionableTasks
 } from './welfareContributionService';
-import type { MemberContribution, MemberWelfareCard, WelfareCampaignDrive, ContributionCategory, WelfareReason } from './types';
+import type { MemberContribution, WelfareCampaignDrive, ContributionCategory, WelfareReason } from './types';
 import {
   getDepartmentNotifications,
   sendInAppNotification,
@@ -165,6 +169,7 @@ const getPortalPageMeta = (pathname: string, search: string): { section: string;
     '/portal/surveys': { section: 'Member Portal', title: 'Event Feedback' },
     '/portal/streaming': { section: 'Member Portal', title: 'Live Sanctuary' },
     '/portal/giving': { section: 'Member Portal', title: 'Giving & Tithes' },
+    '/portal/passbook': { section: 'Member Portal', title: 'Welfare Passbook' },
     '/portal/prayer': { section: 'Member Portal', title: 'Prayer Wall' },
     '/portal/profile': { section: 'Member Portal', title: 'My Profile' }
   };
@@ -422,6 +427,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     { to: '/portal/surveys', icon: ClipboardList, label: 'Event Feedback', isDefault: false },
     { to: '/portal/streaming', icon: Video, label: 'Live Sanctuary', isDefault: false },
     { to: '/portal/giving', icon: DollarSign, label: 'Giving & Tithes', isDefault: false },
+    { to: '/portal/passbook', icon: CreditCard, label: 'Welfare Passbook', isDefault: false },
     { to: '/portal/prayer', icon: Heart, label: 'Prayer Wall', isDefault: false },
     { to: '/portal/profile', icon: User, label: 'My Profile', isDefault: false }
   ];
@@ -4155,7 +4161,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
   // Member Welfare Passbook Card Modal State
   const [showWelfareCardModal, setShowWelfareCardModal] = useState(false);
-  const [selectedWelfareCard, setSelectedWelfareCard] = useState<MemberWelfareCard | null>(null);
+  const [selectedPassbookTarget, setSelectedPassbookTarget] = useState<{ id: string; name: string } | null>(null);
 
   // In-App Reminders & Notifications Modal State
   const [deptNotifications, setDeptNotifications] = useState<InAppNotification[]>(() => getDepartmentNotifications(activeDept));
@@ -4260,67 +4266,18 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const openViewWelfareCard = (member: any) => {
-    const card = getMemberWelfareCard(member.id, member.name, activeDept);
-    setSelectedWelfareCard(card);
+    setSelectedPassbookTarget({ id: member.id, name: member.name });
     setShowWelfareCardModal(true);
   };
 
-  const handlePrintWelfareCard = () => {
-    if (!selectedWelfareCard) return;
-    const printWin = window.open('', '_blank');
-    if (!printWin) return;
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Welfare Card - ${selectedWelfareCard.member_name}</title>
-          <style>
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; padding: 30px; color: #0f172a; background: #f8fafc; }
-            .card { border: 3px solid #6b21a8; border-radius: 20px; padding: 25px; max-width: 500px; margin: 0 auto; background: linear-gradient(135deg, #faf5ff 0%, #ffffff 100%); box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-            .header { text-align: center; border-bottom: 2px solid #e9d5ff; padding-bottom: 15px; margin-bottom: 15px; }
-            .church-name { font-size: 18px; font-weight: 900; color: #581c87; text-transform: uppercase; letter-spacing: 1px; }
-            .dept-name { font-size: 13px; font-weight: 700; color: #7e22ce; margin-top: 4px; }
-            .card-num { font-family: monospace; font-size: 13px; font-weight: 900; background: #f3e8ff; color: #6b21a8; padding: 4px 12px; border-radius: 8px; display: inline-block; margin-top: 8px; }
-            .member-info { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; }
-            .avatar { width: 50px; height: 50px; border-radius: 50%; background: #6b21a8; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; }
-            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; margin-bottom: 20px; }
-            .box { background: #ffffff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 12px; }
-            .box-label { font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; }
-            .box-val { font-size: 14px; font-weight: 900; font-family: monospace; color: #581c87; margin-top: 4px; }
-            .footer { font-size: 11px; text-align: center; color: #94a3b8; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <div class="header">
-              <div class="church-name">FaithConnect • Grace Cathedral</div>
-              <div class="dept-name">${selectedWelfareCard.department_name} Passbook</div>
-              <div class="card-num">${selectedWelfareCard.card_number}</div>
-            </div>
-            <div class="member-info">
-              <div class="avatar">${selectedWelfareCard.member_name[0]}</div>
-              <div>
-                <h2 style="margin:0; font-size:18px;">${selectedWelfareCard.member_name}</h2>
-                <span style="font-size:11px; color:#16a34a; font-weight:bold; text-transform:uppercase;">Status: ${selectedWelfareCard.status}</span>
-              </div>
-            </div>
-            <div class="grid">
-              <div class="box"><div class="box-label">Welfare</div><div class="box-val">SLE ${selectedWelfareCard.total_welfare_paid.toLocaleString()}</div></div>
-              <div class="box"><div class="box-label">Monthly Dues</div><div class="box-val">SLE ${selectedWelfareCard.total_dues_paid.toLocaleString()}</div></div>
-              <div class="box"><div class="box-label">Support</div><div class="box-val">SLE ${selectedWelfareCard.total_support_paid.toLocaleString()}</div></div>
-            </div>
-            <div class="footer">
-              Official Ministry Treasury Member Welfare Passbook Card • Issued: ${selectedWelfareCard.issued_date}
-            </div>
-          </div>
-          <script>window.onload = function() { window.print(); }</script>
-        </body>
-      </html>
-    `;
-    printWin.document.write(html);
-    printWin.document.close();
-  };
+  const passbookCurrency = getGivingConfig().currency_code || 'SLE';
+  const passbookChurchName = `FaithConnect · ${getChurchProfile().name || 'Grace Cathedral'}`;
+  const selectedPassbookDetail =
+    showWelfareCardModal && selectedPassbookTarget
+      ? getMemberPassbookDetails(selectedPassbookTarget.id, selectedPassbookTarget.name, activeDept, {
+          currency: passbookCurrency
+        })
+      : null;
 
   // Enforce department console isolation for assigned Department Leaders
   useEffect(() => {
@@ -7206,65 +7163,99 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {deptRoster
-                  .filter(m => !welfareSearchQuery.trim() || m.name.toLowerCase().includes(welfareSearchQuery.toLowerCase()))
-                  .map(member => {
-                    const card = getMemberWelfareCard(member.id, member.name, activeDept);
-                    return (
-                      <div key={member.id} className="p-4 bg-gradient-to-br from-slate-50 to-purple-50/30 rounded-2xl border border-slate-200 space-y-3 shadow-xs hover:border-purple-300 transition-all">
-                        <div className="flex justify-between items-start">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-10 h-10 rounded-2xl bg-purple-600 text-white font-black flex items-center justify-center text-sm shadow-xs">
-                              {member.name ? member.name[0].toUpperCase() : 'M'}
+              {(() => {
+                const matchingPassbooks = deptRoster
+                  .map(member => ({
+                    member,
+                    card: getMemberWelfareCard(member.id, member.name, activeDept, { currency: passbookCurrency })
+                  }))
+                  .filter(({ member, card }) => matchesWelfareCardSearch(member.name, card, welfareSearchQuery));
+
+                if (matchingPassbooks.length === 0) {
+                  return (
+                    <div className="p-8 text-center border border-dashed border-slate-200 rounded-2xl text-xs text-slate-500">
+                      No welfare passbooks matched &ldquo;{welfareSearchQuery.trim()}&rdquo;. Search by member name, card number, or verification seal.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {matchingPassbooks.map(({ member, card }) => {
+                      const cardCurrency = card.currency || passbookCurrency;
+                      const standingColorClass =
+                        card.status === 'Good Standing'
+                          ? 'text-emerald-700'
+                          : card.status === 'Restricted Standing'
+                          ? 'text-rose-700'
+                          : 'text-amber-700';
+
+                      return (
+                        <div key={member.id} className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3 hover:border-indigo-300 transition-colors">
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white font-black flex items-center justify-center text-sm shrink-0">
+                                {member.name ? member.name[0].toUpperCase() : 'M'}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="font-extrabold text-slate-900 text-sm leading-tight truncate">{member.name}</h4>
+                                <p className="text-[11px] font-mono text-indigo-700 font-bold mt-0.5 truncate">{card.card_number}</p>
+                              </div>
+                            </div>
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold shrink-0 whitespace-nowrap ${standingColorClass}`}>
+                              {card.status === 'Good Standing' ? (
+                                <CheckCircle2 size={13} />
+                              ) : card.status === 'Restricted Standing' ? (
+                                <AlertCircle size={13} />
+                              ) : (
+                                <Clock size={13} />
+                              )}
+                              <span>{card.status}</span>
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 text-[11px]">
+                            <div>
+                              <span className="text-slate-500 font-medium block">Welfare</span>
+                              <strong className="font-mono text-slate-900 tabular-nums">{cardCurrency} {card.total_welfare_paid.toLocaleString()}</strong>
                             </div>
                             <div>
-                              <h4 className="font-extrabold text-slate-900 text-sm leading-tight">{member.name}</h4>
-                              <p className="text-[10px] text-purple-700 font-bold mt-0.5">{card.card_number}</p>
+                              <span className="text-slate-500 font-medium block">Dues</span>
+                              <strong className="font-mono text-emerald-800 tabular-nums">{cardCurrency} {card.total_dues_paid.toLocaleString()}</strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 font-medium block">Support</span>
+                              <strong className="font-mono text-indigo-800 tabular-nums">{cardCurrency} {card.total_support_paid.toLocaleString()}</strong>
                             </div>
                           </div>
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                            card.status === 'Good Standing' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {card.status}
-                          </span>
-                        </div>
 
-                        <div className="grid grid-cols-3 gap-1.5 p-2 bg-white rounded-xl border border-slate-200/80 text-[10px]">
-                          <div>
-                            <span className="text-slate-400 font-medium block">Welfare</span>
-                            <strong className="font-mono text-purple-900">SLE {card.total_welfare_paid.toLocaleString()}</strong>
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 tabular-nums">
+                            <span>{card.entry_count ?? 0} {(card.entry_count ?? 0) === 1 ? 'entry' : 'entries'} · Seal {card.verification_code}</span>
+                            <span className="font-semibold text-slate-700">Reciprocity {card.reciprocity_rate ?? 100}%</span>
                           </div>
-                          <div>
-                            <span className="text-slate-400 font-medium block">Dues</span>
-                            <strong className="font-mono text-emerald-900">SLE {card.total_dues_paid.toLocaleString()}</strong>
-                          </div>
-                          <div>
-                            <span className="text-slate-400 font-medium block">Support</span>
-                            <strong className="font-mono text-blue-900">SLE {card.total_support_paid.toLocaleString()}</strong>
-                          </div>
-                        </div>
 
-                        <div className="flex items-center gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={() => openViewWelfareCard(member)}
-                            className="flex-1 py-1.5 px-2 bg-white border border-purple-200 hover:bg-purple-50 text-purple-800 font-extrabold rounded-xl text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
-                          >
-                            <CreditCard size={13} /> View Passbook
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openRecordContribForMember(member)}
-                            className="py-1.5 px-3 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer shadow-xs"
-                          >
-                            <Plus size={13} /> Log
-                          </button>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => openViewWelfareCard(member)}
+                              className="flex-1 min-h-[38px] py-1.5 px-2.5 bg-white border border-indigo-200 hover:bg-indigo-50 text-indigo-800 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <CreditCard size={13} /> View Passbook
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openRecordContribForMember(member)}
+                              className="min-h-[38px] py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Plus size={13} /> Log
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-              </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -9410,104 +9401,16 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
       )}
 
       {/* --- DIGITAL MEMBER WELFARE PASSBOOK CARD MODAL --- */}
-      {showWelfareCardModal && selectedWelfareCard && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[110] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 space-y-6 relative overflow-hidden">
-            <div className="flex justify-between items-start pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <CreditCard size={22} className="text-purple-600" />
-                <div>
-                  <h3 className="text-lg font-black text-slate-900">Member Digital Welfare Passbook</h3>
-                  <p className="text-xs text-slate-500">{selectedWelfareCard.department_name}</p>
-                </div>
-              </div>
-              <button onClick={() => setShowWelfareCardModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Realistic Welfare Passbook Digital Card */}
-            <div className="bg-gradient-to-br from-purple-900 via-slate-900 to-indigo-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden border border-purple-500/30 space-y-4">
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-purple-300 block">
-                    FAITHCONNECT • GRACE CATHEDRAL
-                  </span>
-                  <h4 className="font-extrabold text-sm text-white mt-0.5">{selectedWelfareCard.department_name} Passbook</h4>
-                </div>
-                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                  {selectedWelfareCard.status}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-4 py-2">
-                <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white font-black flex items-center justify-center text-2xl shadow-inner">
-                  {selectedWelfareCard.member_name[0].toUpperCase()}
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-white tracking-tight">{selectedWelfareCard.member_name}</h3>
-                  <div className="text-xs font-mono font-bold text-purple-300 mt-0.5">
-                    Card ID: {selectedWelfareCard.card_number}
-                  </div>
-                  <p className="text-[10px] text-slate-300 mt-0.5">Issued: {selectedWelfareCard.issued_date}</p>
-                </div>
-              </div>
-
-              {/* Passbook Financial Counters */}
-              <div className="grid grid-cols-3 gap-2 p-3 bg-white/10 rounded-2xl border border-white/15 text-center text-xs backdrop-blur-md">
-                <div>
-                  <span className="text-[9px] font-bold text-purple-200 uppercase block">Welfare Fund</span>
-                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_welfare_paid.toLocaleString()}</strong>
-                </div>
-                <div>
-                  <span className="text-[9px] font-bold text-emerald-200 uppercase block">Monthly Dues</span>
-                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_dues_paid.toLocaleString()}</strong>
-                </div>
-                <div>
-                  <span className="text-[9px] font-bold text-blue-200 uppercase block">Task Support</span>
-                  <strong className="font-mono text-sm font-black text-white">SLE {selectedWelfareCard.total_support_paid.toLocaleString()}</strong>
-                </div>
-              </div>
-
-              {/* Barcode Verification Stamp */}
-              <div className="pt-2 flex items-center justify-between border-t border-white/10 text-[10px] font-mono text-slate-400">
-                <span>OFFICIAL TREASURY SEAL</span>
-                <span className="text-purple-300 font-bold">VERIFIED 2026 ✓</span>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={handlePrintWelfareCard}
-                className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <Printer size={15} /> Print Welfare Card
-              </button>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowWelfareCardModal(false);
-                    openRecordContribForMember({ id: selectedWelfareCard.member_id, name: selectedWelfareCard.member_name });
-                  }}
-                  className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                >
-                  <Plus size={15} /> Log Contribution
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowWelfareCardModal(false)}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl text-xs cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {selectedPassbookDetail && (
+        <MemberWelfarePassbookModal
+          detail={selectedPassbookDetail}
+          churchName={passbookChurchName}
+          onClose={() => {
+            setShowWelfareCardModal(false);
+            setSelectedPassbookTarget(null);
+          }}
+          onRecordContribution={(member) => openRecordContribForMember(member)}
+        />
       )}
 
       {/* --- IN-APP REMINDERS & NOTIFICATIONS MODAL --- */}
@@ -12449,6 +12352,7 @@ const AppShell = () => {
                       <Route path="directory" element={<DirectoryPage profile={profile} />} />
                       <Route path="ministries" element={<MinistriesPage profile={profile} />} />
                       <Route path="giving" element={<GivingPage profile={profile} />} />
+                      <Route path="passbook" element={<MemberWelfarePassbookPortalPage profile={profile} />} />
                       <Route path="prayer" element={<PrayerPage profile={profile} />} />
                       <Route path="calendar" element={<CalendarPage profile={profile} />} />
                       <Route path="resources" element={<MemberResourcesPage />} />

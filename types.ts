@@ -42,6 +42,7 @@ export interface District {
   name: string;
   region: string;
   country: string;
+  description?: string;
 }
 
 export interface ChurchBranch {
@@ -584,11 +585,20 @@ export interface MemberWelfareCard {
   member_name: string;
   department_name: string;
   issued_date: string;
-  status: 'Good Standing' | 'Dues Pending' | 'Exempted';
+  status: 'Good Standing' | 'Dues Pending' | 'Restricted Standing' | 'Exempted';
   total_welfare_paid: number;
   total_dues_paid: number;
   total_support_paid: number;
   last_contribution_date?: string;
+  currency?: string;
+  current_cycle?: string;
+  current_cycle_dues_paid?: number;
+  expected_monthly_dues?: number;
+  dues_months_paid?: string[];
+  reciprocity_rate?: number;
+  reciprocity_label?: string;
+  verification_code?: string;
+  entry_count?: number;
 }
 
 export interface DepartmentLedgerRecord {

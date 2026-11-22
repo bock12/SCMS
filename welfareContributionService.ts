@@ -1,8 +1,35 @@
 import { MemberContribution, MemberWelfareCard, ContributionCategory, WelfareReason, WelfareCampaignDrive } from './types';
 import { saveDepartmentLedgerRecord } from './departmentLedgerService';
+import { getGivingConfig } from './givingConfig';
+
+export const DEFAULT_MONTHLY_DUES_AMOUNT = 200;
 
 const getStorageKey = (deptName: string) => `faithconnect_welfare_contrib_${deptName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 const getCampaignKey = (deptName: string) => `faithconnect_welfare_campaigns_${deptName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+
+export const getDefaultWelfareCurrency = (): string => {
+  try {
+    return getGivingConfig().currency_code || 'SLE';
+  } catch {
+    return 'SLE';
+  }
+};
+
+export const getCurrentBillingCycle = (referenceDate: Date = new Date()): string => {
+  const year = referenceDate.getFullYear();
+  const month = String(referenceDate.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+export const doesContributionMatchMember = (
+  contrib: MemberContribution,
+  memberId: string,
+  memberName: string
+): boolean => {
+  if (memberId && contrib.member_id && contrib.member_id === memberId) return true;
+  const normalizedTarget = memberName.trim().toLowerCase();
+  return Boolean(normalizedTarget && contrib.member_name.trim().toLowerCase() === normalizedTarget);
+};
 
 export const getWelfareReasonLabel = (reason?: WelfareReason): string => {
   switch (reason) {
@@ -23,10 +50,29 @@ export const getCategoryBadgeColor = (category: ContributionCategory): string =>
   }
 };
 
-export const generateWelfareCardNumber = (deptName: string, memberId: string): string => {
+export const generateWelfareCardNumber = (
+  deptName: string,
+  memberId: string,
+  issuedYear: number = new Date().getFullYear()
+): string => {
   const acronym = deptName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 4) || 'DEPT';
   const cleanId = memberId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '001';
-  return `WEL-${acronym}-2026-${cleanId}`;
+  return `WEL-${acronym}-${issuedYear}-${cleanId}`;
+};
+
+export const generatePassbookVerificationCode = (
+  cardNumber: string,
+  memberId: string,
+  totalPaid: number,
+  entryCount: number
+): string => {
+  const input = `${cardNumber}|${memberId}|${totalPaid.toFixed(2)}|${entryCount}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `FC-PB-${(hash >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 };
 
 const getSeedCampaigns = (deptName: string): WelfareCampaignDrive[] => [
@@ -221,30 +267,241 @@ export const saveMemberContribution = (contrib: MemberContribution): void => {
   }
 };
 
-export const getMemberWelfareCard = (memberId: string, memberName: string, deptName: string): MemberWelfareCard => {
+export interface PassbookResolutionOptions {
+  currency?: string;
+  currentCycle?: string;
+  expectedMonthlyDues?: number;
+  issuedDate?: string;
+}
+
+export interface AnnualDuesMonthCell {
+  monthKey: string;
+  label: string;
+  paidAmount: number;
+  expectedAmount: number;
+  status: 'paid' | 'partial' | 'pending' | 'upcoming';
+}
+
+export interface MemberPassbookDetail {
+  card: MemberWelfareCard;
+  entries: MemberContribution[];
+  reciprocity: MemberReciprocityStanding;
+  duesMatrix: AnnualDuesMonthCell[];
+  campaigns: WelfareCampaignDrive[];
+}
+
+export const getMemberWelfareCard = (
+  memberId: string,
+  memberName: string,
+  deptName: string,
+  options: PassbookResolutionOptions = {}
+): MemberWelfareCard => {
   const allContribs = getMemberContributions(deptName);
-  const memberContribs = allContribs.filter(c => c.member_id === memberId || c.member_name.toLowerCase() === memberName.toLowerCase());
+  const memberContribs = allContribs
+    .filter(c => doesContributionMatchMember(c, memberId, memberName))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const totalWelfare = memberContribs.filter(c => c.category === 'welfare').reduce((s, c) => s + Number(c.amount), 0);
   const totalDues = memberContribs.filter(c => c.category === 'monthly_dues').reduce((s, c) => s + Number(c.amount), 0);
   const totalSupport = memberContribs.filter(c => c.category === 'special_support').reduce((s, c) => s + Number(c.amount), 0);
 
-  const lastContrib = memberContribs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  const currentCycle = options.currentCycle || getCurrentBillingCycle();
+  const expectedMonthlyDues = options.expectedMonthlyDues ?? DEFAULT_MONTHLY_DUES_AMOUNT;
+  const currency = options.currency || memberContribs[0]?.currency || getDefaultWelfareCurrency();
 
+  const currentCycleDuesPaid = memberContribs
+    .filter(c => c.category === 'monthly_dues' && (c.period_month_year || c.date.slice(0, 7)) === currentCycle)
+    .reduce((s, c) => s + Number(c.amount), 0);
+
+  const duesMonthsPaid = Array.from(
+    new Set(
+      memberContribs
+        .filter(c => c.category === 'monthly_dues')
+        .map(c => c.period_month_year || c.date.slice(0, 7))
+        .filter(Boolean)
+    )
+  ).sort();
+
+  const reciprocity = getMemberReciprocityRating(memberId, memberName, deptName);
+  const lastContrib = memberContribs[0];
   const cardNumber = lastContrib?.welfare_card_number || generateWelfareCardNumber(deptName, memberId);
+  const totalAll = totalWelfare + totalDues + totalSupport;
+  const issuedDate = options.issuedDate || `${currentCycle.slice(0, 4)}-01-10`;
+
+  let status: MemberWelfareCard['status'] = 'Dues Pending';
+  if (reciprocity.total_drives_count > 0 && reciprocity.participation_rate < 50) {
+    status = 'Restricted Standing';
+  } else if (currentCycleDuesPaid >= expectedMonthlyDues) {
+    status = 'Good Standing';
+  }
 
   return {
     card_number: cardNumber,
     member_id: memberId,
     member_name: memberName,
     department_name: deptName,
-    issued_date: '2026-01-10',
-    status: totalDues > 0 || totalWelfare > 0 ? 'Good Standing' : 'Dues Pending',
+    issued_date: issuedDate,
+    status,
     total_welfare_paid: totalWelfare,
     total_dues_paid: totalDues,
     total_support_paid: totalSupport,
-    last_contribution_date: lastContrib?.date
+    last_contribution_date: lastContrib?.date,
+    currency,
+    current_cycle: currentCycle,
+    current_cycle_dues_paid: currentCycleDuesPaid,
+    expected_monthly_dues: expectedMonthlyDues,
+    dues_months_paid: duesMonthsPaid,
+    reciprocity_rate: reciprocity.participation_rate,
+    reciprocity_label: reciprocity.standing_label,
+    verification_code: generatePassbookVerificationCode(cardNumber, memberId, totalAll, memberContribs.length),
+    entry_count: memberContribs.length
   };
+};
+
+const MONTH_SHORT_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export const getMemberPassbookDetails = (
+  memberId: string,
+  memberName: string,
+  deptName: string,
+  options: PassbookResolutionOptions & { year?: number } = {}
+): MemberPassbookDetail => {
+  const currentCycle = options.currentCycle || getCurrentBillingCycle();
+  const targetYear = options.year ?? Number(currentCycle.slice(0, 4));
+  const expectedAmount = options.expectedMonthlyDues ?? DEFAULT_MONTHLY_DUES_AMOUNT;
+
+  const card = getMemberWelfareCard(memberId, memberName, deptName, {
+    ...options,
+    currentCycle,
+    expectedMonthlyDues: expectedAmount
+  });
+
+  const allContribs = getMemberContributions(deptName);
+  const entries = allContribs
+    .filter(c => doesContributionMatchMember(c, memberId, memberName))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const reciprocity = getMemberReciprocityRating(memberId, memberName, deptName);
+  const campaigns = getWelfareCampaigns(deptName);
+
+  const duesMatrix: AnnualDuesMonthCell[] = MONTH_SHORT_LABELS.map((label, idx) => {
+    const monthKey = `${targetYear}-${String(idx + 1).padStart(2, '0')}`;
+    const paidAmount = entries
+      .filter(e => e.category === 'monthly_dues' && (e.period_month_year || e.date.slice(0, 7)) === monthKey)
+      .reduce((sum, e) => sum + Number(e.amount), 0);
+
+    let cellStatus: AnnualDuesMonthCell['status'] = 'pending';
+    if (paidAmount >= expectedAmount) {
+      cellStatus = 'paid';
+    } else if (paidAmount > 0) {
+      cellStatus = 'partial';
+    } else if (monthKey > currentCycle) {
+      cellStatus = 'upcoming';
+    }
+
+    return {
+      monthKey,
+      label,
+      paidAmount,
+      expectedAmount,
+      status: cellStatus
+    };
+  });
+
+  return {
+    card,
+    entries,
+    reciprocity,
+    duesMatrix,
+    campaigns
+  };
+};
+
+export const getPassbooksForMember = (
+  member: { id: string; name: string; departmentNames: string[] },
+  options: PassbookResolutionOptions & { year?: number } = {}
+): MemberPassbookDetail[] => {
+  const seen = new Set<string>();
+  const uniqueDepts: string[] = [];
+
+  member.departmentNames.forEach(dept => {
+    const trimmed = dept.trim();
+    const key = trimmed.toLowerCase();
+    if (trimmed && !seen.has(key)) {
+      seen.add(key);
+      uniqueDepts.push(trimmed);
+    }
+  });
+
+  return uniqueDepts.map(deptName =>
+    getMemberPassbookDetails(member.id, member.name, deptName, options)
+  );
+};
+
+export const matchesWelfareCardSearch = (
+  memberName: string,
+  card: Pick<MemberWelfareCard, 'card_number' | 'verification_code'>,
+  rawQuery: string
+): boolean => {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return true;
+  return (
+    memberName.toLowerCase().includes(query) ||
+    card.card_number.toLowerCase().includes(query) ||
+    (card.verification_code || '').toLowerCase().includes(query)
+  );
+};
+
+export const sanitizeCsvCell = (value: unknown): string => {
+  const raw = String(value ?? '');
+  const trimmedStart = raw.replace(/^[\u0000-\u001F\s]+/, '');
+  const safe = /^[=+\-@\t\r]/.test(trimmedStart) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
+
+export const buildPassbookCsv = (detail: MemberPassbookDetail): string => {
+  const header = [
+    'Date',
+    'Card Number',
+    'Member Name',
+    'Department',
+    'Category',
+    'Period / Purpose',
+    'Payment Method',
+    'Transaction Ref',
+    'Recorded By',
+    'Currency',
+    'Amount',
+    'Notes'
+  ].map(sanitizeCsvCell).join(',');
+
+  const rows = detail.entries.map(entry => {
+    const periodOrPurpose =
+      entry.category === 'monthly_dues'
+        ? entry.period_month_year || entry.date.slice(0, 7)
+        : entry.category === 'special_support'
+        ? entry.special_support_purpose || 'Special Support'
+        : getWelfareReasonLabel(entry.welfare_reason);
+
+    return [
+      entry.date.slice(0, 10),
+      entry.welfare_card_number || detail.card.card_number,
+      entry.member_name,
+      entry.department_name,
+      entry.category,
+      periodOrPurpose,
+      entry.payment_method,
+      entry.transaction_ref || '',
+      entry.recorded_by,
+      entry.currency || detail.card.currency || 'SLE',
+      Number(entry.amount).toFixed(2),
+      entry.notes || ''
+    ]
+      .map(sanitizeCsvCell)
+      .join(',');
+  });
+
+  return [header, ...rows].join('\n');
 };
 
 export const getDeptWelfareSummary = (deptName: string) => {

@@ -15,6 +15,26 @@ export interface BranchGovernanceScope {
   assignableBranchIds: string[];
 }
 
+export interface DistrictBranchMemberSummary {
+  branch: ChurchBranch;
+  memberCount: number;
+  activeMemberCount: number;
+  leaderCount: number;
+  hasPastor: boolean;
+}
+
+export interface DistrictPortalSummary {
+  district: District;
+  totalBranches: number;
+  hqBranch: ChurchBranch | null;
+  totalMembers: number;
+  activeMembers: number;
+  totalBranchLeaders: number;
+  branchesWithPastor: number;
+  overseerNames: string[];
+  branchSummaries: DistrictBranchMemberSummary[];
+}
+
 export async function getBranchGovernanceData(): Promise<{
   districts: District[];
   branches: ChurchBranch[];
@@ -46,11 +66,13 @@ export async function createDistrict(input: {
   name: string;
   region: string;
   country: string;
+  description?: string;
 }): Promise<District> {
   const result = await supabase.rpc('create_district', {
     p_name: input.name,
     p_region: input.region,
-    p_country: input.country
+    p_country: input.country,
+    p_description: input.description ?? null
   });
 
   if (result.error || !result.data) {
@@ -58,6 +80,44 @@ export async function createDistrict(input: {
   }
 
   return result.data as District;
+}
+
+export async function updateDistrict(input: {
+  id: string;
+  name: string;
+  region: string;
+  country: string;
+  description?: string;
+  hq_branch_id?: string | null;
+  update_hq?: boolean;
+}): Promise<District> {
+  const result = await supabase.rpc('update_district', {
+    p_district_id: input.id,
+    p_name: input.name,
+    p_region: input.region,
+    p_country: input.country,
+    p_description: input.description ?? null,
+    p_hq_branch_id: input.hq_branch_id ?? null,
+    p_update_hq: Boolean(input.update_hq)
+  });
+
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || 'Unable to customize district.');
+  }
+
+  return result.data as District;
+}
+
+export async function deleteDistrict(districtId: string): Promise<boolean> {
+  const result = await supabase.rpc('delete_district', {
+    p_district_id: districtId
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message || 'Unable to delete district.');
+  }
+
+  return Boolean(result.data);
 }
 
 export async function createChurchBranch(input: {
@@ -216,4 +276,114 @@ export async function resolveActorBranchGovernanceScope(
     manageableBranchIds,
     assignableBranchIds
   };
+}
+
+export function buildDistrictPortalSummaries(params: {
+  districts: District[];
+  branches: ChurchBranch[];
+  profiles: Profile[];
+  assignments: ProfileRoleAssignment[];
+  roles: SystemRole[];
+  nowMs?: number;
+}): DistrictPortalSummary[] {
+  const { districts, branches, profiles, assignments, roles, nowMs = Date.now() } = params;
+
+  const roleById = new Map<string, SystemRole>();
+  roles.forEach(role => roleById.set(role.id, role));
+
+  const profileById = new Map<string, Profile>();
+  profiles.forEach(p => profileById.set(p.id, p));
+
+  const activeAssignments = assignments.filter(a => {
+    if (!a.is_active) return false;
+    const role = roleById.get(a.role_id);
+    if (role && !role.is_active) return false;
+    const assignedAt = Date.parse(a.assigned_at);
+    if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
+    if (a.expires_at) {
+      const expiresAt = Date.parse(a.expires_at);
+      if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
+    }
+    return true;
+  });
+
+  const memberCountByBranch = new Map<string, { total: number; active: number }>();
+  profiles.forEach(member => {
+    if (!member.branch_id) return;
+    if (member.membership_status === 'archived') return;
+    const current = memberCountByBranch.get(member.branch_id) || { total: 0, active: 0 };
+    current.total += 1;
+    if (!member.membership_status || member.membership_status === 'active') {
+      current.active += 1;
+    }
+    memberCountByBranch.set(member.branch_id, current);
+  });
+
+  const branchAssignmentsMap = new Map<string, ProfileRoleAssignment[]>();
+  const districtOverseersMap = new Map<string, ProfileRoleAssignment[]>();
+
+  activeAssignments.forEach(a => {
+    if (a.scope_type === 'branch' && a.branch_id) {
+      const list = branchAssignmentsMap.get(a.branch_id) || [];
+      list.push(a);
+      branchAssignmentsMap.set(a.branch_id, list);
+    } else if (a.scope_type === 'district' && a.district_id) {
+      const list = districtOverseersMap.get(a.district_id) || [];
+      list.push(a);
+      districtOverseersMap.set(a.district_id, list);
+    }
+  });
+
+  return districts.map(district => {
+    const districtBranches = branches
+      .filter(b => b.district_id === district.id)
+      .sort((a, b) => {
+        const hqDiff = Number(Boolean(b.is_main_branch)) - Number(Boolean(a.is_main_branch));
+        if (hqDiff !== 0) return hqDiff;
+        return a.name.localeCompare(b.name);
+      });
+
+    const hqBranch = districtBranches.find(b => b.is_main_branch) || null;
+    let totalMembers = 0;
+    let activeMembers = 0;
+    let totalBranchLeaders = 0;
+    let branchesWithPastor = 0;
+
+    const branchSummaries: DistrictBranchMemberSummary[] = districtBranches.map(branch => {
+      const counts = memberCountByBranch.get(branch.id) || { total: 0, active: 0 };
+      const branchLeaders = branchAssignmentsMap.get(branch.id) || [];
+      const hasPastor = branchLeaders.some(l => roleById.get(l.role_id)?.name === 'pastor');
+
+      totalMembers += counts.total;
+      activeMembers += counts.active;
+      totalBranchLeaders += branchLeaders.length;
+      if (hasPastor) branchesWithPastor += 1;
+
+      return {
+        branch,
+        memberCount: counts.total,
+        activeMemberCount: counts.active,
+        leaderCount: branchLeaders.length,
+        hasPastor
+      };
+    });
+
+    const overseers = districtOverseersMap.get(district.id) || [];
+    const overseerNames = overseers.map(o => {
+      const person = profileById.get(o.profile_id);
+      return person ? `${person.first_name} ${person.last_name}` : o.profile_id;
+    });
+
+    return {
+      district,
+      totalBranches: districtBranches.length,
+      hqBranch,
+      totalMembers,
+      activeMembers,
+      totalBranchLeaders,
+      branchesWithPastor,
+      overseerNames,
+      branchSummaries
+    };
+  });
 }

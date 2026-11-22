@@ -2304,8 +2304,20 @@ export const supabase = {
       return { data: true, error: null };
     }
 
+    const normalizeSingleHqPerDistrict = (branches: ChurchBranch[], targetDistrictId: string, preferredHqBranchId: string | null) =>
+      branches.map((branch: ChurchBranch) => {
+        if (branch.district_id !== targetDistrictId) return branch;
+        if (!preferredHqBranchId) {
+          return branch.is_main_branch ? { ...branch, is_main_branch: false } : branch;
+        }
+        return {
+          ...branch,
+          is_main_branch: branch.id === preferredHqBranchId
+        };
+      });
+
     if (functionName === 'create_district') {
-      const { p_name = '', p_region = '', p_country = '' } = args;
+      const { p_name = '', p_region = '', p_country = '', p_description = '' } = args;
       const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
       if (!hasChurchBranchPerm) {
         return { data: null, error: { code: '42501', message: 'Church-wide manage_branches permission is required to create districts.' } };
@@ -2313,16 +2325,88 @@ export const supabase = {
       if (!String(p_name).trim() || !String(p_region).trim() || !String(p_country).trim()) {
         return { data: null, error: { code: '22023', message: 'District name, region, and country are required.' } };
       }
+      const trimmedDesc = String(p_description || '').trim();
       const district: District = {
         id: `dist-${createMockUuid().slice(0, 8)}`,
         name: String(p_name).trim(),
         region: String(p_region).trim(),
-        country: String(p_country).trim()
+        country: String(p_country).trim(),
+        ...(trimmedDesc ? { description: trimmedDesc } : {})
       };
       localDb.districts = [...(localDb.districts || []), district];
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
       return { data: district, error: null };
+    }
+
+    if (functionName === 'update_district') {
+      const {
+        p_district_id,
+        p_name = '',
+        p_region = '',
+        p_country = '',
+        p_description = '',
+        p_hq_branch_id = null,
+        p_update_hq = false
+      } = args;
+      const existing = (localDb.districts || []).find((d: any) => d.id === p_district_id);
+      if (!existing) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
+      }
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      if (!hasChurchBranchPerm && !actorCanManageScopeWith(actorBranchAssignments, 'district', null, p_district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to customize this district.' } };
+      }
+      if (Boolean(p_update_hq) && !hasChurchBranchPerm) {
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change district HQ branch designation.' } };
+      }
+      if (!String(p_name).trim() || !String(p_region).trim() || !String(p_country).trim()) {
+        return { data: null, error: { code: '22023', message: 'District name, region, and country are required.' } };
+      }
+      if (Boolean(p_update_hq) && p_hq_branch_id !== null) {
+        const targetBranch = (localDb.church_branches || []).find(
+          (b: any) => b.id === p_hq_branch_id && b.district_id === p_district_id
+        );
+        if (!targetBranch) {
+          return { data: null, error: { code: '22023', message: 'The selected HQ branch does not belong to this district.' } };
+        }
+      }
+      const trimmedDesc = String(p_description || '').trim();
+      const updatedDistrict: District = {
+        ...existing,
+        name: String(p_name).trim(),
+        region: String(p_region).trim(),
+        country: String(p_country).trim(),
+        description: trimmedDesc || undefined
+      };
+      localDb.districts = (localDb.districts || []).map((d: any) => (d.id === p_district_id ? updatedDistrict : d));
+      if (Boolean(p_update_hq)) {
+        localDb.church_branches = normalizeSingleHqPerDistrict(
+          localDb.church_branches || [],
+          p_district_id,
+          p_hq_branch_id || null
+        );
+      }
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
+      return { data: updatedDistrict, error: null };
+    }
+
+    if (functionName === 'delete_district') {
+      const { p_district_id } = args;
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      if (!hasChurchBranchPerm) {
+        return { data: null, error: { code: '42501', message: 'Church-wide manage_branches permission is required to delete districts.' } };
+      }
+      const exists = (localDb.districts || []).some((d: any) => d.id === p_district_id);
+      if (!exists) return { data: false, error: null };
+      if ((localDb.church_branches || []).some((b: any) => b.district_id === p_district_id)) {
+        return { data: null, error: { code: '23503', message: 'Reassign or remove all branches in this district before deleting it.' } };
+      }
+      localDb.districts = (localDb.districts || []).filter((d: any) => d.id !== p_district_id);
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
+      return { data: true, error: null };
     }
 
     if (functionName === 'create_church_branch') {
@@ -2342,7 +2426,7 @@ export const supabase = {
         return { data: null, error: { code: '42501', message: 'You do not have permission to create branches in this district.' } };
       }
       if (Boolean(p_is_main_branch) && !hasChurchBranchPerm) {
-        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may designate the main headquarters branch.' } };
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may designate the district HQ branch.' } };
       }
       if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
         return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state are required.' } };
@@ -2356,7 +2440,11 @@ export const supabase = {
         state: String(p_state).trim(),
         is_main_branch: Boolean(p_is_main_branch)
       };
-      localDb.church_branches = [...(localDb.church_branches || []), branch];
+      let nextBranches = [...(localDb.church_branches || []), branch];
+      if (branch.is_main_branch) {
+        nextBranches = normalizeSingleHqPerDistrict(nextBranches, p_district_id, branch.id);
+      }
+      localDb.church_branches = nextBranches;
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
       return { data: branch, error: null };
@@ -2387,7 +2475,7 @@ export const supabase = {
           return { data: null, error: { code: '42501', message: 'You do not have permission to update this branch or move it across districts.' } };
         }
         if (Boolean(p_is_main_branch) !== Boolean(existing.is_main_branch)) {
-          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change main branch designation.' } };
+          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change district HQ branch designation.' } };
         }
       }
       if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
@@ -2402,7 +2490,11 @@ export const supabase = {
         state: String(p_state).trim(),
         is_main_branch: Boolean(p_is_main_branch)
       };
-      localDb.church_branches = localDb.church_branches.map((b: any) => (b.id === p_branch_id ? updated : b));
+      let nextBranches = (localDb.church_branches || []).map((b: any) => (b.id === p_branch_id ? updated : b));
+      if (updated.is_main_branch) {
+        nextBranches = normalizeSingleHqPerDistrict(nextBranches, p_district_id, updated.id);
+      }
+      localDb.church_branches = nextBranches;
       saveLocalDatabase(localDb);
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('church_branches_updated'));
       return { data: updated, error: null };
