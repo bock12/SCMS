@@ -12,6 +12,7 @@ import { getEventBudgets } from './eventBudgetFinanceService';
 import { getEventBudgetApprovals } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
 import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
+import type { FinanceOwnershipScope } from './financeConfigurationService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
@@ -28,13 +29,15 @@ interface FinanceOfficerWorkspaceProps {
   profile: Profile | null;
   databaseBranchId?: string | null;
   databaseProfileId?: string | null;
+  /** Optional explicit church or district scope; defaults to the authenticated profile's branch. */
+  financeScope?: FinanceOwnershipScope;
 }
 
 type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
 
 const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
-const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId, databaseProfileId }) => {
+const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId, databaseProfileId, financeScope }) => {
   const financeBranchId = databaseBranchId ?? profile?.branch_id ?? null;
   const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
@@ -1396,7 +1399,10 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* --- WORKSPACE TAB 2: MINISTRY PROPOSALS & EXPENSE INVOICES --- */}
       {workspaceTab === 'setup' && (
-        <FinanceConfigurationWorkspace branchId={financeBranchId} />
+        <FinanceConfigurationWorkspace
+          branchId={financeBranchId}
+          scope={financeScope ?? (financeBranchId ? { type: 'branch', id: financeBranchId } : { type: 'church', id: null })}
+        />
       )}
 
       {workspaceTab === 'requisitions' && (
@@ -1713,13 +1719,14 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
 
 /** Keep mock login for UI testing, but gate Finance behind verified Supabase Auth. */
-export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile }) => (
+export const FinanceOfficerWorkspace: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, financeScope }) => (
   <FinanceDatabaseSessionGate mockProfile={profile}>
     {databaseProfile => (
       <FinanceOfficerWorkspaceContent
         profile={profile}
         databaseBranchId={databaseProfile.branch_id}
         databaseProfileId={databaseProfile.id}
+        financeScope={financeScope}
       />
     )}
   </FinanceDatabaseSessionGate>
