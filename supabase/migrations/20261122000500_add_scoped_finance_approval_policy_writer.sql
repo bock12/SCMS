@@ -86,7 +86,7 @@ begin
     v_id := nullif(v_item->>'id','')::uuid;
     v_name := trim(coalesce(v_item->>'name',''));
     v_policy_type := v_item->>'transaction_type';
-    if v_id is null or v_name = '' or v_policy_type not in ('financial_document','budget')
+    if v_id is null or v_name = '' or v_policy_type is null or v_policy_type not in ('financial_document','budget')
        or nullif(v_item->>'effective_from','') is null
        or (nullif(v_item->>'effective_to','') is not null
            and (v_item->>'effective_to')::date < (v_item->>'effective_from')::date) then
@@ -171,7 +171,7 @@ begin
        or (v_item->>'step_number')::integer < 1
        or nullif(v_item->>'required_approvals','')::integer is null
        or (v_item->>'required_approvals')::integer < 1
-       or v_item->>'required_permission_key' <> 'approve_finances' then
+       or v_item->>'required_permission_key' is distinct from 'approve_finances' then
       raise exception 'Approval steps require an ordered step, approve_finances permission and positive approval count';
     end if;
     select to_jsonb(step) into v_existing from public.approval_policy_steps step where step.id = v_id;
