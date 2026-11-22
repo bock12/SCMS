@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
-import { getFinanceConfiguration, saveFinanceConfiguration, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type RequisitionApprovalConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type FinanceOwnershipScope, type RequisitionApprovalConfiguration } from './financeConfigurationService';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 
 interface FinanceConfigurationWorkspaceProps {
   branchId: string | null;
+  /** When supplied, use the exact church, district or branch ownership scope APIs. */
+  scope?: FinanceOwnershipScope;
 }
 
 const emptyConfiguration = (): FinanceConfiguration => ({
@@ -18,7 +20,7 @@ const fieldClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2
 const labelClass = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500';
 const buttonClass = 'inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50';
 
-export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspaceProps> = ({ branchId }) => {
+export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspaceProps> = ({ branchId, scope }) => {
   const [configuration, setConfiguration] = useState<FinanceConfiguration>(emptyConfiguration);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -61,10 +63,12 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const reload = async () => {
     setLoading(true);
     setError(null);
-    const [configResult, requisitionResult] = await Promise.all([
-      getFinanceConfiguration(branchId),
-      getRequisitionApprovalConfiguration(branchId)
-    ]);
+    const effectiveBranchId = scope?.type === 'branch' ? scope.id : branchId;
+    const configRequest = scope ? getFinanceScopeConfiguration(scope) : getFinanceConfiguration(branchId);
+    const requisitionRequest = scope?.type === 'district'
+      ? Promise.resolve({ data: { policies: [], bands: [], steps: [] }, error: null })
+      : getRequisitionApprovalConfiguration(effectiveBranchId);
+    const [configResult, requisitionResult] = await Promise.all([configRequest, requisitionRequest]);
     if (configResult.error) setError(configResult.error.message);
     else setConfiguration({ ...emptyConfiguration(), ...(configResult.data || {}) });
     if (requisitionResult.error) setError(current => current || requisitionResult.error!.message);
@@ -72,7 +76,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setLoading(false);
   };
 
-  useEffect(() => { void reload(); }, [branchId]);
+  useEffect(() => { void reload(); }, [branchId, scope?.type, scope?.id]);
 
   const update = (patch: Partial<FinanceConfiguration>) =>
     setConfiguration(current => ({ ...current, ...patch }));
@@ -97,7 +101,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const addFinancialAccount = () => {
     if (!accountName.trim() || !accountCurrency || !accountChartId) return;
     update({ financialAccounts: [...configuration.financialAccounts, {
-      id: makeId('fin-account'), chart_account_id: accountChartId, branch_id: branchId,
+      id: makeId('fin-account'), chart_account_id: accountChartId,
+      branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId,
+      district_id: scope?.type === 'district' ? scope.id : null,
       name: accountName.trim(), account_type: accountType, currency_code: accountCurrency,
       is_active: true
     }] });
@@ -109,6 +115,8 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     const isDefault = configuration.funds.length === 0;
     update({ funds: [...configuration.funds, {
       id: makeId('fund'), name: fundName.trim(), code: fundCode.trim().toUpperCase(),
+      branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : null,
+      district_id: scope?.type === 'district' ? scope.id : null,
       fund_type: fundType, description: null, is_default: isDefault, is_active: true
     }] });
     setFundName(''); setFundCode('');
@@ -149,7 +157,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     update({
       approvalPolicies: [...configuration.approvalPolicies, {
         id: policyId, name: policyName.trim(), transaction_type: policyType,
-        branch_id: branchId, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === branchId).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
+        branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === (scope?.type === 'branch' ? scope.id : branchId)).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
       }],
       approvalPolicyBands: [...configuration.approvalPolicyBands, {
         id: bandId, policy_id: policyId, min_amount_base: min, max_amount_base: max
@@ -203,9 +211,13 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
   const save = async () => {
     setSaving(true); setError(null); setNotice(null);
-    const result = await saveFinanceConfiguration(configuration, branchId);
+    const result = scope && scope.type !== 'church'
+      ? await saveFinanceScopeResources(scope, configuration.financialAccounts, configuration.funds)
+      : await saveFinanceConfiguration(configuration, scope?.type === 'church' ? null : branchId);
     if (result.error) setError(result.error.message);
-    else setNotice('Canonical finance configuration saved. Receipt and payment entry can now validate against this setup.');
+    else setNotice(scope && scope.type !== 'church'
+      ? 'Financial accounts and funds saved to the selected organizational scope.'
+      : 'Canonical finance configuration saved. Receipt and payment entry can now validate against this setup.');
     setSaving(false);
   };
 
@@ -229,7 +241,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 className="font-black text-slate-900">Currencies & base currency</h3>
+{scope && scope.type !== 'church' ? (
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Currencies and the chart of accounts are church-wide settings. Manage them from the church finance scope.</div>
+          ) : (
+            <>
+                    <h3 className="font-black text-slate-900">Currencies & base currency</h3>
           <div className="mt-3 flex gap-2">
             <input className={fieldClass} aria-label="Currency code" placeholder="e.g. SLE" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
             <button type="button" className={buttonClass} onClick={addCurrency}><Plus size={14} /> Add</button>
@@ -240,6 +256,8 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
             {configuration.currencies.map(code => <option key={code} value={code}>{code}</option>)}
           </select>
           <div className="mt-3 flex flex-wrap gap-2">{configuration.currencies.map(code => <span key={code} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{code}</span>)}</div>
+            </>
+          )}
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -256,6 +274,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         </div>
       </section>
 
+{(!scope || scope.type === 'church') && (
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="font-black text-slate-900">Chart of accounts</h3>
         <div className="mt-3 grid gap-2 sm:grid-cols-4">
@@ -270,6 +289,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
           {configuration.chartAccounts.map(account => <tr key={account.id} className="border-b border-slate-100"><td className="py-2 font-mono">{account.code}</td><td>{account.name}</td><td className="capitalize">{account.account_type}</td><td>{account.is_active ? 'Active' : 'Inactive'}</td></tr>)}
         </tbody></table></div>
       </section>
+      )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="font-black text-slate-900">Financial accounts</h3>
@@ -283,6 +303,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         <ul className="mt-3 space-y-2 text-sm">{configuration.financialAccounts.map(account => <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">{account.name} · {account.account_type} · {account.currency_code}</li>)}</ul>
       </section>
 
+{(!scope || scope.type === 'church') ? (
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <h3 className="font-black text-slate-900">Financial years & periods</h3>
@@ -357,6 +378,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
           </ul>
         </div>
       </section>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Financial years, periods and approval-policy editing remain church-level or legacy branch workflows. Scoped approval-policy writes will be enabled in a later integration step.</div>
+      )}
 
       <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, branch scope, validation and audit controls.</p>
 
