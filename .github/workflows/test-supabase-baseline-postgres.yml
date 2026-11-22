@@ -1162,6 +1162,9 @@ jobs:
       - name: Apply authorized finance scope discovery API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000400_get_authorized_finance_scopes.sql
 
+      - name: Apply scoped finance approval policy writer
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000500_add_scoped_finance_approval_policy_writer.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'

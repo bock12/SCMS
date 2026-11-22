@@ -1018,3 +1018,50 @@ describe('mock finance scope discovery RPC', () => {
     expect(unlinked.error?.code).toBe('42501');
   });
 });
+
+describe('mock scoped finance approval policy writes', () => {
+  test('creates immutable district-owned approval policies, bands and steps', async () => {
+    const ctx = fixture({ districtFinance: true });
+    const result = await ctx.rpc.rpc('save_finance_scope_approval_policies', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_policies: [{
+        id: 'district-policy', name: 'District Receipts and Payments',
+        transaction_type: 'financial_document', branch_id: null, district_id: 'district-a',
+        version: 1, effective_from: '2026-01-01', is_active: true
+      }],
+      p_bands: [{ id: 'district-band', policy_id: 'district-policy', min_amount_base: 0, max_amount_base: null }],
+      p_steps: [{
+        id: 'district-step', band_id: 'district-band', step_number: 1,
+        required_permission_key: 'approve_finances', required_approvals: 2,
+        prohibit_submitter_approval: true
+      }]
+    });
+    expect(result.error).toBeNull();
+    expect(result.data.policies_created).toBe(1);
+    const saved = ctx.read();
+    expect(saved.approvalPolicies.find(item => item.id === 'district-policy')?.district_id).toBe('district-a');
+    expect(saved.approvalPolicyBands.find(item => item.id === 'district-band')?.policy_id).toBe('district-policy');
+    expect(saved.approvalPolicySteps.find(item => item.id === 'district-step')?.required_approvals).toBe(2);
+  });
+
+  test('denies a branch finance user from writing a district approval policy', async () => {
+    const ctx = fixture();
+    const result = await ctx.rpc.rpc('save_finance_scope_approval_policies', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_policies: [], p_bands: [], p_steps: []
+    });
+    expect(result.error?.code).toBe('42501');
+    expect(ctx.read().approvalPolicies).toHaveLength(1);
+  });
+
+  test('rejects bands and steps that attempt to mutate an existing policy version', async () => {
+    const ctx = fixture({ districtFinance: true });
+    const result = await ctx.rpc.rpc('save_finance_scope_approval_policies', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_policies: [],
+      p_bands: [{ id: 'band-a', policy_id: 'policy-a', min_amount_base: 0, max_amount_base: 900000 }],
+      p_steps: []
+    });
+    expect(result.error?.message).toContain('immutable');
+  });
+});

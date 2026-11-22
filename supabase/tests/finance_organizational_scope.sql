@@ -386,6 +386,80 @@ END
 $branch_scope_discovery$;
 ROLLBACK;
 
+-- District and branch approval policy writes must stay at their exact ownership scope.
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000001', true);
+DO $district_policy_write$
+DECLARE v_result jsonb;
+BEGIN
+  v_result := public.save_finance_scope_approval_policies(
+    'district','97000000-0000-4000-8000-000000000001',
+    jsonb_build_array(jsonb_build_object(
+      'id','97800000-0000-4000-8000-000000000001',
+      'name','FIN-ORG-001 District Receipt Approval',
+      'transaction_type','financial_document','branch_id',null,
+      'district_id','97000000-0000-4000-8000-000000000001',
+      'effective_from','2026-01-01','is_active',true
+    )),
+    jsonb_build_array(jsonb_build_object(
+      'id','97900000-0000-4000-8000-000000000001',
+      'policy_id','97800000-0000-4000-8000-000000000001',
+      'min_amount_base',0,'max_amount_base',null
+    )),
+    jsonb_build_array(jsonb_build_object(
+      'id','97900000-0000-4000-8000-000000000002',
+      'band_id','97900000-0000-4000-8000-000000000001',
+      'step_number',1,'required_permission_key','approve_finances',
+      'required_approvals',2,'prohibit_submitter_approval',true
+    ))
+  );
+  IF v_result->>'saved' <> 'true'
+     OR (v_result->>'policies_created')::integer <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.approval_policies
+       WHERE id='97800000-0000-4000-8000-000000000001'
+         AND branch_id IS NULL AND district_id='97000000-0000-4000-8000-000000000001'
+     ) THEN
+    RAISE EXCEPTION 'District approval policy was not saved at its exact scope: %',v_result;
+  END IF;
+  BEGIN
+    PERFORM public.save_finance_scope_approval_policies(
+      'district','97000000-0000-4000-8000-000000000001',
+      jsonb_build_array(jsonb_build_object(
+        'id','97800000-0000-4000-8000-000000000002','name','Invalid cross-scope policy',
+        'transaction_type','financial_document','branch_id','97100000-0000-4000-8000-000000000003',
+        'district_id','97000000-0000-4000-8000-000000000001',
+        'effective_from','2026-01-01','is_active',true
+      )), '[]'::jsonb, '[]'::jsonb
+    );
+    RAISE EXCEPTION 'FIN_ORG_002_EXPECTED_SCOPE_MISMATCH_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_002_EXPECTED_SCOPE_MISMATCH_DENIAL' THEN RAISE; END IF;
+    IF position('ownership must match' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+END
+$district_policy_write$;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000002', true);
+DO $branch_policy_write$
+BEGIN
+  BEGIN
+    PERFORM public.save_finance_scope_approval_policies(
+      'district','97000000-0000-4000-8000-000000000001','[]'::jsonb,'[]'::jsonb,'[]'::jsonb
+    );
+    RAISE EXCEPTION 'FIN_ORG_002_EXPECTED_DISTRICT_POLICY_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_002_EXPECTED_DISTRICT_POLICY_DENIAL' THEN RAISE; END IF;
+    IF position('Insufficient permission' in SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+END
+$branch_policy_write$;
+ROLLBACK;
+
 DO $finance_org_security$
 BEGIN
   IF has_function_privilege('anon', 'private.has_permission_for_district(text,uuid)', 'EXECUTE')
@@ -394,6 +468,13 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('authenticated', 'private.has_permission_for_district(text,uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Authenticated role is missing district permission helper execution';
+  END IF;
+  IF has_function_privilege('anon', 'public.save_finance_scope_approval_policies(text,uuid,jsonb,jsonb,jsonb)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.save_finance_scope_approval_policies(text,uuid,jsonb,jsonb,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Scoped approval policy writer must not be executable by anon or service_role';
+  END IF;
+  IF NOT has_function_privilege('authenticated', 'public.save_finance_scope_approval_policies(text,uuid,jsonb,jsonb,jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Authenticated role is missing scoped approval policy writer execution';
   END IF;
   IF has_function_privilege('anon', 'public.get_my_finance_scopes()', 'EXECUTE')
      OR has_function_privilege('service_role', 'public.get_my_finance_scopes()', 'EXECUTE') THEN

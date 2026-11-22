@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
-import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type FinanceOwnershipScope, type RequisitionApprovalConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, saveFinanceScopeApprovalPolicies, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type FinanceOwnershipScope, type RequisitionApprovalConfiguration } from './financeConfigurationService';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 
 interface FinanceConfigurationWorkspaceProps {
@@ -157,7 +157,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     update({
       approvalPolicies: [...configuration.approvalPolicies, {
         id: policyId, name: policyName.trim(), transaction_type: policyType,
-        branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === (scope?.type === 'branch' ? scope.id : branchId)).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
+        branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId, district_id: scope?.type === 'district' ? scope.id : null, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === (scope?.type === 'branch' ? scope.id : branchId)).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
       }],
       approvalPolicyBands: [...configuration.approvalPolicyBands, {
         id: bandId, policy_id: policyId, min_amount_base: min, max_amount_base: max
@@ -211,13 +211,30 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
   const save = async () => {
     setSaving(true); setError(null); setNotice(null);
-    const result = scope && scope.type !== 'church'
-      ? await saveFinanceScopeResources(scope, configuration.financialAccounts, configuration.funds)
-      : await saveFinanceConfiguration(configuration, scope?.type === 'church' ? null : branchId);
-    if (result.error) setError(result.error.message);
-    else setNotice(scope && scope.type !== 'church'
-      ? 'Financial accounts and funds saved to the selected organizational scope.'
-      : 'Canonical finance configuration saved. Receipt and payment entry can now validate against this setup.');
+    if (scope && scope.type !== 'church') {
+      const resources = await saveFinanceScopeResources(scope, configuration.financialAccounts, configuration.funds);
+      if (resources.error) {
+        setError(resources.error.message);
+        setSaving(false);
+        return;
+      }
+      const policies = await saveFinanceScopeApprovalPolicies(
+        scope, configuration.approvalPolicies, configuration.approvalPolicyBands, configuration.approvalPolicySteps
+      );
+      if (policies.error) {
+        setError(`Financial accounts and funds were saved, but approval policies were not saved: ${policies.error.message}`);
+      } else {
+        setNotice('Financial accounts, funds and approval policies saved to the selected organizational scope.');
+        await reload();
+      }
+    } else {
+      const result = await saveFinanceConfiguration(configuration, scope?.type === 'church' ? null : branchId);
+      if (result.error) setError(result.error.message);
+      else {
+        setNotice('Canonical finance configuration saved. Receipt and payment entry can now validate against this setup.');
+        await reload();
+      }
+    }
     setSaving(false);
   };
 
@@ -320,7 +337,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <h3 className="font-black text-slate-900">Approval policies</h3>
-          <p className="mt-1 text-xs text-slate-500">Configure separate approval rules for canonical receipts/payments and event budgets.</p>
+          <p className="mt-1 text-xs text-slate-500">Configure separate approval rules for canonical receipts/payments and event budgets. Amount bands use the church base currency; policies are created only when you save.</p>
           <div className="mt-3 space-y-2">
             <label className={labelClass}>Workflow type</label>
             <select className={fieldClass} value={policyType} onChange={e => {
@@ -338,7 +355,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
             <p className="mt-1 text-xs text-slate-500">Any active profile with the applicable branch-scoped approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
             <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
           </div>
-          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
+          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.district_id ? 'District' : policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5">

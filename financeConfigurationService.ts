@@ -80,6 +80,32 @@ export async function getFinanceScopeConfiguration(
   });
 }
 
+export interface FinanceScopeApprovalPolicyWriteResult {
+  saved: boolean;
+  policies_created: number;
+  bands_created: number;
+  steps_created: number;
+  scope_type: FinanceOwnershipScope['type'];
+  scope_id: string | null;
+}
+
+/** Creates immutable, versioned approval policies and their bands/steps in one exact scope. */
+export async function saveFinanceScopeApprovalPolicies(
+  scope: FinanceOwnershipScope,
+  policies: FinanceConfiguration['approvalPolicies'],
+  bands: FinanceConfiguration['approvalPolicyBands'],
+  steps: FinanceConfiguration['approvalPolicySteps'],
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceScopeApprovalPolicyWriteResult>> {
+  return client.rpc('save_finance_scope_approval_policies', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id,
+    p_policies: policies,
+    p_bands: bands,
+    p_steps: steps
+  });
+}
+
 export interface FinanceScopeResourceWriteResult {
   saved: boolean;
   financial_accounts_created: number;

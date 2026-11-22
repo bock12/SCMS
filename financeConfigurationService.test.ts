@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getFinanceConfiguration, getFinanceScopeConfiguration, getMyFinanceScopes, saveFinanceConfiguration, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, getMyFinanceScopes, saveFinanceConfiguration, saveFinanceScopeApprovalPolicies, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
 
 const config: FinanceConfiguration = {
   currencies: ['SLE', 'USD'], baseCurrencyCode: 'SLE',
@@ -129,6 +129,41 @@ describe('finance configuration service', () => {
     expect(call?.args?.p_funds).toEqual(funds);
     expect(result.data?.financial_accounts_created).toBe(1);
     expect(result.data?.funds_created).toBe(1);
+  });
+
+  test('writes district approval policies, amount bands and ordered steps through the scoped RPC', async () => {
+    let call: { name: string; args?: Record<string, unknown> } | null = null;
+    const policies = [{ ...config.approvalPolicies[0], branch_id: null, district_id: 'district-a' }];
+    const bands = config.approvalPolicyBands;
+    const steps = config.approvalPolicySteps;
+    const result = await saveFinanceScopeApprovalPolicies(
+      { type: 'district', id: 'district-a' }, policies, bands, steps,
+      {
+        rpc: async (name, args) => {
+          call = { name, args };
+          return { data: {
+            saved: true, policies_created: 1, bands_created: 1, steps_created: 1,
+            scope_type: 'district', scope_id: 'district-a'
+          }, error: null };
+        }
+      }
+    );
+    expect(call?.name).toBe('save_finance_scope_approval_policies');
+    expect(call?.args?.p_scope_type).toBe('district');
+    expect(call?.args?.p_scope_id).toBe('district-a');
+    expect(call?.args?.p_policies).toEqual(policies);
+    expect(call?.args?.p_bands).toEqual(bands);
+    expect(call?.args?.p_steps).toEqual(steps);
+    expect(result.data?.policies_created).toBe(1);
+  });
+
+  test('propagates scoped approval policy authorization errors', async () => {
+    const result = await saveFinanceScopeApprovalPolicies(
+      { type: 'district', id: 'district-a' }, [], [], [],
+      { rpc: async () => ({ data: null, error: { code: '42501', message: 'Insufficient permission' } }) }
+    );
+    expect(result.error?.code).toBe('42501');
+    expect(result.data).toBeNull();
   });
 
   test('propagates scoped resource write authorization errors', async () => {

@@ -1563,6 +1563,128 @@ export function createMockFinanceRpc(
     return success({ actor_profile_id: actor.id, journals, account_balances: accountBalances });
   }
 
+  function saveFinanceScopeApprovalPolicies(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return fail(scope.error);
+    const arrays = [args.p_policies, args.p_bands, args.p_steps];
+    if (arrays.some(value => !Array.isArray(value))) return fail('Approval policies, bands and steps must be arrays');
+    const authorized = scopeType === 'church'
+      ? hasPermission(state, actor.id, 'manage_finances', null)
+      : scopeType === 'district'
+        ? hasDistrictPermission(state, actor.id, 'manage_finances', scopeId) || hasPermission(state, actor.id, 'manage_finances', null)
+        : hasPermission(state, actor.id, 'manage_finances', scopeId);
+    if (!authorized) return fail('Insufficient permission to manage approval policies in this scope', '42501');
+
+    const newPolicyIds: string[] = [];
+    const newBandIds: string[] = [];
+    let policiesCreated = 0, bandsCreated = 0, stepsCreated = 0;
+    for (const policy of args.p_policies) {
+      if (!policy?.id || !policy.name?.trim() || !['financial_document', 'budget'].includes(policy.transaction_type) ||
+          !policy.effective_from || (policy.effective_to && policy.effective_to < policy.effective_from)) {
+        return fail('Approval policies require a name, transaction type and valid effective dates');
+      }
+      const existing = state.approvalPolicies.find(item => item.id === policy.id);
+      if (existing) {
+        const sameScope = (existing.branch_id ?? null) === scope.branchId &&
+          (existing.district_id ?? null) === scope.districtId;
+        if (!sameScope || existing.name !== policy.name || existing.transaction_type !== policy.transaction_type ||
+            existing.effective_from !== policy.effective_from || (existing.effective_to ?? null) !== (policy.effective_to ?? null) ||
+            existing.is_active !== (policy.is_active ?? true)) {
+          return fail('Approval policy versions are immutable; create a new version instead');
+        }
+        continue;
+      }
+      const requestedBranch = policy.branch_id ?? null;
+      const requestedDistrict = policy.district_id ?? null;
+      if (requestedBranch !== scope.branchId || (requestedDistrict !== null && requestedDistrict !== scope.districtId)) {
+        return fail('New approval policies must match the requested organizational scope');
+      }
+      const version = Math.max(0, ...state.approvalPolicies
+        .filter(item => item.transaction_type === policy.transaction_type &&
+          (item.branch_id ?? null) === scope.branchId && (item.district_id ?? null) === scope.districtId)
+        .map(item => Number((item as any).version || 0))) + 1;
+      state.approvalPolicies.push({
+        ...clone(policy), branch_id: scope.branchId, district_id: scope.districtId,
+        version, is_active: policy.is_active ?? true, min_amount: 0, max_amount: null,
+        approver_profile_ids: []
+      });
+      newPolicyIds.push(policy.id);
+      policiesCreated++;
+    }
+
+    for (const band of args.p_bands) {
+      if (!band?.id || !band.policy_id || !Number.isFinite(Number(band.min_amount_base)) ||
+          Number(band.min_amount_base) < 0 ||
+          (band.max_amount_base != null && Number(band.max_amount_base) <= Number(band.min_amount_base))) {
+        return fail('Approval amount bands require a valid non-negative range');
+      }
+      const existing = state.approvalPolicyBands.find(item => item.id === band.id);
+      if (existing) {
+        if (existing.policy_id !== band.policy_id ||
+            Number(existing.min_amount_base) !== Number(band.min_amount_base) ||
+            (existing.max_amount_base == null ? null : Number(existing.max_amount_base)) !==
+              (band.max_amount_base == null ? null : Number(band.max_amount_base))) {
+          return fail('Existing approval amount bands are immutable');
+        }
+        continue;
+      }
+      if (!newPolicyIds.includes(band.policy_id)) return fail('New approval bands must belong to a policy created in this save');
+      const overlap = state.approvalPolicyBands.some(item => item.policy_id === band.policy_id &&
+        Number(item.min_amount_base) < (band.max_amount_base == null ? Number.POSITIVE_INFINITY : Number(band.max_amount_base)) &&
+        Number(band.min_amount_base) < (item.max_amount_base == null ? Number.POSITIVE_INFINITY : Number(item.max_amount_base)));
+      if (overlap) return fail('Approval amount bands for the same policy cannot overlap');
+      state.approvalPolicyBands.push(clone(band));
+      newBandIds.push(band.id);
+      bandsCreated++;
+    }
+
+    for (const step of args.p_steps) {
+      if (!step?.id || !step.band_id || !Number.isInteger(Number(step.step_number)) || Number(step.step_number) < 1 ||
+          step.required_permission_key !== 'approve_finances' ||
+          !Number.isInteger(Number(step.required_approvals)) || Number(step.required_approvals) < 1) {
+        return fail('Approval steps require an ordered step, finance approval permission and positive approval count');
+      }
+      const existing = state.approvalPolicySteps.find(item => item.id === step.id);
+      if (existing) {
+        if (existing.band_id !== step.band_id || Number(existing.step_number) !== Number(step.step_number) ||
+            existing.required_permission_key !== step.required_permission_key ||
+            Number(existing.required_approvals) !== Number(step.required_approvals) ||
+            (existing.prohibit_submitter_approval !== false) !== (step.prohibit_submitter_approval !== false)) {
+          return fail('Existing approval policy steps are immutable');
+        }
+        continue;
+      }
+      if (!newBandIds.includes(step.band_id)) return fail('New approval steps must belong to a new amount band created in this save');
+      state.approvalPolicySteps.push(clone(step));
+      stepsCreated++;
+    }
+
+    for (const policyId of newPolicyIds) {
+      const policyBands = state.approvalPolicyBands.filter(item => item.policy_id === policyId);
+      if (!policyBands.length || policyBands.some(band => !state.approvalPolicySteps.some(step => step.band_id === band.id))) {
+        return fail('Every new approval policy amount band requires at least one approval step');
+      }
+    }
+    for (const bandId of newBandIds) {
+      const bandSteps = state.approvalPolicySteps.filter(step => step.band_id === bandId).sort((a, b) => Number(a.step_number) - Number(b.step_number));
+      if (bandSteps.some((step, index) => Number(step.step_number) !== index + 1)) {
+        return fail('Approval policy steps must be consecutive from step one');
+      }
+    }
+    storage.save(state);
+    return success({
+      saved: true, policies_created: policiesCreated, bands_created: bandsCreated, steps_created: stepsCreated,
+      scope_type: scopeType, scope_id: scopeId
+    });
+  }
+
   function saveFinanceConfiguration(args: Record<string, any>) {
     const state = clone(storage.load());
     const auth = getAuth();
@@ -1785,6 +1907,7 @@ export function createMockFinanceRpc(
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'get_finance_scope_configuration') return getFinanceScopeConfiguration(args);
         if (name === 'save_finance_scope_resources') return saveFinanceScopeResources(args);
+        if (name === 'save_finance_scope_approval_policies') return saveFinanceScopeApprovalPolicies(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
         if (name === 'get_department_requisitions') return getDepartmentRequisitions(args);
         if (name === 'get_department_requisition_submission_options') return getDepartmentRequisitionSubmissionOptions(args);
