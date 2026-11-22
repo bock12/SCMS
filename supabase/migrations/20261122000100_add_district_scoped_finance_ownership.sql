@@ -66,6 +66,57 @@ create index if not exists department_requisitions_district_scope_idx
   on public.department_requisitions (district_id, status, created_at desc)
   where district_id is not null;
 
+-- Preserve the current branch-to-district relationship for existing records.
+-- This is a one-time backfill; later branch reassignment does not rewrite history.
+update public.financial_accounts fa
+set district_id = b.district_id
+from public.church_branches b
+where fa.branch_id = b.id
+  and fa.district_id is null
+  and b.district_id is not null;
+
+update public.financial_documents fd
+set district_id = b.district_id
+from public.church_branches b
+where fd.branch_id = b.id
+  and fd.district_id is null
+  and b.district_id is not null;
+
+update public.approval_policies ap
+set district_id = b.district_id
+from public.church_branches b
+where ap.branch_id = b.id
+  and ap.district_id is null
+  and b.district_id is not null;
+
+update public.approval_requests ar
+set district_id = b.district_id
+from public.church_branches b
+where ar.branch_id = b.id
+  and ar.district_id is null
+  and b.district_id is not null;
+
+update public.journal_entries je
+set district_id = b.district_id
+from public.church_branches b
+where je.branch_id = b.id
+  and je.district_id is null
+  and b.district_id is not null;
+
+update public.budgets bu
+set district_id = b.district_id
+from public.church_branches b
+where bu.branch_id = b.id
+  and bu.district_id is null
+  and b.district_id is not null;
+
+update public.department_requisitions dr
+set district_id = b.district_id
+from public.church_branches b
+where dr.branch_id = b.id
+  and dr.district_id is null
+  and b.district_id is not null;
+
 -- Branch-scoped records inherit the branch's district. A supplied district
 -- must match the branch's current district; this prevents cross-district
 -- ownership spoofing. District-owned and church-wide rows have no branch_id.
