@@ -179,4 +179,6 @@ BEGIN
 END
 $finance_org_security$;
 
-RAISE NOTICE 'FIN-ORG-001 hierarchical financial ownership and district isolation checks passed';
+DO $finance_org_complete$ BEGIN
+  RAISE NOTICE 'FIN-ORG-001 hierarchical financial ownership and district isolation checks passed';
+END $finance_org_complete$;
