@@ -31,6 +31,7 @@ on:
       - "supabase/migrations/20261121234500_add_secure_event_budget_read_api.sql"
       - "supabase/migrations/20261122000100_add_district_scoped_finance_ownership.sql"
       - "supabase/migrations/20261122000200_add_scoped_finance_configuration_read_api.sql"
+      - "supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
@@ -1154,6 +1155,9 @@ jobs:
 
       - name: Apply scoped finance configuration read API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000200_add_scoped_finance_configuration_read_api.sql
+
+      - name: Apply scoped finance resource write API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql
 
       - name: Verify event budget finance RPC grants and hardening
         run: |
