@@ -691,9 +691,9 @@ export function createMockFinanceRpc(
       currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
       chartAccounts: clone(state.chartAccounts),
       financialAccounts: clone(state.financialAccounts.filter(account =>
-        (account.branch_id ?? null) === scope.branchId && (account.district_id ?? null) === scope.districtId)),
+        (account.branch_id ?? null) === scope.branchId && (scopeType !== 'branch' || account.branch_id === scope.branchId))),
       funds: clone(state.funds.filter(fund =>
-        (fund.branch_id ?? null) === scope.branchId && (fund.district_id ?? null) === scope.districtId)),
+        (fund.branch_id ?? null) === scope.branchId && (scopeType !== 'branch' || fund.branch_id === scope.branchId))),
       financialYears: clone(state.financialYears), periods: clone(state.periods),
       approvalPolicies: clone(policies),
       approvalPolicyBands: clone(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id))),
