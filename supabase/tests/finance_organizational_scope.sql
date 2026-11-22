@@ -460,32 +460,28 @@ END
 $branch_policy_write$;
 ROLLBACK;
 
--- Church-wide and district approval policies may both start at version one.
+-- Two districts may each have their own version-one policy.
+-- The baseline already seeds a church-wide version-one policy.
 BEGIN;
 DO $approval_policy_scope_version_uniqueness$
 DECLARE v_count integer;
 BEGIN
   INSERT INTO public.approval_policies (
     id,name,transaction_type,branch_id,district_id,version,effective_from,is_active
-  ) VALUES (
-    '97800000-0000-4000-8000-000000000011',
-    'FIN-ORG-001 Church Version Key Test','financial_document',
-    NULL,NULL,1,'2026-01-01',true
-  );
-  INSERT INTO public.approval_policies (
-    id,name,transaction_type,branch_id,district_id,version,effective_from,is_active
-  ) VALUES (
-    '97800000-0000-4000-8000-000000000012',
-    'FIN-ORG-001 District Version Key Test','financial_document',
-    NULL,'97000000-0000-4000-8000-000000000001',1,'2026-01-01',true
-  );
+  ) VALUES
+    ('97800000-0000-4000-8000-000000000011',
+     'FIN-ORG-001 District A Version Key Test','financial_document',
+     NULL,'97000000-0000-4000-8000-000000000001',1,'2026-01-01',true),
+    ('97800000-0000-4000-8000-000000000012',
+     'FIN-ORG-001 District B Version Key Test','financial_document',
+     NULL,'97000000-0000-4000-8000-000000000002',1,'2026-01-01',true);
   SELECT count(*) INTO v_count FROM public.approval_policies
   WHERE id IN (
     '97800000-0000-4000-8000-000000000011',
     '97800000-0000-4000-8000-000000000012'
   );
   IF v_count <> 2 THEN
-    RAISE EXCEPTION 'Church and district policies must be able to share version one';
+    RAISE EXCEPTION 'Different districts must be able to use the same approval policy version';
   END IF;
 END
 $approval_policy_scope_version_uniqueness$;
