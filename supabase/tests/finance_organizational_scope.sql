@@ -218,6 +218,62 @@ END
 $branch_visibility$;
 ROLLBACK;
 
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000001', true);
+DO $district_configuration$
+DECLARE
+  v_config jsonb;
+BEGIN
+  v_config := public.get_finance_scope_configuration(
+    'district', '97000000-0000-4000-8000-000000000001'
+  );
+  IF jsonb_array_length(v_config->'financialAccounts') <> 1
+     OR jsonb_array_length(v_config->'funds') <> 1
+     OR v_config->'scope'->>'type' <> 'district' THEN
+    RAISE EXCEPTION 'District configuration must return only district-owned accounts and funds';
+  END IF;
+
+  BEGIN
+    PERFORM public.get_finance_scope_configuration('church', null);
+    RAISE EXCEPTION 'FIN_ORG_001_EXPECTED_CHURCH_SCOPE_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_001_EXPECTED_CHURCH_SCOPE_DENIAL' THEN RAISE; END IF;
+    IF position('Insufficient permission' in SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+END
+$district_configuration$;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000002', true);
+DO $branch_configuration$
+DECLARE
+  v_config jsonb;
+BEGIN
+  v_config := public.get_finance_scope_configuration(
+    'branch', '97100000-0000-4000-8000-000000000001'
+  );
+  IF jsonb_array_length(v_config->'financialAccounts') <> 1
+     OR jsonb_array_length(v_config->'funds') <> 1
+     OR v_config->'scope'->>'type' <> 'branch' THEN
+    RAISE EXCEPTION 'Branch configuration must return only branch-owned accounts and funds';
+  END IF;
+
+  BEGIN
+    PERFORM public.get_finance_scope_configuration(
+      'district', '97000000-0000-4000-8000-000000000001'
+    );
+    RAISE EXCEPTION 'FIN_ORG_001_EXPECTED_DISTRICT_SCOPE_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_001_EXPECTED_DISTRICT_SCOPE_DENIAL' THEN RAISE; END IF;
+    IF position('Insufficient permission' in SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+END
+$branch_configuration$;
+ROLLBACK;
+
 DO $finance_org_security$
 BEGIN
   IF has_function_privilege('anon', 'private.has_permission_for_district(text,uuid)', 'EXECUTE')
