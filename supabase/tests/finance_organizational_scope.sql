@@ -56,6 +56,35 @@ BEGIN
     RAISE EXCEPTION 'Branch-owned financial account did not inherit its district';
   END IF;
 
+  INSERT INTO public.funds (
+    id, name, code, fund_type, is_default, is_active, district_id
+  ) VALUES (
+    '97500000-0000-4000-8000-000000000001',
+    'FIN-ORG-001 District A General', 'FINORGA-GEN', 'general', false, true,
+    '97000000-0000-4000-8000-000000000001'
+  );
+
+  INSERT INTO public.funds (
+    id, name, code, fund_type, is_default, is_active, branch_id
+  ) VALUES
+    ('97500000-0000-4000-8000-000000000002',
+     'FIN-ORG-001 Branch A1 Welfare', 'FINORGA-A1', 'designated', false, true,
+     '97100000-0000-4000-8000-000000000001'),
+    ('97500000-0000-4000-8000-000000000003',
+     'FIN-ORG-001 Branch A2 Welfare', 'FINORGA-A2', 'designated', false, true,
+     '97100000-0000-4000-8000-000000000002'),
+    ('97500000-0000-4000-8000-000000000004',
+     'FIN-ORG-001 Branch B1 Welfare', 'FINORGB-B1', 'designated', false, true,
+     '97100000-0000-4000-8000-000000000003');
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.funds
+    WHERE id = '97500000-0000-4000-8000-000000000002'
+      AND district_id = '97000000-0000-4000-8000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'Branch-owned fund did not inherit its district';
+  END IF;
+
   BEGIN
     INSERT INTO public.financial_accounts (
       id, chart_account_id, branch_id, district_id, name, account_type, currency_code
@@ -141,6 +170,17 @@ BEGIN
   IF v_visible <> 3 THEN
     RAISE EXCEPTION 'District finance officer should see district treasury and both district branches; saw %', v_visible;
   END IF;
+  SELECT count(*) INTO v_visible
+  FROM public.funds
+  WHERE id IN (
+    '97500000-0000-4000-8000-000000000001',
+    '97500000-0000-4000-8000-000000000002',
+    '97500000-0000-4000-8000-000000000003',
+    '97500000-0000-4000-8000-000000000004'
+  );
+  IF v_visible <> 3 THEN
+    RAISE EXCEPTION 'District finance officer should see district and district-branch funds; saw %', v_visible;
+  END IF;
 END
 $district_visibility$;
 ROLLBACK;
@@ -162,6 +202,17 @@ BEGIN
   );
   IF v_visible <> 1 THEN
     RAISE EXCEPTION 'Branch finance officer should see only its branch account; saw %', v_visible;
+  END IF;
+  SELECT count(*) INTO v_visible
+  FROM public.funds
+  WHERE id IN (
+    '97500000-0000-4000-8000-000000000001',
+    '97500000-0000-4000-8000-000000000002',
+    '97500000-0000-4000-8000-000000000003',
+    '97500000-0000-4000-8000-000000000004'
+  );
+  IF v_visible <> 1 THEN
+    RAISE EXCEPTION 'Branch finance officer should see only its branch fund; saw %', v_visible;
   END IF;
 END
 $branch_visibility$;
