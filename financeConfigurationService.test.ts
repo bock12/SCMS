@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getFinanceConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
 
 const config: FinanceConfiguration = {
   currencies: ['SLE', 'USD'], baseCurrencyCode: 'SLE',
@@ -40,6 +40,38 @@ describe('finance configuration service', () => {
     });
     expect(branchId).toBe('branch-a');
     expect(result.error).toBeNull();
+  });
+
+  test('loads exactly the requested district ownership scope', async () => {
+    let call: { name: string; args?: Record<string, unknown> } | null = null;
+    const result = await getFinanceScopeConfiguration(
+      { type: 'district', id: 'district-a' },
+      {
+        rpc: async (name, args) => {
+          call = { name, args };
+          return { data: { ...config, scope: { type: 'district', id: 'district-a' } }, error: null };
+        }
+      }
+    );
+    expect(call?.name).toBe('get_finance_scope_configuration');
+    expect(call?.args?.p_scope_type).toBe('district');
+    expect(call?.args?.p_scope_id).toBe('district-a');
+    expect(result.data?.scope.type).toBe('district');
+  });
+
+  test('uses a null ID only for church-wide ownership scope', async () => {
+    let scopeArgs: Record<string, unknown> | undefined;
+    await getFinanceScopeConfiguration(
+      { type: 'church', id: null },
+      {
+        rpc: async (_name, args) => {
+          scopeArgs = args;
+          return { data: { ...config, scope: { type: 'church', id: null } }, error: null };
+        }
+      }
+    );
+    expect(scopeArgs?.p_scope_type).toBe('church');
+    expect(scopeArgs?.p_scope_id).toBeNull();
   });
 
   test('saves canonical configuration as one validated payload', async () => {
