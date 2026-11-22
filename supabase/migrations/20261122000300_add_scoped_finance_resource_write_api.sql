@@ -88,7 +88,7 @@ begin
     v_type := v_item->>'account_type';
     v_currency := upper(trim(coalesce(v_item->>'currency_code', '')));
     if v_id is null or v_chart_account_id is null or v_name = ''
-       or v_type not in ('cash','bank','mobile_money','clearing')
+       or v_type is null or v_type not in ('cash','bank','mobile_money','clearing')
        or v_currency !~ '^[A-Z]{3}$' then
       raise exception 'Financial account requires a UUID, asset chart account, name, account type and currency';
     end if;
@@ -157,7 +157,7 @@ begin
     v_code := upper(trim(coalesce(v_item->>'code','')));
     v_type := coalesce(v_item->>'fund_type','general');
     if v_id is null or v_name = '' or v_code = ''
-       or v_type not in ('general','designated','restricted') then
+       or v_type is null or v_type not in ('general','designated','restricted') then
       raise exception 'Fund requires a UUID, code, name and valid fund type';
     end if;
 
