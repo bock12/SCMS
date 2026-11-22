@@ -384,7 +384,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
       <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, branch scope, validation and audit controls.</p>
 
-      <FinanceTransactionEntryWorkspace branchId={branchId} />
+      {scope?.type === 'district' ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Transaction entry is currently branch-specific. District-level treasury transactions and internal transfers will be enabled in the next finance integration step.</div>
+      ) : (branchId || scope?.type === 'branch') ? (
+        <FinanceTransactionEntryWorkspace branchId={scope?.type === 'branch' ? scope.id : branchId} />
+      ) : null}
     </div>
   );
 };
