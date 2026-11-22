@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, type FinanceConfiguration } from './financeConfigurationService';
+import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
 
 const config: FinanceConfiguration = {
   currencies: ['SLE', 'USD'], baseCurrencyCode: 'SLE',
@@ -83,6 +83,40 @@ describe('finance configuration service', () => {
     expect(call?.args?.p_branch_id).toBe('branch-a');
     expect(call?.args?.p_configuration).toEqual(config);
     expect(result.data?.saved).toBe(true);
+  });
+
+  test('writes operational accounts and funds through the exact-scope resource RPC', async () => {
+    let call: { name: string; args?: Record<string, unknown> } | null = null;
+    const accounts = [{ ...config.financialAccounts[0], branch_id: null, district_id: 'district-a' }];
+    const funds = [{ ...config.funds[0], branch_id: null, district_id: 'district-a' }];
+    const result = await saveFinanceScopeResources(
+      { type: 'district', id: 'district-a' }, accounts, funds,
+      {
+        rpc: async (name, args) => {
+          call = { name, args };
+          return { data: {
+            saved: true, financial_accounts_created: 1, funds_created: 1,
+            scope_type: 'district', scope_id: 'district-a'
+          }, error: null };
+        }
+      }
+    );
+    expect(call?.name).toBe('save_finance_scope_resources');
+    expect(call?.args?.p_scope_type).toBe('district');
+    expect(call?.args?.p_scope_id).toBe('district-a');
+    expect(call?.args?.p_financial_accounts).toEqual(accounts);
+    expect(call?.args?.p_funds).toEqual(funds);
+    expect(result.data?.financial_accounts_created).toBe(1);
+    expect(result.data?.funds_created).toBe(1);
+  });
+
+  test('propagates scoped resource write authorization errors', async () => {
+    const result = await saveFinanceScopeResources(
+      { type: 'branch', id: 'branch-a' }, [], [],
+      { rpc: async () => ({ data: null, error: { code: '42501', message: 'Insufficient permission' } }) }
+    );
+    expect(result.error?.code).toBe('42501');
+    expect(result.data).toBeNull();
   });
 
   test('propagates configuration authorization errors', async () => {
