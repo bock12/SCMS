@@ -3,6 +3,9 @@ import { financeSupabase } from './financeSupabaseClient';
 export type FinanceChartAccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 export type FinanceOperationalAccountType = 'cash' | 'bank' | 'mobile_money' | 'clearing';
 export type FinanceApprovalPermission = 'approve_finances' | 'post_journals' | 'manage_finances';
+export type FinanceOwnershipScope =
+  | { type: 'church'; id: null }
+  | { type: 'district' | 'branch'; id: string };
 
 export interface FinanceConfiguration {
   currencies: string[];
@@ -13,12 +16,12 @@ export interface FinanceConfiguration {
     is_control_account?: boolean; is_system?: boolean; is_active: boolean;
   }>;
   financialAccounts: Array<{
-    id: string; chart_account_id: string; branch_id: string | null; name: string;
+    id: string; chart_account_id: string; branch_id: string | null; district_id?: string | null; name: string;
     account_type: FinanceOperationalAccountType; currency_code: string;
     provider_name?: string | null; account_reference?: string | null; is_active: boolean;
   }>;
   funds: Array<{
-    id: string; name: string; code: string; description?: string | null;
+    id: string; branch_id?: string | null; district_id?: string | null; name: string; code: string; description?: string | null;
     fund_type: 'general' | 'designated' | 'restricted'; is_default: boolean; is_active: boolean;
   }>;
   financialYears: Array<{
@@ -29,7 +32,7 @@ export interface FinanceConfiguration {
     end_date: string; status: 'open' | 'closed'; year_status?: string;
   }>;
   approvalPolicies: Array<{
-    id: string; name: string; transaction_type: 'financial_document' | 'budget'; branch_id: string | null;
+    id: string; name: string; transaction_type: 'financial_document' | 'budget'; branch_id: string | null; district_id?: string | null;
     version: number; effective_from: string; effective_to?: string | null; is_active: boolean;
   }>;
   approvalPolicyBands: Array<{
@@ -50,6 +53,17 @@ export async function getFinanceConfiguration(
   client: RpcClient = defaultRpcClient
 ): Promise<RpcResponse<FinanceConfiguration>> {
   return client.rpc('get_finance_configuration', { p_branch_id: branchId });
+}
+
+/** Loads records owned by exactly one authorized church, district or branch scope. */
+export async function getFinanceScopeConfiguration(
+  scope: FinanceOwnershipScope,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceConfiguration & { scope: FinanceOwnershipScope }>> {
+  return client.rpc('get_finance_scope_configuration', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id
+  });
 }
 
 export async function saveFinanceConfiguration(
