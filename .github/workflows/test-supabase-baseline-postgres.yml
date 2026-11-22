@@ -29,10 +29,12 @@ on:
       - "supabase/migrations/20261119000700_add_requisition_submission_options_api.sql"
       - "supabase/migrations/20261119000800_add_department_requisition_payment_linkage.sql"
       - "supabase/migrations/20261121234500_add_secure_event_budget_read_api.sql"
+      - "supabase/migrations/20261122000100_add_district_scoped_finance_ownership.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
+      - "supabase/tests/finance_organizational_scope.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
@@ -1146,6 +1148,9 @@ jobs:
       - name: Apply secure event budget read API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261121234500_add_secure_event_budget_read_api.sql
 
+      - name: Apply district-aware finance ownership and access policies
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000100_add_district_scoped_finance_ownership.sql
+
       - name: Verify event budget finance RPC grants and hardening
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1256,6 +1261,9 @@ jobs:
 
       - name: Verify finance document listing and scope isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_listing.sql
+
+      - name: Verify hierarchical finance ownership and district isolation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_organizational_scope.sql
 
       - name: Verify event budget approval, payment linkage and posted actuals
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
