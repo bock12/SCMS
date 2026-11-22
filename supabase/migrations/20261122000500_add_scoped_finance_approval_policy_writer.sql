@@ -198,21 +198,21 @@ begin
   end loop;
 
   if exists (
-    select 1 from unnest(v_new_policy_ids) policy_id
-    where not exists (select 1 from public.approval_policy_bands band where band.policy_id = policy_id)
+    select 1 from unnest(v_new_policy_ids) as new_policy(policy_id)
+    where not exists (select 1 from public.approval_policy_bands band where band.policy_id = new_policy.policy_id)
   ) then
     raise exception 'Every new approval policy requires at least one amount band';
   end if;
   if exists (
-    select 1 from unnest(v_new_band_ids) band_id
-    where not exists (select 1 from public.approval_policy_steps step where step.band_id = band_id)
+    select 1 from unnest(v_new_band_ids) as new_band(band_id)
+    where not exists (select 1 from public.approval_policy_steps step where step.band_id = new_band.band_id)
   ) then
     raise exception 'Every new approval amount band requires at least one approval step';
   end if;
   if exists (
-    select 1 from unnest(v_new_band_ids) band_id
-    join public.approval_policy_steps step on step.band_id = band_id
-    group by band_id
+    select 1 from unnest(v_new_band_ids) as new_band(band_id)
+    join public.approval_policy_steps step on step.band_id = new_band.band_id
+    group by new_band.band_id
     having min(step.step_number) <> 1 or max(step.step_number) <> count(*)
   ) then
     raise exception 'Approval policy steps must be consecutive from step one';
