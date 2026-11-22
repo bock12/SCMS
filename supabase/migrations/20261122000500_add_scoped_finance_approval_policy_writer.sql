@@ -1,5 +1,17 @@
 -- FIN-ORG-003: create immutable finance approval policy versions at exact org scope.
 
+-- The legacy uniqueness key only distinguished church and branch policies.
+-- Include district_id so district-owned policies can safely version alongside
+-- church-wide policies without colliding at branch_id IS NULL.
+drop index if exists public.uq_approval_policy_version_scope;
+create unique index uq_approval_policy_version_scope
+  on public.approval_policies (
+    transaction_type,
+    coalesce(branch_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    coalesce(district_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    version
+  );
+
 create or replace function public.save_finance_scope_approval_policies(
   p_scope_type text,
   p_scope_id uuid,

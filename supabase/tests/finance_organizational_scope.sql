@@ -462,6 +462,13 @@ ROLLBACK;
 
 DO $finance_org_security$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'uq_approval_policy_version_scope'
+      AND position('district_id' in indexdef) > 0
+  ) THEN
+    RAISE EXCEPTION 'Approval policy version uniqueness must include district ownership';
+  END IF;
   IF has_function_privilege('anon', 'private.has_permission_for_district(text,uuid)', 'EXECUTE')
      OR has_function_privilege('service_role', 'private.has_permission_for_district(text,uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'District permission helper must not be executable by anon or service_role';
