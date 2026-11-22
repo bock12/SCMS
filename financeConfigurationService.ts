@@ -66,6 +66,29 @@ export async function getFinanceScopeConfiguration(
   });
 }
 
+export interface FinanceScopeResourceWriteResult {
+  saved: boolean;
+  financial_accounts_created: number;
+  funds_created: number;
+  scope_type: FinanceOwnershipScope['type'];
+  scope_id: string | null;
+}
+
+/** Creates accounts and funds owned by exactly one authorized organizational scope. */
+export async function saveFinanceScopeResources(
+  scope: FinanceOwnershipScope,
+  financialAccounts: FinanceConfiguration['financialAccounts'],
+  funds: FinanceConfiguration['funds'],
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceScopeResourceWriteResult>> {
+  return client.rpc('save_finance_scope_resources', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id,
+    p_financial_accounts: financialAccounts,
+    p_funds: funds
+  });
+}
+
 export async function saveFinanceConfiguration(
   configuration: FinanceConfiguration,
   branchId: string | null = null,
