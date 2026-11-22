@@ -6,7 +6,8 @@ export interface MockFinanceState {
   ministries: Array<{ id: string; branch_id: string | null; name: string; entity_type: string; status: string }>;
   requisitions: Array<Record<string, any>>;
   requisitionItems: Array<Record<string, any>>;
-  permissions: Array<{ profile_id: string; permission: string; branch_id: string | null }>;
+  permissions: Array<{ profile_id: string; permission: string; branch_id: string | null; district_id?: string | null }>;
+  branches: Array<{ id: string; district_id: string | null }>;
   currencies: string[];
   baseCurrencyCode: string | null;
   financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
@@ -67,6 +68,7 @@ export function createBrowserMockFinanceStorage(
         throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
       }
       parsed.approvalDecisions = Array.isArray(parsed.approvalDecisions) ? parsed.approvalDecisions : [];
+      parsed.branches = Array.isArray(parsed.branches) ? parsed.branches : [];
       parsed.ministries = Array.isArray(parsed.ministries) ? parsed.ministries : [];
       parsed.requisitions = Array.isArray(parsed.requisitions) ? parsed.requisitions : [];
       parsed.requisitionItems = Array.isArray(parsed.requisitionItems) ? parsed.requisitionItems : [];
@@ -101,7 +103,7 @@ export function expandMockFinancePermissions(
 
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
-    profiles: [], permissions: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
+    profiles: [], permissions: [], branches: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
     documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
@@ -121,7 +123,7 @@ export function createMockFinanceRpc(
   const id = (state: MockFinanceState, prefix: string) => `${prefix}-${state.nextId++}`;
   const hasPermission = (state: MockFinanceState, profileId: string, permission: string, branchId: string | null) =>
     state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
-      (p.branch_id === null || p.branch_id === branchId));
+      (p.district_id == null && (p.branch_id === null || p.branch_id === branchId)));
 
   function createTransaction(args: Record<string, any>, stateOverride?: MockFinanceState, persist = true) {
     const state = stateOverride ?? clone(storage.load());
@@ -642,6 +644,143 @@ export function createMockFinanceRpc(
         approval_steps: approvalSteps,
         posted_journal_entry_id: journal?.id ?? null, total_actual: round4(actual) };
     }) });
+  }
+
+  function hasDistrictPermission(state: MockFinanceState, profileId: string, permission: string, districtId: string) {
+    return state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
+      p.district_id === districtId);
+  }
+
+  function resolveMockFinanceScope(state: MockFinanceState, scopeType: string, scopeId: string | null) {
+    if (!['church', 'district', 'branch'].includes(scopeType)) return { error: 'Finance scope must be church, district or branch' };
+    if (scopeType === 'church') {
+      if (scopeId !== null) return { error: 'Church-wide finance scope must not include a scope ID' };
+      return { branchId: null, districtId: null };
+    }
+    if (!scopeId) return { error: 'A district or branch ID is required' };
+    if (scopeType === 'district') return { branchId: null, districtId: scopeId };
+    const branch = state.branches.find(item => item.id === scopeId);
+    if (!branch) return { error: 'Finance branch does not exist in the mock finance state' };
+    return { branchId: scopeId, districtId: branch.district_id ?? null };
+  }
+
+  function getFinanceScopeConfiguration(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if (scope.error) return fail(scope.error);
+    const canView = scopeType === 'church'
+      ? hasPermission(state, actor.id, 'view_finances', null) || hasPermission(state, actor.id, 'manage_finances', null) || hasPermission(state, actor.id, 'approve_finances', null)
+      : scopeType === 'district'
+        ? ['view_finances','manage_finances','approve_finances'].some(permission => hasDistrictPermission(state, actor.id, permission, scopeId))
+        : ['view_finances','manage_finances','approve_finances'].some(permission => hasPermission(state, actor.id, permission, scopeId));
+    if (!canView) return fail('Insufficient permission to view finance configuration in this scope', '42501');
+    const policies = state.approvalPolicies.filter(policy =>
+      policy.transaction_type !== 'requisition' &&
+      (policy.branch_id ?? null) === scope.branchId &&
+      (policy.district_id ?? null) === scope.districtId);
+    const policyIds = new Set(policies.map(policy => policy.id));
+    const bandIds = new Set(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id)).map(band => band.id));
+    return success({
+      scope: { type: scopeType, id: scopeId },
+      currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
+      chartAccounts: clone(state.chartAccounts),
+      financialAccounts: clone(state.financialAccounts.filter(account =>
+        (account.branch_id ?? null) === scope.branchId && (account.district_id ?? null) === scope.districtId)),
+      funds: clone(state.funds.filter(fund =>
+        (fund.branch_id ?? null) === scope.branchId && (fund.district_id ?? null) === scope.districtId)),
+      financialYears: clone(state.financialYears), periods: clone(state.periods),
+      approvalPolicies: clone(policies),
+      approvalPolicyBands: clone(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id))),
+      approvalPolicySteps: clone(state.approvalPolicySteps.filter(step => bandIds.has(step.band_id)))
+    });
+  }
+
+  function saveFinanceScopeResources(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if (scope.error) return fail(scope.error);
+    if (!Array.isArray(args.p_financial_accounts) || !Array.isArray(args.p_funds)) return fail('Financial accounts and funds must be supplied as arrays');
+    const canManage = scopeType === 'church'
+      ? hasPermission(state, actor.id, 'manage_finances', null)
+      : scopeType === 'district'
+        ? hasDistrictPermission(state, actor.id, 'manage_finances', scopeId)
+        : hasPermission(state, actor.id, 'manage_finances', scopeId);
+    if (!canManage) return fail('Insufficient permission to manage finance resources in this scope', '42501');
+
+    let accountsCreated = 0;
+    let fundsCreated = 0;
+    for (const item of args.p_financial_accounts) {
+      const accountId = String(item?.id || '');
+      const chartId = String(item?.chart_account_id || '');
+      const name = String(item?.name || '').trim();
+      const accountType = item?.account_type;
+      const currency = String(item?.currency_code || '').trim().toUpperCase();
+      if (!accountId || !chartId || !name || !['cash','bank','mobile_money','clearing'].includes(accountType) ||
+          !/^[A-Z]{3}$/.test(currency)) return fail('Financial account requires an ID, asset chart account, name, account type and currency');
+      if (!state.currencies.includes(currency) || !state.chartAccounts.some(chart =>
+        chart.id === chartId && chart.is_active && chart.account_type === 'asset' && !chart.is_control_account)) {
+        return fail('Financial account requires an active currency and active non-control asset chart account');
+      }
+      if ((item.branch_id ?? null) !== scope.branchId ||
+          (item.district_id ?? null) !== scope.districtId) return fail('Financial account ownership does not match the requested scope');
+      const existing = state.financialAccounts.find(account => account.id === accountId);
+      if (existing) {
+        const same = existing.chart_account_id === chartId && (existing.branch_id ?? null) === scope.branchId &&
+          (existing.district_id ?? null) === scope.districtId && existing.name === name &&
+          existing.account_type === accountType && existing.currency_code === currency &&
+          (existing.provider_name ?? null) === (item.provider_name ?? null) &&
+          (existing.account_reference ?? null) === (item.account_reference ?? null) &&
+          existing.is_active === (item.is_active ?? true);
+        if (!same) return fail('Existing financial account definitions are immutable');
+      } else {
+        state.financialAccounts.push({ ...clone(item), id: accountId, branch_id: scope.branchId,
+          district_id: scope.districtId, name, account_type: accountType, currency_code: currency,
+          is_active: item.is_active ?? true });
+        accountsCreated++;
+      }
+    }
+
+    for (const item of args.p_funds) {
+      const fundId = String(item?.id || '');
+      const name = String(item?.name || '').trim();
+      const code = String(item?.code || '').trim().toUpperCase();
+      const fundType = item?.fund_type ?? 'general';
+      if (!fundId || !name || !code || !['general','designated','restricted'].includes(fundType)) {
+        return fail('Fund requires an ID, code, name and valid fund type');
+      }
+      if ((item.branch_id ?? null) !== scope.branchId ||
+          (item.district_id ?? null) !== scope.districtId) return fail('Fund ownership does not match the requested scope');
+      const existing = state.funds.find(fund => fund.id === fundId);
+      if (existing) {
+        const same = existing.name === name && existing.code === code &&
+          (existing.description ?? null) === (item.description ?? null) &&
+          (existing.fund_type ?? 'general') === fundType &&
+          (existing.is_default ?? false) === (item.is_default ?? false) &&
+          existing.is_active === (item.is_active ?? true) &&
+          (existing.branch_id ?? null) === scope.branchId && (existing.district_id ?? null) === scope.districtId;
+        if (!same) return fail('Existing fund definitions are immutable');
+      } else {
+        state.funds.push({ ...clone(item), id: fundId, name, code, fund_type: fundType,
+          branch_id: scope.branchId, district_id: scope.districtId,
+          is_default: item.is_default ?? false, is_active: item.is_active ?? true });
+        fundsCreated++;
+      }
+    }
+    storage.save(state);
+    return success({ saved: true, financial_accounts_created: accountsCreated, funds_created: fundsCreated,
+      scope_type: scopeType, scope_id: scopeId });
   }
 
   function getFinanceConfiguration(args: Record<string, any> = {}) {
@@ -1602,6 +1741,8 @@ export function createMockFinanceRpc(
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
+        if (name === 'get_finance_scope_configuration') return getFinanceScopeConfiguration(args);
+        if (name === 'save_finance_scope_resources') return saveFinanceScopeResources(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
         if (name === 'get_department_requisitions') return getDepartmentRequisitions(args);
         if (name === 'get_department_requisition_submission_options') return getDepartmentRequisitionSubmissionOptions(args);
