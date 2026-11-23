@@ -1169,7 +1169,13 @@ function loadLocalDatabase() {
       if (!Array.isArray(parsed.event_survey_questions)) parsed.event_survey_questions = [];
       if (!Array.isArray(parsed.event_survey_responses)) parsed.event_survey_responses = [];
       if (!Array.isArray(parsed.event_survey_answers)) parsed.event_survey_answers = [];
-      if (!Array.isArray(parsed.roles) || parsed.roles.length === 0) parsed.roles = initialSystemRoles;
+      if (!Array.isArray(parsed.roles)) parsed.roles = [];
+      const existingRoleNames = new Set(parsed.roles.map((role: any) => role.name));
+      parsed.roles = [
+        ...parsed.roles,
+        ...initialSystemRoles.filter(role => !existingRoleNames.has(role.name))
+      ];
+      if (!Array.isArray(parsed.profiles)) parsed.profiles = [];
       if (!Array.isArray(parsed.permissions)) parsed.permissions = [];
       const existingPermissionKeys = new Set(parsed.permissions.map((permission: any) => permission.key));
       parsed.permissions = [
