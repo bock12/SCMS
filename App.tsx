@@ -10,7 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import {
@@ -667,9 +667,9 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   initialEmail = '',
   onClose
 }) => {
-  const [isSignUp, setIsSignUp] = useState(supabaseIntegrationEnabled ? false : initialSignUp);
-  const authClient: any = supabaseIntegrationEnabled ? supabaseDataClient : supabase;
-  const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken) && !supabaseIntegrationEnabled);
+  const [isSignUp, setIsSignUp] = useState(supabaseAuthEnabled ? false : initialSignUp);
+  const authClient: any = supabaseAuthEnabled ? supabaseDataClient : supabase;
+  const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken) && !supabaseAuthEnabled);
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [setupToken, setSetupToken] = useState(initialSetupToken);
@@ -684,12 +684,12 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (initialSetupToken && !supabaseIntegrationEnabled) {
+    if (initialSetupToken && !supabaseAuthEnabled) {
       setIsSetupMode(true);
       setSetupToken(initialSetupToken);
       if (initialEmail) setEmail(initialEmail);
     } else {
-      setIsSignUp(supabaseIntegrationEnabled ? false : initialSignUp);
+      setIsSignUp(supabaseAuthEnabled ? false : initialSignUp);
     }
   }, [initialSignUp, initialSetupToken, initialEmail]);
 
@@ -708,7 +708,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
     setSuccessMsg(null);
 
     try {
-      if (isSetupMode && supabaseIntegrationEnabled) {
+      if (isSetupMode && supabaseAuthEnabled) {
         throw new Error('Portal activation is managed by an administrator. Ask an administrator to provision your account and send a secure sign-in link.');
       } else if (isSetupMode) {
         const { error: setupErr } = await supabase.auth.completePasswordSetup({
@@ -723,7 +723,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
           if (onClose) onClose();
           navigate('/portal');
         }, 700);
-      } else if (isSignUp && supabaseIntegrationEnabled) {
+      } else if (isSignUp && supabaseAuthEnabled) {
         throw new Error('Public account registration is disabled. Ask a church administrator to create your member record and provision portal access.');
       } else if (isSignUp) {
         const { error: signUpErr } = await supabase.auth.signUp({
@@ -747,7 +747,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
           if (onClose) onClose();
           navigate('/portal');
         }, 800);
-      } else if (supabaseIntegrationEnabled && !password.trim()) {
+      } else if (supabaseAuthEnabled && !password.trim()) {
         const { error: otpErr } = await authClient.auth.signInWithOtp({
           email: email.trim(),
           options: {
@@ -780,7 +780,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
 
   // Quick 1-click Demo Login
   const handleQuickDemo = async (demoEmail: string) => {
-    if (supabaseIntegrationEnabled) {
+    if (supabaseAuthEnabled) {
       setError('Demo accounts are only available in mock development mode.');
       return;
     }
@@ -928,7 +928,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
 
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-600 uppercase">
-            {isSetupMode ? 'Choose New Password (min 6 characters)' : supabaseIntegrationEnabled ? 'Password (leave blank for a secure email link)' : 'Password'}
+            {isSetupMode ? 'Choose New Password (min 6 characters)' : supabaseAuthEnabled ? 'Password (leave blank for a secure email link)' : 'Password'}
           </label>
           <input 
             type="password" 
@@ -936,7 +936,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
-            required={!supabaseIntegrationEnabled}
+            required={!supabaseAuthEnabled}
           />
         </div>
 
@@ -959,7 +959,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
         </button>
 
         <div className="pt-2 text-center space-y-1.5">
-          {!isSetupMode && !supabaseIntegrationEnabled && (
+          {!isSetupMode && !supabaseAuthEnabled && (
             <button 
               type="button"
               onClick={() => {
@@ -971,7 +971,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
               {isSignUp ? 'Already have an account? Sign In' : "Don't have an account yet? Create one"}
             </button>
           )}
-          {!supabaseIntegrationEnabled && <button
+          {!supabaseAuthEnabled && <button
             type="button"
             onClick={() => {
               setIsSetupMode(!isSetupMode);
@@ -985,7 +985,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
         </div>
 
         {/* Mock-only demo accounts; never authenticate against the live database. */}
-        {!supabaseIntegrationEnabled && <div className="pt-3 border-t border-slate-100">
+        {!supabaseAuthEnabled && <div className="pt-3 border-t border-slate-100">
           <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider mb-2 text-center">
             ⚡ Quick 1-Click Demo Accounts
           </p>
@@ -12259,11 +12259,11 @@ const AppShell = () => {
     });
   };
 
-  const appAuthClient: any = supabaseIntegrationEnabled ? supabaseDataClient : supabase;
+  const appAuthClient: any = supabaseAuthEnabled ? supabaseDataClient : supabase;
 
   const fetchProfile = async (userId: string) => {
     try {
-      if (supabaseIntegrationEnabled) {
+      if (supabaseAuthEnabled) {
         if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
         const { data, error } = await supabaseDataClient
           .from('profiles')
@@ -12327,7 +12327,7 @@ const AppShell = () => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        if (supabaseIntegrationEnabled && !supabaseDataClient) {
+        if (supabaseAuthEnabled && !supabaseDataClient) {
           throw new Error('Supabase is enabled but configuration is missing.');
         }
         const { data } = await appAuthClient.auth.getSession();
