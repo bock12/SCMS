@@ -1812,11 +1812,12 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const loadDirectory = async () => {
     setLoading(true);
     try {
+      const branchClient: any = supabaseIntegrationEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
       const [directoryRows, branchRes] = await Promise.all([
         getMembers(),
-        (supabaseIntegrationEnabled && supabaseDataClient
-          ? supabaseDataClient
-          : supabase).from('church_branches').select('*').order('name', { ascending: true })
+        branchClient.from('church_branches').select('*').order('name', { ascending: true })
       ]);
       setMembers(directoryRows);
       if (branchRes.data) setBranches(branchRes.data as ChurchBranch[]);
