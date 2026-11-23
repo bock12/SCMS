@@ -990,38 +990,26 @@ export const AuthCard: React.FC<AuthCardProps> = ({
             ⚡ Quick 1-Click Demo Accounts
           </p>
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => handleQuickDemo('admin@faithconnect.church')}
-              className="p-2 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group cursor-pointer"
-            >
-              <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">Pastor David</div>
-              <div className="text-[10px] text-slate-400 font-semibold">Church Admin</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemo('pastor@faithconnect.church')}
-              className="p-2 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group cursor-pointer"
-            >
-              <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">Rev. Sarah</div>
-              <div className="text-[10px] text-slate-400 font-semibold">Lead Pastor</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemo('worship@faithconnect.church')}
-              className="p-2 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group cursor-pointer"
-            >
-              <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">Hannah Adams</div>
-              <div className="text-[10px] text-slate-400 font-semibold">Worship Leader</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemo('member@faithconnect.church')}
-              className="p-2 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group cursor-pointer"
-            >
-              <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">Grace Campbell</div>
-              <div className="text-[10px] text-slate-400 font-semibold">Active Member</div>
-            </button>
+            {[
+              { email: 'admin@faithconnect.church', name: 'David Miller', role: 'Super Admin' },
+              { email: 'churchadmin@faithconnect.church', name: 'Daniel Williams', role: 'Admin' },
+              { email: 'bishop@faithconnect.church', name: 'Michael Thomas', role: 'District Admin' },
+              { email: 'pastor@faithconnect.church', name: 'Sarah Johnson', role: 'Pastor' },
+              { email: 'finance@faithconnect.church', name: 'Esther Kamara', role: 'Finance Officer' },
+              { email: 'worship@faithconnect.church', name: 'Hannah Adams', role: 'Leader' },
+              { email: 'worker@faithconnect.church', name: 'Joseph Conteh', role: 'Worker' },
+              { email: 'member@faithconnect.church', name: 'Grace Campbell', role: 'Member' }
+            ].map(account => (
+              <button
+                key={account.email}
+                type="button"
+                onClick={() => handleQuickDemo(account.email)}
+                className="p-2 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl transition-all group cursor-pointer"
+              >
+                <div className="text-xs font-bold text-slate-800 group-hover:text-indigo-600">{account.name}</div>
+                <div className="text-[10px] text-slate-400 font-semibold">{account.role}</div>
+              </button>
+            ))}
           </div>
         </div>}
 
