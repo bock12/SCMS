@@ -75,6 +75,7 @@ test.describe('SCMS finance browser smoke', () => {
       // exercises the real receipt form -> mock RPC -> approval/journal path.
       const financeState = {
         profiles: [], ministries: [], requisitions: [], requisitionItems: [],
+        branches: [{ id: actor.branch_id, district_id: null, name: 'Main Branch', status: 'active' }], districts: [],
         currencies: ['SLL'], baseCurrencyCode: 'SLL',
         permissions: [
           { profile_id: actor.id, permission: 'view_finances', branch_id: null },
