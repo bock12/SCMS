@@ -338,7 +338,7 @@ test.describe('SCMS finance browser smoke', () => {
     );
     expect(approvedReceiptBeforePosting.status).toBe('approved');
     expect(prePostingState.journals.find((journal: any) => journal.id === approvedReceiptBeforePosting.journal_entry_id).status).toBe('draft');
-    await expect(page.getByText('No posted journal lines exist in this branch. Approved and pending drafts are excluded.')).toBeVisible();
+    await expect(page.getByText('No posted journal lines exist in this scope. Approved and pending drafts are excluded.')).toBeVisible();
     await expect(page.getByText('No posted transactions are available for this reporting period.')).toBeVisible();
 
     // There is exactly one approved, postable journal in this fixture; target the
