@@ -6,7 +6,7 @@ test.describe('SCMS finance browser smoke', () => {
 
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
     await expect(page.getByText('Quick 1-Click Demo Accounts')).toBeVisible();
-    await page.getByRole('button', { name: /Pastor David/ }).click();
+    await page.getByRole('button', { name: /Sarah Johnson/ }).click();
     await expect(page).toHaveURL(/\/portal(?:\/|$)/);
     await expect(page.getByText('Church Overview').first()).toBeVisible();
 
