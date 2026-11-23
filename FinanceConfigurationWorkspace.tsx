@@ -129,7 +129,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
           ? account.branch_id === scope.id && !account.district_id
           : scope?.type === 'district'
             ? account.branch_id === null && account.district_id === scope.id
-            : account.branch_id === null && !account.district_id))
+            : scope?.type === 'church'
+              ? account.branch_id === null && !account.district_id
+              : account.branch_id === branchId && !account.district_id))
       .map(account => account.account_type));
     const missing = standardAccounts.filter(account => !queuedTypes.has(account.account_type));
     if (missing.length === 0) {
