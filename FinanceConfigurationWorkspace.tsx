@@ -80,6 +80,16 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
   useEffect(() => { void reload(); }, [branchId, scope?.type, scope?.id]);
 
+  // SLE is the default operational account currency. Preserve an explicit valid
+  // selection, but fall back to SLE (then the configured base currency) on load/scope change.
+  useEffect(() => {
+    setAccountCurrency(current => current && configuration.currencies.includes(current)
+      ? current
+      : configuration.currencies.includes('SLE')
+        ? 'SLE'
+        : configuration.baseCurrencyCode || configuration.currencies[0] || '');
+  }, [configuration.currencies, configuration.baseCurrencyCode]);
+
   const update = (patch: Partial<FinanceConfiguration>) =>
     setConfiguration(current => ({ ...current, ...patch }));
 
