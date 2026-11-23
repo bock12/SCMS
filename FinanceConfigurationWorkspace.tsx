@@ -35,6 +35,8 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [accountType, setAccountType] = useState<'cash' | 'bank' | 'mobile_money' | 'clearing'>('cash');
   const [accountCurrency, setAccountCurrency] = useState('');
   const [accountChartId, setAccountChartId] = useState('');
+  const [accountProvider, setAccountProvider] = useState('');
+  const [accountReference, setAccountReference] = useState('');
   const [fundName, setFundName] = useState('');
   const [fundCode, setFundCode] = useState('');
   const [fundType, setFundType] = useState<'general' | 'designated' | 'restricted'>('general');
@@ -105,9 +107,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId,
       district_id: scope?.type === 'district' ? scope.id : null,
       name: accountName.trim(), account_type: accountType, currency_code: accountCurrency,
+      provider_name: accountProvider.trim() || null,
+      account_reference: accountReference.trim() || null,
       is_active: true
     }] });
-    setAccountName(''); setAccountChartId('');
+    setAccountName(''); setAccountChartId(''); setAccountProvider(''); setAccountReference('');
   };
 
   const addFund = () => {
@@ -407,14 +411,16 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 className="font-black text-slate-900">Financial accounts</h3>
-        <div className="mt-3 grid gap-2 sm:grid-cols-5">
-          <input className={fieldClass} placeholder="Account name" value={accountName} onChange={e => setAccountName(e.target.value)} />
-          <select className={fieldClass} value={accountType} onChange={e => setAccountType(e.target.value as typeof accountType)}>{['cash','bank','mobile_money','clearing'].map(type => <option key={type} value={type}>{type}</option>)}</select>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <input className={fieldClass} placeholder="Account name (e.g. Main Branch Cash)" value={accountName} onChange={e => setAccountName(e.target.value)} />
+          <select className={fieldClass} value={accountType} onChange={e => setAccountType(e.target.value as typeof accountType)}>{['cash','bank','mobile_money','clearing'].map(type => <option key={type} value={type}>{type === 'mobile_money' ? 'Mobile money' : type === 'cash' ? 'Cash on hand' : type === 'bank' ? 'Bank account' : 'Clearing'}</option>)}</select>
           <select className={fieldClass} value={accountCurrency} onChange={e => setAccountCurrency(e.target.value)}><option value="">Currency</option>{configuration.currencies.map(code => <option key={code}>{code}</option>)}</select>
           <select className={fieldClass} value={accountChartId} onChange={e => setAccountChartId(e.target.value)}><option value="">Asset chart account</option>{assetAccounts.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select>
+          <input className={fieldClass} placeholder="Bank / mobile-money provider (optional)" value={accountProvider} onChange={e => setAccountProvider(e.target.value)} />
+          <input className={fieldClass} placeholder="Masked account reference (optional)" value={accountReference} onChange={e => setAccountReference(e.target.value)} />
           <button type="button" className={buttonClass} onClick={addFinancialAccount}><Plus size={14} /> Add account</button>
         </div>
-        <ul className="mt-3 space-y-2 text-sm">{configuration.financialAccounts.map(account => <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">{account.name} · {account.account_type} · {account.currency_code}</li>)}</ul>
+        <ul className="mt-3 space-y-2 text-sm">{configuration.financialAccounts.map(account => <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">{account.name} · {account.account_type} · {account.currency_code}{account.provider_name ? ' · ' + account.provider_name : ''}{account.account_reference ? ' · ' + account.account_reference : ''}</li>)}</ul>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
