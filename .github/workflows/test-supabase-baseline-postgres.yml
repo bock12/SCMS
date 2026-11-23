@@ -104,6 +104,30 @@ jobs:
           GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
           SQL
 
+
+      - name: Prepare minimal Supabase Storage prerequisites
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA storage;
+          CREATE TABLE storage.buckets (
+            id text PRIMARY KEY,
+            name text NOT NULL,
+            public boolean NOT NULL DEFAULT false,
+            file_size_limit bigint,
+            allowed_mime_types text[]
+          );
+          CREATE TABLE storage.objects (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            bucket_id text NOT NULL REFERENCES storage.buckets(id),
+            name text NOT NULL,
+            owner_id uuid,
+            UNIQUE (bucket_id, name)
+          );
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+          GRANT USAGE ON SCHEMA storage TO authenticated;
+          GRANT SELECT, INSERT, DELETE ON storage.objects TO authenticated;
+          SQL
+
       - name: Apply fresh-install baseline
         run: psql -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
 
@@ -1164,6 +1188,12 @@ jobs:
 
       - name: Apply scoped finance approval policy writer
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261122000500_add_scoped_finance_approval_policy_writer.sql
+
+      - name: Apply private finance document attachment storage and policies
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261123000100_add_private_finance_document_attachments.sql
+
+      - name: Verify private finance document attachment storage contract
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_attachments.sql
 
       - name: Verify event budget finance RPC grants and hardening
         run: |
