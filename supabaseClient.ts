@@ -899,6 +899,24 @@ function getStoredUsersRaw(): Record<string, { id: string; email: string; passwo
       changed = true;
     }
   }
+  // One-time repair for the reserved development demo accounts. Older browser
+  // stores may contain stale passwords from previous demo seeds; align these
+  // known demo identities with the documented development password once.
+  const demoCredentialVersionKey = 'faithconnect_demo_credentials_version';
+  if (localStorage.getItem(demoCredentialVersionKey) !== '2') {
+    for (const [email, account] of Object.entries(defaultUsers)) {
+      const existing = storedUsers[email];
+      if (!existing) continue;
+      storedUsers[email] = {
+        ...existing,
+        password: account.password,
+        setup_token: undefined
+      };
+      changed = true;
+    }
+    localStorage.setItem(demoCredentialVersionKey, '2');
+  }
+
   if (changed || !localStorage.getItem(USERS_STORAGE_KEY)) {
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(storedUsers));
   }
