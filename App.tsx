@@ -669,7 +669,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
 }) => {
   const [isSignUp, setIsSignUp] = useState(supabaseIntegrationEnabled ? false : initialSignUp);
   const authClient: any = supabaseIntegrationEnabled ? supabaseDataClient : supabase;
-  const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken));
+  const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken) && !supabaseIntegrationEnabled);
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [setupToken, setSetupToken] = useState(initialSetupToken);
@@ -684,7 +684,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (initialSetupToken) {
+    if (initialSetupToken && !supabaseIntegrationEnabled) {
       setIsSetupMode(true);
       setSetupToken(initialSetupToken);
       if (initialEmail) setEmail(initialEmail);
