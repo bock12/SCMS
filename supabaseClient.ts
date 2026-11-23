@@ -847,45 +847,62 @@ function sanitizeProfileRecord(rawProfile: any): Profile {
 }
 
 function getStoredUsersRaw(): Record<string, { id: string; email: string; password?: string; setup_token?: string; user_metadata?: any }> {
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-
   const defaultUsers: Record<string, any> = {
     'admin@faithconnect.church': {
-      id: 'usr-admin-1',
-      email: 'admin@faithconnect.church',
-      password: 'password123',
+      id: 'usr-admin-1', email: 'admin@faithconnect.church', password: 'password123',
       user_metadata: { first_name: 'David', last_name: 'Miller' }
     },
     'pastor@faithconnect.church': {
-      id: 'usr-pastor-1',
-      email: 'pastor@faithconnect.church',
-      password: 'password123',
+      id: 'usr-pastor-1', email: 'pastor@faithconnect.church', password: 'password123',
       user_metadata: { first_name: 'Sarah', last_name: 'Johnson' }
     },
     'bishop@faithconnect.church': {
-      id: 'usr-bishop-1',
-      email: 'bishop@faithconnect.church',
-      password: 'password123',
+      id: 'usr-bishop-1', email: 'bishop@faithconnect.church', password: 'password123',
       user_metadata: { first_name: 'Michael', last_name: 'Thomas' }
     },
     'worship@faithconnect.church': {
-      id: 'usr-leader-1',
-      email: 'worship@faithconnect.church',
-      password: 'password123',
+      id: 'usr-leader-1', email: 'worship@faithconnect.church', password: 'password123',
       user_metadata: { first_name: 'Hannah', last_name: 'Adams' }
     },
     'member@faithconnect.church': {
-      id: 'usr-member-1',
-      email: 'member@faithconnect.church',
-      password: 'password123',
+      id: 'usr-member-1', email: 'member@faithconnect.church', password: 'password123',
       user_metadata: { first_name: 'Grace', last_name: 'Campbell' }
+    },
+    'churchadmin@faithconnect.church': {
+      id: 'usr-role-admin-1', email: 'churchadmin@faithconnect.church', password: 'password123',
+      user_metadata: { first_name: 'Daniel', last_name: 'Williams' }
+    },
+    'finance@faithconnect.church': {
+      id: 'usr-finance-1', email: 'finance@faithconnect.church', password: 'password123',
+      user_metadata: { first_name: 'Esther', last_name: 'Kamara' }
+    },
+    'worker@faithconnect.church': {
+      id: 'usr-worker-1', email: 'worker@faithconnect.church', password: 'password123',
+      user_metadata: { first_name: 'Joseph', last_name: 'Conteh' }
     }
   };
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(defaultUsers));
-  return defaultUsers;
+
+  let storedUsers: Record<string, any> = {};
+  try {
+    const raw = localStorage.getItem(USERS_STORAGE_KEY);
+    if (raw) storedUsers = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Could not read mock auth users; restoring development seed accounts.', e);
+  }
+
+  // Merge missing development accounts without overwriting user-created accounts,
+  // changed passwords, or invitation/setup state for existing accounts.
+  let changed = false;
+  for (const [email, account] of Object.entries(defaultUsers)) {
+    if (!storedUsers[email]) {
+      storedUsers[email] = account;
+      changed = true;
+    }
+  }
+  if (changed || !localStorage.getItem(USERS_STORAGE_KEY)) {
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(storedUsers));
+  }
+  return storedUsers;
 }
 
 function migrateUnifiedDirectoryData(parsed: any): { db: any; changed: boolean } {
