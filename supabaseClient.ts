@@ -2080,6 +2080,13 @@ export const supabase = {
     const session = getCurrentSession();
     const actor = (localDb.profiles || []).find((item: any) => item.auth_user_id === session?.user?.id);
     if (functionName === 'get_my_finance_scopes' ||
+        functionName === 'get_finance_scope_configuration' ||
+        functionName === 'get_finance_scope_transaction_options' ||
+        functionName === 'save_finance_scope_resources' ||
+        functionName === 'save_finance_scope_approval_policies' ||
+        functionName === 'get_finance_scope_documents' ||
+        functionName === 'get_finance_scope_journals' ||
+        functionName === 'create_finance_scope_document_transaction' ||
         functionName === 'get_finance_configuration' ||
         functionName === 'save_finance_configuration' ||
         functionName === 'create_financial_document_transaction_idempotent' ||
