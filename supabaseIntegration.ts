@@ -1,46 +1,52 @@
 import { createClient } from '@supabase/supabase-js';
 
 /**
- * Isolated online Supabase connection for controlled integration work.
+ * Shared browser-side Supabase connection for SCMS.
  *
- * The application's existing `supabase` export remains the local mock
- * database/authentication adapter. Do not treat mock sessions as Supabase
- * sessions: Supabase RLS requires a real authenticated Supabase user.
+ * This client uses only the public publishable key. Database access is
+ * authorized by a real Supabase Auth session and PostgreSQL RLS; the
+ * application's mock development identity is never treated as a DB session.
  */
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? '';
+const publishableKey = (
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ||
+  ''
+);
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+const integrationMode = import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowerCase() ?? '';
+export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
 export const supabaseIntegrationEnabled =
-  import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowerCase() === 'enabled';
+  integrationMode === 'enabled' || integrationMode === 'finance';
 
 if (supabaseIntegrationEnabled && !isSupabaseConfigured) {
   console.warn(
-    'Supabase integration is enabled, but VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is missing.'
+    'Supabase integration is enabled, but VITE_SUPABASE_URL or a publishable key is missing.'
   );
 }
 
-/**
- * Uses only the public/publishable anon key. Authorization must be enforced
- * by Supabase Auth and database RLS, never by trusting client-side role data.
- */
+/** One shared client keeps the Supabase Auth session consistent across modules. */
 export const supabaseDataClient = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+  ? createClient(supabaseUrl, publishableKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        storageKey: 'scms_supabase_auth_v1'
+        flowType: 'pkce'
       }
     })
   : null;
 
 export function requireSupabaseDataClient() {
   if (!supabaseIntegrationEnabled) {
-    throw new Error('Supabase integration is disabled. Set VITE_SUPABASE_INTEGRATION=enabled to enable it.');
+    throw new Error(
+      'Supabase integration is disabled. Set VITE_SUPABASE_INTEGRATION=finance (or enabled) to enable it.'
+    );
   }
   if (!supabaseDataClient) {
-    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+    throw new Error(
+      'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.'
+    );
   }
   return supabaseDataClient;
 }
