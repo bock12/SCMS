@@ -1239,9 +1239,9 @@ function loadLocalDatabase() {
         }
       }
       const assignmentKeys = new Set((parsed.profile_role_assignments || []).map((item: any) => `${item.profile_id}:${item.role_id}`));
-      const roleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
+      const seededRoleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
       for (const seedProfile of seededLoginProfiles) {
-        const roleId = roleIdsByName.get(seedProfile.primary_role);
+        const roleId = seededRoleIdsByName.get(seedProfile.primary_role);
         if (existingProfileIds.has(seedProfile.id) && roleId && !assignmentKeys.has(`${seedProfile.id}:${roleId}`)) {
           parsed.profile_role_assignments.push({
             id: `mock-assignment-${seedProfile.id}`,
