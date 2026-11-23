@@ -747,6 +747,16 @@ export const AuthCard: React.FC<AuthCardProps> = ({
           if (onClose) onClose();
           navigate('/portal');
         }, 800);
+      } else if (supabaseIntegrationEnabled && !password.trim()) {
+        const { error: otpErr } = await authClient.auth.signInWithOtp({
+          email: email.trim(),
+          options: {
+            shouldCreateUser: false,
+            emailRedirectTo: window.location.href
+          }
+        });
+        if (otpErr) throw otpErr;
+        setSuccessMsg('If this email belongs to a provisioned portal account, a secure sign-in link has been sent. Open it in this browser to continue.');
       } else {
         const { error: signInErr } = await authClient.auth.signInWithPassword({
           email: email.trim(),
@@ -918,7 +928,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
 
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-600 uppercase">
-            {isSetupMode ? 'Choose New Password (min 6 characters)' : 'Password'}
+            {isSetupMode ? 'Choose New Password (min 6 characters)' : supabaseIntegrationEnabled ? 'Password (leave blank for a secure email link)' : 'Password'}
           </label>
           <input 
             type="password" 
@@ -926,7 +936,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
-            required
+            required={!supabaseIntegrationEnabled}
           />
         </div>
 
