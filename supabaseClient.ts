@@ -207,6 +207,51 @@ const initialProfiles: Profile[] = [
     baptized_by: 'Rev. Sarah Johnson'
   },
   {
+    id: 'usr-role-admin-1',
+    auth_user_id: 'usr-role-admin-1',
+    branch_id: 'branch-1',
+    first_name: 'Daniel',
+    last_name: 'Williams',
+    email: 'churchadmin@faithconnect.church',
+    phone: '+232 76 000 001',
+    gender: 'male',
+    primary_role: 'admin',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2024-02-01',
+    created_at: '2024-02-01T00:00:00.000Z'
+  },
+  {
+    id: 'usr-finance-1',
+    auth_user_id: 'usr-finance-1',
+    branch_id: 'branch-1',
+    first_name: 'Esther',
+    last_name: 'Kamara',
+    email: 'finance@faithconnect.church',
+    phone: '+232 76 000 002',
+    gender: 'female',
+    primary_role: 'finance_officer',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2024-02-02',
+    created_at: '2024-02-02T00:00:00.000Z'
+  },
+  {
+    id: 'usr-worker-1',
+    auth_user_id: 'usr-worker-1',
+    branch_id: 'branch-1',
+    first_name: 'Joseph',
+    last_name: 'Conteh',
+    email: 'worker@faithconnect.church',
+    phone: '+232 76 000 003',
+    gender: 'male',
+    primary_role: 'worker',
+    status: 'active',
+    membership_status: 'active',
+    membership_date: '2024-02-03',
+    created_at: '2024-02-03T00:00:00.000Z'
+  },
+  {
     id: 'mem-6',
     auth_user_id: null,
     branch_id: 'branch-2',
@@ -1173,8 +1218,44 @@ function loadLocalDatabase() {
         migratedLegacyRoleAssignments = true;
       }
 
+      // Restore the fixed development identities and their role assignments
+      // into existing browser databases without replacing user data.
+      let restoredMockRoleProfiles = false;
+      const seededLoginProfiles = initialProfiles.filter(profile => profile.auth_user_id);
+      const existingProfileIds = new Set((parsed.profiles || []).map((profile: any) => profile.id));
+      const existingProfileEmails = new Set((parsed.profiles || []).map((profile: any) => (profile.email || '').toLowerCase()));
+      for (const seedProfile of seededLoginProfiles) {
+        if (!existingProfileIds.has(seedProfile.id) && !existingProfileEmails.has(seedProfile.email.toLowerCase())) {
+          parsed.profiles.push(sanitizeProfileRecord(seedProfile));
+          existingProfileIds.add(seedProfile.id);
+          existingProfileEmails.add(seedProfile.email.toLowerCase());
+          restoredMockRoleProfiles = true;
+        }
+      }
+      const assignmentKeys = new Set((parsed.profile_role_assignments || []).map((item: any) => `${item.profile_id}:${item.role_id}`));
+      const roleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
+      for (const seedProfile of seededLoginProfiles) {
+        const roleId = roleIdsByName.get(seedProfile.primary_role);
+        if (existingProfileIds.has(seedProfile.id) && roleId && !assignmentKeys.has(`${seedProfile.id}:${roleId}`)) {
+          parsed.profile_role_assignments.push({
+            id: `mock-assignment-${seedProfile.id}`,
+            profile_id: seedProfile.id,
+            role_id: roleId,
+            scope_type: 'church',
+            branch_id: null,
+            district_id: null,
+            assigned_by_profile_id: 'usr-admin-1',
+            assigned_at: seedProfile.created_at,
+            expires_at: null,
+            is_active: true
+          });
+          assignmentKeys.add(`${seedProfile.id}:${roleId}`);
+          restoredMockRoleProfiles = true;
+        }
+      }
+
       const migrated = migrateUnifiedDirectoryData(parsed);
-      if (migrated.changed || migratedLegacyRoleAssignments || seededMinistryMembers) {
+      if (migrated.changed || migratedLegacyRoleAssignments || seededMinistryMembers || restoredMockRoleProfiles) {
         saveLocalDatabase(migrated.db);
       }
       return migrated.db;
