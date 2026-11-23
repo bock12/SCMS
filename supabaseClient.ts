@@ -2079,7 +2079,8 @@ export const supabase = {
     localDb = loadLocalDatabase();
     const session = getCurrentSession();
     const actor = (localDb.profiles || []).find((item: any) => item.auth_user_id === session?.user?.id);
-    if (functionName === 'get_finance_configuration' ||
+    if (functionName === 'get_my_finance_scopes' ||
+        functionName === 'get_finance_configuration' ||
         functionName === 'save_finance_configuration' ||
         functionName === 'create_financial_document_transaction_idempotent' ||
         functionName === 'decide_financial_document_approval' ||
