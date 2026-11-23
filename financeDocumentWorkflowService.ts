@@ -1,4 +1,5 @@
 import { financeSupabase } from './financeSupabaseClient';
+import type { FinanceOwnershipScope } from './financeConfigurationService';
 import { decideFinancialDocumentApproval, type DecideFinancialDocumentApprovalResult } from './financeTransactionService';
 
 export interface FinanceWorkflowDocument {
@@ -7,6 +8,7 @@ export interface FinanceWorkflowDocument {
   document_type: 'receipt' | 'payment';
   transaction_date: string;
   branch_id: string | null;
+  district_id?: string | null;
   profile_id: string | null;
   payee_or_payer_name: string;
   amount: number;
@@ -36,6 +38,20 @@ export async function getFinanceWorkflowDocuments(branchId: string | null): Prom
   error: { message: string; code?: string } | null;
 }> {
   const result = await rpc.rpc('get_finance_documents', { p_branch_id: branchId });
+  return { data: result.data, error: result.error };
+}
+
+export async function getScopedFinanceWorkflowDocuments(
+  scope: FinanceOwnershipScope,
+  client: RpcClient = rpc
+): Promise<{
+  data: { actor_profile_id: string; documents: FinanceWorkflowDocument[] } | null;
+  error: { message: string; code?: string } | null;
+}> {
+  const result = await client.rpc('get_finance_scope_documents', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id
+  });
   return { data: result.data, error: result.error };
 }
 

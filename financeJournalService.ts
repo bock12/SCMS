@@ -1,4 +1,5 @@
 import { financeSupabase } from './financeSupabaseClient';
+import type { FinanceOwnershipScope } from './financeConfigurationService';
 
 export interface FinanceJournalLine {
   id: string;
@@ -23,6 +24,7 @@ export interface FinanceJournal {
   entry_number: number | null;
   period_id: string;
   branch_id: string | null;
+  district_id?: string | null;
   entry_date: string;
   description: string;
   reference: string | null;
@@ -74,6 +76,20 @@ export async function getFinanceJournalLedger(branchId: string | null): Promise<
   error: { message: string; code?: string } | null;
 }> {
   const result = await rpc.rpc('get_finance_journals', { p_branch_id: branchId });
+  return { data: result.data as FinanceJournalLedger | null, error: result.error };
+}
+
+export async function getScopedFinanceJournalLedger(
+  scope: FinanceOwnershipScope,
+  client: RpcClient = rpc
+): Promise<{
+  data: FinanceJournalLedger | null;
+  error: { message: string; code?: string } | null;
+}> {
+  const result = await client.rpc('get_finance_scope_journals', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id
+  });
   return { data: result.data as FinanceJournalLedger | null, error: result.error };
 }
 

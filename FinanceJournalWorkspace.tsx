@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
-import { getFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
+import { type FinanceOwnershipScope } from './financeConfigurationService';
+import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
 import { buildPostedFinanceReport, type FinanceReportPeriod } from './financeReportService';
 
-interface Props { branchId: string | null; }
+interface Props {
+  branchId: string | null;
+  scope?: FinanceOwnershipScope;
+}
 
 const money = (currency: string, value: number) =>
   currency + ' ' + Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -19,7 +23,7 @@ const journalLabel = (journal: FinanceJournal) => {
   return 'Draft — not posted';
 };
 
-export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
+export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) => {
   const [ledger, setLedger] = useState<Awaited<ReturnType<typeof getFinanceJournalLedger>>['data']>(null);
   const [loading, setLoading] = useState(true);
   const [postingId, setPostingId] = useState<string | null>(null);
@@ -31,7 +35,9 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const result = await getFinanceJournalLedger(branchId);
+    const result = scope
+      ? await getScopedFinanceJournalLedger(scope)
+      : await getFinanceJournalLedger(branchId);
     if (result.error) {
       setLedger(null);
       setError(result.error.message);
@@ -39,7 +45,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
       setLedger(result.data);
     }
     setLoading(false);
-  }, [branchId]);
+  }, [branchId, scope?.type, scope?.id]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -155,7 +161,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
       <div>
         <h4 className="mb-2 text-sm font-black text-slate-800">Posted account balances</h4>
         {loading ? <p className="py-4 text-sm text-slate-500">Loading posted balances…</p> :
-          !ledger?.account_balances.length ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No posted journal lines exist in this branch. Approved and pending drafts are excluded.</p> :
+          !ledger?.account_balances.length ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No posted journal lines exist in this scope. Approved and pending drafts are excluded.</p> :
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {ledger.account_balances.map(balance => {
               const creditNormal = balance.normal_balance === 'credit';
@@ -173,7 +179,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
       <div>
         <h4 className="mb-2 text-sm font-black text-slate-800">Journal entries</h4>
         {loading ? <p className="py-4 text-sm text-slate-500">Loading journal register…</p> :
-          !ledger?.journals.length ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No journal entries are available in this branch.</p> :
+          !ledger?.journals.length ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No journal entries are available in this scope.</p> :
           <div className="space-y-3">
             {ledger.journals.map(journal => (
               <article key={journal.id} className="rounded-xl border border-slate-200 p-4">
@@ -200,7 +206,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId }) => {
             ))}
           </div>}
       </div>
-      <p className="text-xs text-slate-400">Posting is re-authorized by the database RPC. The posting routine validates journal balance, active accounts, branch consistency, exchange rate and open financial period/year. Pending or rejected financial-document journals cannot be posted.</p>
+      <p className="text-xs text-slate-400">Posting is re-authorized by the database RPC. The posting routine validates journal balance, active accounts, organizational scope consistency, exchange rate and open financial period/year. Pending or rejected financial-document journals cannot be posted.</p>
     </section>
   );
 };

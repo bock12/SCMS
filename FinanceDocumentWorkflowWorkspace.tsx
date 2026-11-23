@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock3, Printer, RefreshCw, ShieldCheck, XCircle, X } from 'lucide-react';
-import { decideFinanceWorkflowApproval, getFinanceWorkflowDocuments, type FinanceWorkflowDocument } from './financeDocumentWorkflowService';
+import { type FinanceOwnershipScope } from './financeConfigurationService';
+import { decideFinanceWorkflowApproval, getFinanceWorkflowDocuments, getScopedFinanceWorkflowDocuments, type FinanceWorkflowDocument } from './financeDocumentWorkflowService';
 
-interface Props { branchId: string | null; }
+interface Props {
+  branchId: string | null;
+  scope?: FinanceOwnershipScope;
+}
 
 const statusClass = (status: string) => {
   if (status === 'approved' || status === 'posted') return 'bg-emerald-100 text-emerald-800';
@@ -10,7 +14,7 @@ const statusClass = (status: string) => {
   return 'bg-amber-100 text-amber-800';
 };
 
-export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) => {
+export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId, scope }) => {
   const [documents, setDocuments] = useState<FinanceWorkflowDocument[]>([]);
   const [actorId, setActorId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,7 +27,9 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const result = await getFinanceWorkflowDocuments(branchId);
+    const result = scope
+      ? await getScopedFinanceWorkflowDocuments(scope)
+      : await getFinanceWorkflowDocuments(branchId);
     if (result.error) {
       setError(result.error.message);
       setDocuments([]);
@@ -33,7 +39,7 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
       setActorId(result.data?.actor_profile_id || null);
     }
     setLoading(false);
-  }, [branchId]);
+  }, [branchId, scope?.type, scope?.id]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -82,7 +88,7 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId }) 
       </div>}
 
       {loading ? <p className="py-6 text-center text-sm text-slate-500">Loading canonical financial documents…</p> :
-        documents.length === 0 ? <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">No financial documents are available in this branch yet.</p> :
+        documents.length === 0 ? <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">No financial documents are available in this scope yet.</p> :
         <div className="space-y-3">
           {documents.map(document => {
             const isReceipt = document.document_type === 'receipt';

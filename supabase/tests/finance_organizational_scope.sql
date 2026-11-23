@@ -517,16 +517,338 @@ BEGIN
   IF NOT has_function_privilege('authenticated', 'public.get_my_finance_scopes()', 'EXECUTE') THEN
     RAISE EXCEPTION 'Authenticated role is missing finance scope discovery execution';
   END IF;
-  IF has_function_privilege('anon', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE')
-     OR has_function_privilege('service_role', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'Scoped finance configuration API must not be executable by anon or service_role';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    WHERE p.oid = 'public.create_finance_scope_document_transaction(text,uuid,text,date,uuid,text,numeric,character,text,uuid,uuid,uuid,text,text,numeric,uuid)'::regprocedure
+      AND p.prosecdef
+      AND EXISTS (SELECT 1 FROM unnest(p.proconfig) s WHERE split_part(s, '=', 1) = 'search_path' AND trim(both '"' from split_part(s, '=', 2)) = '')
+  ) THEN
+    RAISE EXCEPTION 'Scoped transaction RPC must be SECURITY DEFINER with empty search_path';
   END IF;
-  IF NOT has_function_privilege('authenticated', 'public.get_finance_scope_configuration(text,uuid)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'Authenticated role is missing scoped finance configuration API execution';
+  IF has_function_privilege('authenticated', 'private.has_permission_for_finance_scope(text,uuid,uuid)', 'EXECUTE')
+     OR has_function_privilege('anon', 'private.has_permission_for_finance_scope(text,uuid,uuid)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'private.has_permission_for_finance_scope(text,uuid,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Scoped permission helper must remain private';
   END IF;
 END
 $finance_org_security$;
 
+-- FIN-ORG-004: Full end-to-end district and church-wide transaction, multi-band/multi-step approval,
+-- journal posting, and cross-scope isolation verification.
+BEGIN;
+INSERT INTO auth.users (id, email) VALUES
+  ('97300000-0000-4000-8000-000000000003', 'fin-org-district-approver@example.invalid'),
+  ('97300000-0000-4000-8000-000000000004', 'fin-org-church-admin@example.invalid'),
+  ('97300000-0000-4000-8000-000000000005', 'fin-org-church-approver@example.invalid');
+
+INSERT INTO public.profiles (id, auth_user_id, first_name, last_name, email) VALUES
+  ('97400000-0000-4000-8000-000000000003',
+   '97300000-0000-4000-8000-000000000003', 'District', 'Approver', 'fin-org-district-approver@example.invalid'),
+  ('97400000-0000-4000-8000-000000000004',
+   '97300000-0000-4000-8000-000000000004', 'Church', 'Creator', 'fin-org-church-admin@example.invalid'),
+  ('97400000-0000-4000-8000-000000000005',
+   '97300000-0000-4000-8000-000000000005', 'Church', 'Approver', 'fin-org-church-approver@example.invalid');
+
+INSERT INTO public.profile_role_assignments (
+  profile_id, role_id, scope_type, district_id, assigned_at, is_active
+)
+SELECT '97400000-0000-4000-8000-000000000003', r.id, 'district',
+       '97000000-0000-4000-8000-000000000001', now() - interval '1 day', true
+FROM public.roles r
+WHERE r.name IN ('finance_officer', 'admin') AND r.is_active;
+
+INSERT INTO public.profile_role_assignments (
+  profile_id, role_id, scope_type, branch_id, district_id, assigned_at, is_active
+)
+SELECT p.id, r.id, 'church', NULL, NULL, now() - interval '1 day', true
+FROM (VALUES
+  ('97400000-0000-4000-8000-000000000004'::uuid),
+  ('97400000-0000-4000-8000-000000000005'::uuid)
+) AS p(id)
+CROSS JOIN public.roles r
+WHERE r.name IN ('finance_officer', 'admin') AND r.is_active;
+
+-- Save a multi-band, multi-step approval policy in District A, create district receipt + payment,
+-- verify options isolation, approve sequentially, post journal, and verify ledger isolation.
+DO $fin_org_004_district_lifecycle$
+DECLARE
+  v_income_id uuid;
+  v_expense_id uuid;
+  v_church_cash_id uuid;
+  v_policy_res jsonb;
+  v_options jsonb;
+  v_receipt jsonb;
+  v_receipt_replay jsonb;
+  v_payment jsonb;
+  v_docs jsonb;
+  v_branch_docs jsonb;
+  v_step1_id uuid;
+  v_step2_id uuid;
+  v_approval_res jsonb;
+  v_post_res jsonb;
+  v_journals jsonb;
+  v_branch_journals jsonb;
+  v_tx_date date;
+  v_idem_receipt uuid := '97910000-0000-4000-8000-000000000001';
+  v_idem_payment uuid := '97910000-0000-4000-8000-000000000002';
+  v_church_tx jsonb;
+  v_church_docs jsonb;
+  v_church_journals jsonb;
+  v_church_step_id uuid;
+  v_idem_church uuid := '97910000-0000-4000-8000-000000000003';
+BEGIN
+  SELECT fp.start_date INTO v_tx_date
+  FROM public.financial_periods fp
+  JOIN public.financial_years fy ON fy.id = fp.financial_year_id
+  WHERE fp.status = 'open' AND fy.status = 'open'
+  ORDER BY fp.start_date DESC LIMIT 1;
+
+  IF v_tx_date IS NULL THEN
+    RAISE EXCEPTION 'FIN-ORG-004 requires at least one open financial period fixture';
+  END IF;
+
+  SELECT id INTO v_income_id FROM public.chart_of_accounts
+  WHERE account_type = 'income' AND is_active AND NOT is_control_account ORDER BY code LIMIT 1;
+  SELECT id INTO v_expense_id FROM public.chart_of_accounts
+  WHERE account_type = 'expense' AND is_active AND NOT is_control_account ORDER BY code LIMIT 1;
+  SELECT id INTO v_church_cash_id FROM public.financial_accounts
+  WHERE branch_id IS NULL AND district_id IS NULL AND is_active AND currency_code = 'SLE' ORDER BY name LIMIT 1;
+
+  -- Switch to District A Finance Officer
+  PERFORM set_config('role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000001', true);
+
+  v_policy_res := public.save_finance_scope_approval_policies(
+    'district', '97000000-0000-4000-8000-000000000001',
+    jsonb_build_array(jsonb_build_object(
+      'id', '97810000-0000-4000-8000-000000000001',
+      'name', 'District A Tiered Policy',
+      'transaction_type', 'financial_document',
+      'branch_id', null,
+      'district_id', '97000000-0000-4000-8000-000000000001',
+      'effective_from', '2020-01-01',
+      'is_active', true
+    )),
+    jsonb_build_array(
+      jsonb_build_object(
+        'id', '97820000-0000-4000-8000-000000000001',
+        'policy_id', '97810000-0000-4000-8000-000000000001',
+        'min_amount_base', 0, 'max_amount_base', 1000
+      ),
+      jsonb_build_object(
+        'id', '97820000-0000-4000-8000-000000000002',
+        'policy_id', '97810000-0000-4000-8000-000000000001',
+        'min_amount_base', 1000, 'max_amount_base', null
+      )
+    ),
+    jsonb_build_array(
+      jsonb_build_object(
+        'id', '97830000-0000-4000-8000-000000000001',
+        'band_id', '97820000-0000-4000-8000-000000000001',
+        'step_number', 1, 'required_permission_key', 'approve_finances',
+        'required_approvals', 1, 'prohibit_submitter_approval', true
+      ),
+      jsonb_build_object(
+        'id', '97830000-0000-4000-8000-000000000002',
+        'band_id', '97820000-0000-4000-8000-000000000002',
+        'step_number', 1, 'required_permission_key', 'approve_finances',
+        'required_approvals', 1, 'prohibit_submitter_approval', true
+      ),
+      jsonb_build_object(
+        'id', '97830000-0000-4000-8000-000000000003',
+        'band_id', '97820000-0000-4000-8000-000000000002',
+        'step_number', 2, 'required_permission_key', 'approve_finances',
+        'required_approvals', 1, 'prohibit_submitter_approval', true
+      )
+    )
+  );
+  IF (v_policy_res->>'bands_created')::integer <> 2
+     OR (v_policy_res->>'steps_created')::integer <> 3 THEN
+    RAISE EXCEPTION 'Multi-band/multi-step district policy did not persist expected bands/steps: %', v_policy_res;
+  END IF;
+
+  -- Check transaction options hierarchy isolation (must include District A treasury, must exclude Branch B1)
+  v_options := public.get_finance_scope_transaction_options('district', '97000000-0000-4000-8000-000000000001');
+  IF NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_options->'financialAccounts') fa
+    WHERE fa->>'id' = '97200000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_options->'financialAccounts') fa
+    WHERE fa->>'id' IN ('97200000-0000-4000-8000-000000000002', '97200000-0000-4000-8000-000000000004')
+  ) THEN
+    RAISE EXCEPTION 'District transaction options leaked branch accounts: %', v_options->'financialAccounts';
+  END IF;
+
+  -- Create District A Receipt (400 SLE -> Band 1) and test idempotency
+  v_receipt := public.create_finance_scope_document_transaction(
+    'district', '97000000-0000-4000-8000-000000000001',
+    'receipt', v_tx_date, NULL, 'District A Fellowship', 400, 'SLE',
+    'cash', '97200000-0000-4000-8000-000000000001', v_income_id,
+    '97500000-0000-4000-8000-000000000001', 'DIST-RCPT-1', 'District convention offering', 1, v_idem_receipt
+  );
+  v_receipt_replay := public.create_finance_scope_document_transaction(
+    'district', '97000000-0000-4000-8000-000000000001',
+    'receipt', v_tx_date, NULL, 'District A Fellowship', 400, 'SLE',
+    'cash', '97200000-0000-4000-8000-000000000001', v_income_id,
+    '97500000-0000-4000-8000-000000000001', 'DIST-RCPT-1', 'District convention offering', 1, v_idem_receipt
+  );
+  IF v_receipt->>'document_id' <> v_receipt_replay->>'document_id'
+     OR (v_receipt_replay->>'idempotent_replay')::boolean IS NOT TRUE
+     OR v_receipt->>'scope_type' <> 'district' THEN
+    RAISE EXCEPTION 'District receipt idempotency or scope check failed: % vs %', v_receipt, v_receipt_replay;
+  END IF;
+
+  -- Create District A Payment (1500 SLE -> Band 2 with 2 ordered steps)
+  v_payment := public.create_finance_scope_document_transaction(
+    'district', '97000000-0000-4000-8000-000000000001',
+    'payment', v_tx_date, NULL, 'District Hall Vendor', 1500, 'SLE',
+    'bank_transfer', '97200000-0000-4000-8000-000000000001', v_expense_id,
+    '97500000-0000-4000-8000-000000000001', 'DIST-PAY-1', 'District outreach venue', 1, v_idem_payment
+  );
+
+  -- Branch B1 account must be rejected for District A
+  BEGIN
+    PERFORM public.create_finance_scope_document_transaction(
+      'district', '97000000-0000-4000-8000-000000000001',
+      'receipt', v_tx_date, NULL, 'Cross-Scope', 100, 'SLE',
+      'cash', '97200000-0000-4000-8000-000000000004', v_income_id,
+      NULL, 'X-SCOPE', 'Should fail', 1, '97910000-0000-4000-8000-000000000099'
+    );
+    RAISE EXCEPTION 'FIN_ORG_004_EXPECTED_ACCOUNT_SCOPE_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_004_EXPECTED_ACCOUNT_SCOPE_DENIAL' THEN RAISE; END IF;
+  END;
+
+  -- District officer cannot create Church-wide transactions
+  BEGIN
+    PERFORM public.create_finance_scope_document_transaction(
+      'church', NULL,
+      'receipt', v_tx_date, NULL, 'Church', 100, 'SLE',
+      'cash', v_church_cash_id, v_income_id,
+      NULL, 'CHURCH-DENY', 'Should fail', 1, '97910000-0000-4000-8000-000000000098'
+    );
+    RAISE EXCEPTION 'FIN_ORG_004_EXPECTED_CHURCH_TX_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_004_EXPECTED_CHURCH_TX_DENIAL' THEN RAISE; END IF;
+    IF position('Insufficient permission' in SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+
+  -- Submitter cannot approve their own district document
+  v_docs := public.get_finance_scope_documents('district', '97000000-0000-4000-8000-000000000001');
+  SELECT (doc->>'actor_approval_step_id')::uuid INTO v_step1_id
+  FROM jsonb_array_elements(v_docs->'documents') doc
+  WHERE doc->>'id' = v_payment->>'document_id';
+  IF v_step1_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Submitter unexpectedly received an actionable approval step for their own district payment';
+  END IF;
+
+  -- Branch A1 document listing must not include District A documents
+  v_branch_docs := public.get_finance_scope_documents('branch', '97100000-0000-4000-8000-000000000001');
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_branch_docs->'documents') doc
+    WHERE doc->>'id' IN (v_receipt->>'document_id', v_payment->>'document_id')
+  ) THEN
+    RAISE EXCEPTION 'Branch document list leaked district-owned documents';
+  END IF;
+
+  -- Branch A1 officer cannot approve District A payment step
+  PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000002', true);
+  SELECT (s->>'id')::uuid INTO v_step1_id
+  FROM jsonb_array_elements(v_docs->'documents') doc,
+       jsonb_array_elements(doc->'approval_steps') s
+  WHERE doc->>'id' = v_payment->>'document_id' AND (s->>'step_order')::integer = 1;
+  BEGIN
+    PERFORM public.decide_financial_document_approval(v_step1_id, 'approved', 'Unauthorized branch try');
+    RAISE EXCEPTION 'FIN_ORG_004_EXPECTED_BRANCH_APPROVER_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_ORG_004_EXPECTED_BRANCH_APPROVER_DENIAL' THEN RAISE; END IF;
+    IF position('required permission' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
+  -- District A second approver sees and completes Step 1 then Step 2 of the payment, and Step 1 of the receipt
+  PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000003', true);
+  v_docs := public.get_finance_scope_documents('district', '97000000-0000-4000-8000-000000000001');
+  SELECT (doc->>'actor_approval_step_id')::uuid INTO v_step1_id
+  FROM jsonb_array_elements(v_docs->'documents') doc
+  WHERE doc->>'id' = v_payment->>'document_id';
+  IF v_step1_id IS NULL THEN
+    RAISE EXCEPTION 'District approver did not receive step 1 of district payment';
+  END IF;
+
+  v_approval_res := public.decide_financial_document_approval(v_step1_id, 'approved', 'Step 1 OK');
+  IF v_approval_res->>'approval_status' <> 'pending' THEN
+    RAISE EXCEPTION '2-step district payment completed prematurely after step 1: %', v_approval_res;
+  END IF;
+
+  v_docs := public.get_finance_scope_documents('district', '97000000-0000-4000-8000-000000000001');
+  SELECT (doc->>'actor_approval_step_id')::uuid INTO v_step2_id
+  FROM jsonb_array_elements(v_docs->'documents') doc
+  WHERE doc->>'id' = v_payment->>'document_id';
+  IF v_step2_id IS NULL OR v_step2_id = v_step1_id THEN
+    RAISE EXCEPTION 'District approver did not advance to step 2';
+  END IF;
+
+  v_approval_res := public.decide_financial_document_approval(v_step2_id, 'approved', 'Step 2 OK');
+  IF v_approval_res->>'approval_status' <> 'approved' OR v_approval_res->>'journal_entry_id' IS NULL THEN
+    RAISE EXCEPTION 'Step 2 did not approve and attach district payment journal: %', v_approval_res;
+  END IF;
+
+  -- District poster posts the approved journal entry
+  v_post_res := public.post_finance_journal_entry((v_payment->>'journal_entry_id')::uuid);
+  IF v_post_res->>'status' <> 'posted' THEN
+    RAISE EXCEPTION 'District journal posting failed: %', v_post_res;
+  END IF;
+
+  v_journals := public.get_finance_scope_journals('district', '97000000-0000-4000-8000-000000000001');
+  IF NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_journals->'journals') j
+    WHERE j->>'id' = v_payment->>'journal_entry_id'
+      AND j->>'status' = 'posted'
+      AND j->>'district_id' = '97000000-0000-4000-8000-000000000001'
+  ) OR jsonb_array_length(v_journals->'account_balances') = 0 THEN
+    RAISE EXCEPTION 'District posted journal did not populate scoped ledger balances: %', v_journals;
+  END IF;
+
+  v_branch_journals := public.get_finance_scope_journals('branch', '97100000-0000-4000-8000-000000000001');
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_branch_journals->'journals') j
+    WHERE j->>'id' = v_payment->>'journal_entry_id'
+  ) THEN
+    RAISE EXCEPTION 'Branch journal list leaked district journal entry';
+  END IF;
+
+  -- Church-wide receipt lifecycle
+  IF v_church_cash_id IS NOT NULL THEN
+    PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000004', true);
+    v_church_tx := public.create_finance_scope_document_transaction(
+      'church', NULL, 'receipt', v_tx_date, NULL, 'National Synod Offering', 250, 'SLE',
+      'bank_transfer', v_church_cash_id, v_income_id, NULL, 'HQ-RCPT-1', 'Church-wide income', 1, v_idem_church
+    );
+
+    PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000005', true);
+    v_church_docs := public.get_finance_scope_documents('church', NULL);
+    SELECT (doc->>'actor_approval_step_id')::uuid INTO v_church_step_id
+    FROM jsonb_array_elements(v_church_docs->'documents') doc
+    WHERE doc->>'id' = v_church_tx->>'document_id';
+    IF v_church_step_id IS NULL THEN
+      RAISE EXCEPTION 'Church-wide approver did not see pending church-wide document';
+    END IF;
+    PERFORM public.decide_financial_document_approval(v_church_step_id, 'approved', 'Church approved');
+    PERFORM public.post_finance_journal_entry((v_church_tx->>'journal_entry_id')::uuid);
+
+    v_church_journals := public.get_finance_scope_journals('church', NULL);
+    IF NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements(v_church_journals->'journals') j
+      WHERE j->>'id' = v_church_tx->>'journal_entry_id' AND j->>'status' = 'posted'
+    ) THEN
+      RAISE EXCEPTION 'Church-wide posted journal was not returned by get_finance_scope_journals';
+    END IF;
+  END IF;
+END
+$fin_org_004_district_lifecycle$;
+ROLLBACK;
+
 DO $finance_org_complete$ BEGIN
-  RAISE NOTICE 'FIN-ORG-001 hierarchical financial ownership and district isolation checks passed';
+  RAISE NOTICE 'FIN-ORG-001 through FIN-ORG-004 hierarchical financial ownership, lifecycle, and district isolation checks passed';
 END $finance_org_complete$;
+

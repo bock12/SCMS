@@ -1064,4 +1064,219 @@ describe('mock scoped finance approval policy writes', () => {
     });
     expect(result.error?.message).toContain('immutable');
   });
+
+  test('validates multi-band non-overlap and multi-step ordering on scoped policies', async () => {
+    const ctx = fixture({ districtFinance: true });
+    const overlapping = await ctx.rpc.rpc('save_finance_scope_approval_policies', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_policies: [{
+        id: 'overlap-policy', name: 'Overlapping', transaction_type: 'financial_document',
+        branch_id: null, district_id: 'district-a', version: 1, effective_from: '2026-01-01', is_active: true
+      }],
+      p_bands: [
+        { id: 'b1', policy_id: 'overlap-policy', min_amount_base: 0, max_amount_base: 1000 },
+        { id: 'b2', policy_id: 'overlap-policy', min_amount_base: 500, max_amount_base: null }
+      ],
+      p_steps: [
+        { id: 's1', band_id: 'b1', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 's2', band_id: 'b2', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    });
+    expect(overlapping.error?.message).toContain('overlap');
+    expect(ctx.read().approvalPolicies.some(item => item.id === 'overlap-policy')).toBe(false);
+
+    const multiBand = await ctx.rpc.rpc('save_finance_scope_approval_policies', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_policies: [{
+        id: 'district-multi-policy', name: 'District Multi-Band', transaction_type: 'financial_document',
+        branch_id: null, district_id: 'district-a', version: 1, effective_from: '2026-01-01', is_active: true
+      }],
+      p_bands: [
+        { id: 'db1', policy_id: 'district-multi-policy', min_amount_base: 0, max_amount_base: 1000 },
+        { id: 'db2', policy_id: 'district-multi-policy', min_amount_base: 1000, max_amount_base: null }
+      ],
+      p_steps: [
+        { id: 'ds1', band_id: 'db1', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 'ds2', band_id: 'db2', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 'ds3', band_id: 'db2', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    });
+    expect(multiBand.error).toBeNull();
+    expect(multiBand.data.bands_created).toBe(2);
+    expect(multiBand.data.steps_created).toBe(3);
+  });
 });
+
+describe('mock scope-aware finance transactions, options and journals', () => {
+  function scopedFixture() {
+    const ctx = fixture({ churchFinance: true, districtFinance: true });
+    const state = ctx.read();
+    state.branches.push(
+      { id: 'branch-b', district_id: 'district-b', name: 'Branch B', status: 'active' }
+    );
+    state.profiles.push(
+      { id: 'branch-only', auth_user_id: 'user-branch-only', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' },
+      { id: 'district-approver-1', auth_user_id: 'user-dist-app-1', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' },
+      { id: 'district-approver-2', auth_user_id: 'user-dist-app-2', branch_id: 'branch-a', membership_status: 'active', record_status: 'active' },
+      { id: 'other-district-approver', auth_user_id: 'user-other-dist', branch_id: 'branch-b', membership_status: 'active', record_status: 'active' }
+    );
+    state.permissions.push(
+      { profile_id: 'branch-only', permission: 'manage_finances', branch_id: 'branch-a', district_id: null },
+      { profile_id: 'district-approver-1', permission: 'approve_finances', branch_id: null, district_id: 'district-a' },
+      { profile_id: 'district-approver-2', permission: 'approve_finances', branch_id: null, district_id: 'district-a' },
+      { profile_id: 'other-district-approver', permission: 'approve_finances', branch_id: null, district_id: 'district-b' },
+      { profile_id: 'creator', permission: 'post_journals', branch_id: null, district_id: 'district-a' },
+      { profile_id: 'creator', permission: 'post_journals', branch_id: null, district_id: null }
+    );
+    state.financialAccounts.push(
+      { id: 'church-cash', branch_id: null, district_id: null, name: 'HQ Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' },
+      { id: 'district-cash', branch_id: null, district_id: 'district-a', name: 'District A Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' },
+      { id: 'other-district-cash', branch_id: null, district_id: 'district-b', name: 'District B Cash', account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'cash-chart' }
+    );
+    state.approvalPolicies.push(
+      { id: 'church-pol', name: 'Church Policy', transaction_type: 'financial_document', branch_id: null, district_id: null, version: 1, effective_from: '2026-01-01', is_active: true },
+      { id: 'district-pol', name: 'District Multi Policy', transaction_type: 'financial_document', branch_id: null, district_id: 'district-a', version: 1, effective_from: '2026-01-01', is_active: true }
+    );
+    state.approvalPolicyBands.push(
+      { id: 'church-band', policy_id: 'church-pol', min_amount_base: 0, max_amount_base: null },
+      { id: 'dist-band-low', policy_id: 'district-pol', min_amount_base: 0, max_amount_base: 1000 },
+      { id: 'dist-band-high', policy_id: 'district-pol', min_amount_base: 1000, max_amount_base: null }
+    );
+    state.approvalPolicySteps.push(
+      { id: 'ch-s1', band_id: 'church-band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'dl-s1', band_id: 'dist-band-low', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'dh-s1', band_id: 'dist-band-high', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'dh-s2', band_id: 'dist-band-high', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+    );
+
+    let current = structuredClone(state);
+    let authUserId: string | null = 'user-creator';
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: (next) => { current = structuredClone(next); }
+    }, () => ({ userId: authUserId }));
+    return {
+      rpc,
+      setUser: (id: string | null) => { authUserId = id; },
+      read: () => structuredClone(current)
+    };
+  }
+
+  test('returns hierarchical finance options without sibling district or child branch leakage', async () => {
+    const ctx = scopedFixture();
+    const churchOpts = await ctx.rpc.rpc('get_finance_scope_transaction_options', { p_scope_type: 'church', p_scope_id: null });
+    expect(churchOpts.error).toBeNull();
+    expect(churchOpts.data.financialAccounts.map((a: any) => a.id)).toEqual(['church-cash']);
+
+    const distOpts = await ctx.rpc.rpc('get_finance_scope_transaction_options', { p_scope_type: 'district', p_scope_id: 'district-a' });
+    expect(distOpts.error).toBeNull();
+    expect(distOpts.data.financialAccounts.map((a: any) => a.id)).toEqual(['church-cash', 'district-cash']);
+
+    const branchOpts = await ctx.rpc.rpc('get_finance_scope_transaction_options', { p_scope_type: 'branch', p_scope_id: 'branch-a' });
+    expect(branchOpts.error).toBeNull();
+    expect(branchOpts.data.financialAccounts.map((a: any) => a.id)).toEqual(['cash-account', 'church-cash', 'district-cash']);
+  });
+
+  test('executes full district multi-step lifecycle, enforces scope isolation and idempotency', async () => {
+    const ctx = scopedFixture();
+    // Cross-scope account denied
+    const crossAccount = await ctx.rpc.rpc('create_finance_scope_document_transaction', {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_document_type: 'payment', p_transaction_date: '2026-06-15',
+      p_profile_id: null, p_party_name: 'Vendor', p_amount: 1500,
+      p_currency_code: 'SLL', p_payment_method: 'bank_transfer',
+      p_financial_account_id: 'other-district-cash', p_category_account_id: 'expense-chart',
+      p_fund_id: 'fund-a', p_external_reference: null, p_description: 'Test',
+      p_exchange_rate_to_base: 1, p_idempotency_key: '00000000-0000-4000-8000-000000000101'
+    });
+    expect(crossAccount.error).not.toBeNull();
+
+    // Branch user cannot create church or district transactions
+    ctx.setUser('user-branch-only');
+    const deniedChurch = await ctx.rpc.rpc('create_finance_scope_document_transaction', {
+      p_scope_type: 'church', p_scope_id: null,
+      p_document_type: 'receipt', p_transaction_date: '2026-06-15',
+      p_profile_id: null, p_party_name: 'HQ Donor', p_amount: 100,
+      p_currency_code: 'SLL', p_payment_method: 'cash',
+      p_financial_account_id: 'church-cash', p_category_account_id: 'income-chart',
+      p_fund_id: 'fund-a', p_external_reference: null, p_description: 'HQ gift',
+      p_exchange_rate_to_base: 1, p_idempotency_key: '00000000-0000-4000-8000-000000000102'
+    });
+    expect(deniedChurch.error?.code).toBe('42501');
+
+    // High-band district payment uses 2-step band
+    ctx.setUser('user-creator');
+    const distPaymentArgs = {
+      p_scope_type: 'district', p_scope_id: 'district-a',
+      p_document_type: 'payment', p_transaction_date: '2026-06-15',
+      p_profile_id: null, p_party_name: 'Convention Hall', p_amount: 1500,
+      p_currency_code: 'SLL', p_payment_method: 'bank_transfer',
+      p_financial_account_id: 'district-cash', p_category_account_id: 'expense-chart',
+      p_fund_id: 'fund-a', p_external_reference: 'DIST-PAY-1', p_description: 'District retreat venue',
+      p_exchange_rate_to_base: 1, p_idempotency_key: '00000000-0000-4000-8000-000000000103'
+    };
+    const created = await ctx.rpc.rpc('create_finance_scope_document_transaction', distPaymentArgs);
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('pending_approval');
+
+    const replay = await ctx.rpc.rpc('create_finance_scope_document_transaction', distPaymentArgs);
+    expect(replay.error).toBeNull();
+    expect(replay.data.document_id).toBe(created.data.document_id);
+    expect(replay.data.idempotent_replay).toBe(true);
+
+    const conflict = await ctx.rpc.rpc('create_finance_scope_document_transaction', {
+      ...distPaymentArgs, p_amount: 1600
+    });
+    expect(conflict.error?.message).toContain('different transaction details');
+
+    const steps = ctx.read().approvalSteps
+      .filter(step => step.approval_request_id === created.data.approval_request_id)
+      .sort((a, b) => Number(a.step_order) - Number(b.step_order));
+    expect(steps).toHaveLength(2);
+
+    // Other-district approver denied
+    ctx.setUser('user-other-dist');
+    const wrongDistrict = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved'
+    });
+    expect(wrongDistrict.error?.code).toBe('42501');
+
+    // Step 1 and Step 2 approved
+    ctx.setUser('user-dist-app-1');
+    const step1 = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved'
+    });
+    expect(step1.error).toBeNull();
+    expect(step1.data.approval_status).toBe('pending');
+
+    ctx.setUser('user-dist-app-2');
+    const step2 = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[1].id, p_decision: 'approved'
+    });
+    expect(step2.error).toBeNull();
+    expect(step2.data.approval_status).toBe('approved');
+
+    // Post journal & inspect scope isolation
+    ctx.setUser('user-creator');
+    const posted = await ctx.rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+    expect(posted.data.status).toBe('posted');
+
+    const districtDocs = await ctx.rpc.rpc('get_finance_scope_documents', { p_scope_type: 'district', p_scope_id: 'district-a' });
+    expect(districtDocs.data.documents).toHaveLength(1);
+    const branchDocs = await ctx.rpc.rpc('get_finance_scope_documents', { p_scope_type: 'branch', p_scope_id: 'branch-a' });
+    expect(branchDocs.data.documents).toHaveLength(0);
+    const churchDocs = await ctx.rpc.rpc('get_finance_scope_documents', { p_scope_type: 'church', p_scope_id: null });
+    expect(churchDocs.data.documents).toHaveLength(0);
+
+    const districtJournals = await ctx.rpc.rpc('get_finance_scope_journals', { p_scope_type: 'district', p_scope_id: 'district-a' });
+    expect(districtJournals.data.journals).toHaveLength(1);
+    expect(districtJournals.data.account_balances.find((row: any) => row.account_id === 'expense-chart')?.debit_total).toBe(1500);
+    const branchJournals = await ctx.rpc.rpc('get_finance_scope_journals', { p_scope_type: 'branch', p_scope_id: 'branch-a' });
+    expect(branchJournals.data.journals).toHaveLength(0);
+    expect(branchJournals.data.account_balances).toHaveLength(0);
+  });
+});
+

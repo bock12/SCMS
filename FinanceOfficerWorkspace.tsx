@@ -75,9 +75,17 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     });
     return () => { cancelled = true; };
   }, [databaseProfileId, financeBranchId, financeScope?.type, financeScope?.id]);
-  const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, profile?.branch_id);
+  const permissionBranchContext = selectedFinanceScope?.type === 'branch'
+    ? selectedFinanceScope.id
+    : selectedFinanceScope?.type === 'district'
+      ? (availableFinanceScopes.find(item => item.scope_type === 'branch' && item.district_id === selectedFinanceScope.id)?.scope_id ?? financeBranchId)
+      : financeBranchId;
+  const { resolution: financePermissions, loading: financePermissionsLoading } = usePermissionResolution(profile?.id, permissionBranchContext);
   const canViewFinance = hasEffectivePermission(financePermissions, 'view_finances')
-    || hasEffectivePermission(financePermissions, 'manage_finances');
+    || hasEffectivePermission(financePermissions, 'manage_finances')
+    || availableFinanceScopes.length > 0;
+  const canCreateScopedTransactions = hasEffectivePermission(financePermissions, 'manage_finances')
+    || (selectedFinanceScope?.type === 'district' && availableFinanceScopes.some(item => item.scope_type === 'district' && item.scope_id === selectedFinanceScope.id));
   const canApproveRequisitions = hasEffectivePermission(financePermissions, 'approve_requisitions');
   const canAccessFinance = canViewFinance || canApproveRequisitions;
   const location = useLocation();
@@ -482,55 +490,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     if (!disburseEventBudget) return;
     setDisburseEventBudget(null);
     alert('Legacy event-budget disbursement is disabled. Use the canonical event budget workflow to create an approved payment and journal.');
-    return;
-
-    const txnRef = evtDisburseTxnRef.trim() || ('DISB-EVT-' + Math.floor(100000 + Math.random() * 900000));
-    const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
-    const now = new Date().toISOString();
-
-    const autoExpenseRecord: FinancialRecord = {
-      id: 'rec-evt-disb-' + disburseEventBudget.event_id,
-      contributor_name: 'Event: ' + disburseEventBudget.event_title + ' (' + disburseEventBudget.submitted_by + ')',
-      type: 'expense',
-      category: 'Ministry & Worship Budgets',
-      amount: disburseEventBudget.total_budget || 1000,
-      currency: 'SLE',
-      date: now,
-      payment_method: normalizeDisbursementPaymentMethod(evtDisburseChannel),
-      status: 'completed',
-      approved_by: actor,
-      transaction_id: txnRef,
-      payment_proof_ref: evtDisburseProofUrl.trim() || undefined,
-      notes: 'Event Budget Disbursement Invoice ' + (disburseEventBudget.invoice_number || 'INV-EVT') + ': ' + disburseEventBudget.event_title
-    };
-
-    try {
-      // Persist the ledger first; retries reuse the event's deterministic ledger ID.
-      const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
-      // Reuse the ledger's original reference on retry so both records stay linked.
-      const confirmedTxnRef = savedRecord.transaction_id || txnRef;
-      executeDisburseEventBudget(
-        disburseEventBudget.event_id,
-        actor,
-        confirmedTxnRef,
-        evtDisburseChannel,
-        'Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' via ' + evtDisburseChannel.toUpperCase() + ' (Ref: ' + txnRef + ').'
-      );
-
-      const confirmedBudget = getEventBudgetApprovals().find(b => b.event_id === disburseEventBudget.event_id);
-      if (!confirmedBudget || confirmedBudget.status !== 'disbursed' || confirmedBudget.transaction_ref !== confirmedTxnRef) {
-        throw new Error('The ledger entry was saved, but the event budget status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
-      }
-
-      setRecords(prev => [savedRecord, ...prev.filter(record => record.id !== savedRecord.id)]);
-      setEventBudgets(getEventBudgetApprovals());
-      setDisburseEventBudget(null);
-      setEvtDisburseSuccessMsg('🎉 Disbursed SLE ' + (disburseEventBudget.total_budget || 0).toLocaleString() + ' for ' + disburseEventBudget.event_title + '! Transaction ref ' + confirmedTxnRef + ' recorded into Treasury Ledger.');
-      setTimeout(() => setEvtDisburseSuccessMsg(null), 5000);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      alert('Event budget disbursement was not fully completed: ' + message);
-    }
   };
 
   // --- PRINT OFFICIAL REQUISITION VOUCHER & INVOICE ---
@@ -939,7 +898,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
   const pendingReqsCount = requisitions.filter(r => r.status === 'pending_approval').length;
 
-  if (financePermissionsLoading) {
+  if (financePermissionsLoading || (financeScopeLoading && !canAccessFinance)) {
     return <div className="p-10 text-center text-slate-500">Loading finance permissions…</div>;
   }
   if (!profile || !canAccessFinance) {
@@ -1088,17 +1047,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               <Landmark size={15} />
               <span>Accounting Setup</span>
             </button>
-            <button
-              onClick={() => setWorkspaceTab('setup')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-                workspaceTab === 'setup'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Landmark size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Setup</span>
-            </button>
   
             <button
               onClick={() => setWorkspaceTab('gateways')}
@@ -1124,14 +1072,64 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         )}
       </div>
 
+      {(workspaceTab === 'ledger' || workspaceTab === 'setup') && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <label htmlFor="finance-configuration-scope" className="block text-xs font-black uppercase tracking-wide text-indigo-900">Finance organizational scope</label>
+              <p className="mt-1 text-xs leading-5 text-indigo-800">Only church, district and branch scopes authorized by your authenticated Supabase account are listed here.</p>
+            </div>
+            <select
+              id="finance-configuration-scope"
+              aria-label="Finance configuration scope"
+              value={selectedFinanceScope ? `${selectedFinanceScope.type}:${selectedFinanceScope.id ?? 'church'}` : ''}
+              onChange={event => {
+                const selected = availableFinanceScopes.find(item =>
+                  `${item.scope_type}:${item.scope_id ?? 'church'}` === event.target.value);
+                setSelectedFinanceScope(selected
+                  ? { type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope
+                  : null);
+              }}
+              disabled={financeScopeLoading || availableFinanceScopes.length <= 1}
+              className="min-w-56 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60"
+            >
+              {availableFinanceScopes.map(item => (
+                <option key={`${item.scope_type}:${item.scope_id ?? 'church'}`} value={`${item.scope_type}:${item.scope_id ?? 'church'}`}>
+                  {item.scope_type === 'church' ? 'Church-wide' : `${item.scope_type === 'district' ? 'District' : 'Branch'} — ${item.scope_name}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          {financeScopeLoading && <p className="mt-2 text-xs text-indigo-700">Loading authorized finance scopes…</p>}
+          {financeScopeError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{financeScopeError}</p>}
+        </div>
+      )}
+
       {/* --- WORKSPACE TAB 1: FINANCIAL LEDGER & REPORTS --- */}
       {workspaceTab === 'ledger' && (
         <div className="space-y-6">
-          {hasEffectivePermission(financePermissions, 'manage_finances') && (
-            <FinanceTransactionEntryWorkspace branchId={financeBranchId} />
-          )}
-          <FinanceDocumentWorkflowWorkspace branchId={financeBranchId} />
-          <FinanceJournalWorkspace branchId={financeBranchId} />
+          {selectedFinanceScope ? (
+            <>
+              {canCreateScopedTransactions && (
+                <FinanceTransactionEntryWorkspace
+                  branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+                  scope={selectedFinanceScope}
+                />
+              )}
+              <FinanceDocumentWorkflowWorkspace
+                branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+                scope={selectedFinanceScope}
+              />
+              <FinanceJournalWorkspace
+                branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+                scope={selectedFinanceScope}
+              />
+            </>
+          ) : !financeScopeLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Canonical transactions, approvals and journal balances are unavailable until an authorized organizational scope is confirmed by Supabase.
+            </div>
+          ) : null}
           {/* Revenue, expenditure and net-position figures are now rendered from
               posted journal lines in FinanceJournalWorkspace above. Do not restore
               the legacy FinancialRecord-derived summary cards here. */}
@@ -1433,39 +1431,9 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         </div>
       )}
 
-      {/* --- WORKSPACE TAB 2: MINISTRY PROPOSALS & EXPENSE INVOICES --- */}
+      {/* --- WORKSPACE TAB 2: ACCOUNTING SETUP --- */}
       {workspaceTab === 'setup' && (
         <section className="space-y-4">
-          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <label htmlFor="finance-configuration-scope" className="block text-xs font-black uppercase tracking-wide text-indigo-900">Finance configuration scope</label>
-                <p className="mt-1 text-xs leading-5 text-indigo-800">Only church, district and branch scopes authorized by your authenticated Supabase account are listed here.</p>
-              </div>
-              <select
-                id="finance-configuration-scope"
-                aria-label="Finance configuration scope"
-                value={selectedFinanceScope ? `${selectedFinanceScope.type}:${selectedFinanceScope.id ?? 'church'}` : ''}
-                onChange={event => {
-                  const selected = availableFinanceScopes.find(item =>
-                    `${item.scope_type}:${item.scope_id ?? 'church'}` === event.target.value);
-                  setSelectedFinanceScope(selected
-                    ? { type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope
-                    : null);
-                }}
-                disabled={financeScopeLoading || availableFinanceScopes.length <= 1}
-                className="min-w-56 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60"
-              >
-                {availableFinanceScopes.map(item => (
-                  <option key={`${item.scope_type}:${item.scope_id ?? 'church'}`} value={`${item.scope_type}:${item.scope_id ?? 'church'}`}>
-                    {item.scope_type === 'church' ? 'Church-wide' : `${item.scope_type === 'district' ? 'District' : 'Branch'} — ${item.scope_name}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {financeScopeLoading && <p className="mt-2 text-xs text-indigo-700">Loading authorized finance scopes…</p>}
-            {financeScopeError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{financeScopeError}</p>}
-          </div>
           {selectedFinanceScope ? (
             <FinanceConfigurationWorkspace
               branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
@@ -1764,6 +1732,18 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               )}
             </button>
   
+            <button
+              onClick={() => setWorkspaceTab('setup')}
+              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                workspaceTab === 'setup'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Landmark size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Setup</span>
+            </button>
+
             <button
               onClick={() => setWorkspaceTab('gateways')}
               className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${

@@ -45,9 +45,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [periodEnd, setPeriodEnd] = useState('');
   const [policyType, setPolicyType] = useState<'financial_document' | 'budget'>('financial_document');
   const [policyName, setPolicyName] = useState('Financial Document Approval');
-  const [policyMin, setPolicyMin] = useState('0');
-  const [policyMax, setPolicyMax] = useState('');
-  const [requiredApprovals, setRequiredApprovals] = useState('1');
+  const [policyBands, setPolicyBands] = useState<Array<{ min: string; max: string; steps: string[] }>>([
+    { min: '0', max: '', steps: ['1'] }
+  ]);
   const [requisitionConfiguration, setRequisitionConfiguration] = useState<RequisitionApprovalConfiguration>({ policies: [], bands: [], steps: [] });
   const [requisitionPolicyName, setRequisitionPolicyName] = useState('Department Requisition Approval');
   const [requisitionPolicyMin, setRequisitionPolicyMin] = useState('0');
@@ -145,32 +145,129 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setPeriodName('');
   };
 
+  const addPolicyBand = () => {
+    setPolicyBands(current => {
+      const lastMax = current[current.length - 1]?.max.trim() || '0';
+      return [...current, { min: lastMax, max: '', steps: ['1'] }];
+    });
+  };
+
+  const removePolicyBand = (bandIndex: number) => {
+    setPolicyBands(current => current.length > 1 ? current.filter((_, index) => index !== bandIndex) : current);
+  };
+
+  const updatePolicyBandField = (bandIndex: number, field: 'min' | 'max', value: string) => {
+    setPolicyBands(current => current.map((band, index) => index === bandIndex ? { ...band, [field]: value } : band));
+  };
+
+  const addPolicyBandStep = (bandIndex: number) => {
+    setPolicyBands(current => current.map((band, index) =>
+      index === bandIndex ? { ...band, steps: [...band.steps, '1'] } : band));
+  };
+
+  const removePolicyBandStep = (bandIndex: number, stepIndex: number) => {
+    setPolicyBands(current => current.map((band, index) =>
+      index === bandIndex && band.steps.length > 1
+        ? { ...band, steps: band.steps.filter((_, idx) => idx !== stepIndex) }
+        : band));
+  };
+
+  const updatePolicyBandStep = (bandIndex: number, stepIndex: number, value: string) => {
+    setPolicyBands(current => current.map((band, index) =>
+      index === bandIndex
+        ? { ...band, steps: band.steps.map((step, idx) => idx === stepIndex ? value : step) }
+        : band));
+  };
+
   const addApprovalPolicy = () => {
-    const min = Number(policyMin);
-    const max = policyMax.trim() ? Number(policyMax) : null;
-    const approvalCount = Number(requiredApprovals);
-    if (!policyName.trim() || !Number.isFinite(min) || min < 0 ||
-      (max !== null && (!Number.isFinite(max) || max <= min)) ||
-      (!Number.isInteger(approvalCount) || approvalCount < 1)) return;
+    setError(null);
+    if (!policyName.trim() || policyBands.length === 0) {
+      setError('Enter a policy name and at least one amount band.');
+      return;
+    }
+
+    const parsedBands = policyBands.map(band => ({
+      min: Number(band.min),
+      max: band.max.trim() ? Number(band.max) : null,
+      steps: band.steps.map(value => Number(value))
+    }));
+
+    for (const band of parsedBands) {
+      if (!Number.isFinite(band.min) || band.min < 0 ||
+          (band.max !== null && (!Number.isFinite(band.max) || band.max <= band.min))) {
+        setError('Each approval band requires a non-negative minimum and a maximum greater than its minimum.');
+        return;
+      }
+      if (band.steps.length === 0 || band.steps.some(count => !Number.isInteger(count) || count < 1)) {
+        setError('Each approval band requires at least one step with a positive integer approval count.');
+        return;
+      }
+    }
+
+    const sortedBands = [...parsedBands].sort((a, b) => a.min - b.min);
+    for (let index = 1; index < sortedBands.length; index++) {
+      const prev = sortedBands[index - 1];
+      const next = sortedBands[index];
+      if (prev.max === null || next.min < prev.max) {
+        setError('Approval policy amount bands cannot overlap.');
+        return;
+      }
+    }
+
+    const targetBranchId = scope ? (scope.type === 'branch' ? scope.id : null) : branchId;
+    const targetDistrictId = scope?.type === 'district' ? scope.id : null;
+    const nextVersion = Math.max(
+      0,
+      ...configuration.approvalPolicies
+        .filter(item =>
+          item.transaction_type === policyType &&
+          (item.branch_id ?? null) === targetBranchId &&
+          (item.district_id ?? null) === targetDistrictId
+        )
+        .map(item => Number(item.version) || 0)
+    ) + 1;
+
     const policyId = makeId('policy');
-    const bandId = makeId('band');
+    const createdBands = sortedBands.map(band => ({
+      id: makeId('band'),
+      policy_id: policyId,
+      min_amount_base: band.min,
+      max_amount_base: band.max,
+      steps: band.steps
+    }));
+
     update({
       approvalPolicies: [...configuration.approvalPolicies, {
-        id: policyId, name: policyName.trim(), transaction_type: policyType,
-        branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId, district_id: scope?.type === 'district' ? scope.id : null, version: Math.max(0, ...configuration.approvalPolicies.filter(item => item.branch_id === (scope?.type === 'branch' ? scope.id : branchId)).map(item => item.version)) + 1, effective_from: new Date().toISOString().slice(0, 10), is_active: true
+        id: policyId,
+        name: policyName.trim(),
+        transaction_type: policyType,
+        branch_id: targetBranchId,
+        district_id: targetDistrictId,
+        version: nextVersion,
+        effective_from: new Date().toISOString().slice(0, 10),
+        is_active: true
       }],
-      approvalPolicyBands: [...configuration.approvalPolicyBands, {
-        id: bandId, policy_id: policyId, min_amount_base: min, max_amount_base: max
-      }],
-      approvalPolicySteps: [...configuration.approvalPolicySteps, {
-        id: makeId('approval-step'), band_id: bandId, step_number: 1,
-        required_permission_key: 'approve_finances',
-        required_approvals: approvalCount,
-        prohibit_submitter_approval: true
-      }]
+      approvalPolicyBands: [
+        ...configuration.approvalPolicyBands,
+        ...createdBands.map(({ id, policy_id, min_amount_base, max_amount_base }) => ({
+          id, policy_id, min_amount_base, max_amount_base
+        }))
+      ],
+      approvalPolicySteps: [
+        ...configuration.approvalPolicySteps,
+        ...createdBands.flatMap(band => band.steps.map((approvalCount, stepIndex) => ({
+          id: makeId('approval-step'),
+          band_id: band.id,
+          step_number: stepIndex + 1,
+          required_permission_key: 'approve_finances' as const,
+          required_approvals: approvalCount,
+          prohibit_submitter_approval: true
+        })))
+      ]
     });
-    setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval'); setPolicyMin('0'); setPolicyMax('');
-    setRequiredApprovals('1');
+
+    setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
+    setPolicyBands([{ min: '0', max: '', steps: ['1'] }]);
   };
 
   const addRequisitionApprovalStep = () =>
@@ -320,91 +417,174 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         <ul className="mt-3 space-y-2 text-sm">{configuration.financialAccounts.map(account => <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">{account.name} · {account.account_type} · {account.currency_code}</li>)}</ul>
       </section>
 
-{(!scope || scope.type === 'church') ? (
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 className="font-black text-slate-900">Financial years & periods</h3>
-          <div className="mt-3 flex gap-2"><input className={fieldClass} aria-label="Financial year" type="number" value={yearNumber} onChange={e => setYearNumber(e.target.value)} /><button type="button" className={buttonClass} onClick={addYear}><Plus size={14} /> Add year</button></div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <select className={fieldClass} value={periodYearId} onChange={e => setPeriodYearId(e.target.value)}><option value="">Year</option>{configuration.financialYears.map(year => <option key={year.id} value={year.id}>{year.year_number}</option>)}</select>
-            <input className={fieldClass} placeholder="Period name" value={periodName} onChange={e => setPeriodName(e.target.value)} />
-            <input className={fieldClass} type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} />
-            <input className={fieldClass} type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} />
-          </div>
-          <button type="button" className={buttonClass + ' mt-2'} onClick={addPeriod}><Plus size={14} /> Add period</button>
-          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.periods.map(period => <li key={period.id}>{period.name}: {period.start_date} to {period.end_date} ({period.status})</li>)}</ul>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 lg:col-span-2">
           <h3 className="font-black text-slate-900">Approval policies</h3>
-          <p className="mt-1 text-xs text-slate-500">Configure separate approval rules for canonical receipts/payments and event budgets. Amount bands use the church base currency; policies are created only when you save.</p>
-          <div className="mt-3 space-y-2">
-            <label className={labelClass}>Workflow type</label>
-            <select className={fieldClass} value={policyType} onChange={e => {
-              const next = e.target.value as typeof policyType;
-              setPolicyType(next);
-              setPolicyName(next === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
-            }}>
-              <option value="financial_document">Receipts and payments</option>
-              <option value="budget">Event budget approval</option>
-            </select>
-            <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
-            <div className="grid grid-cols-2 gap-2"><input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={policyMin} onChange={e => setPolicyMin(e.target.value)} /><input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={policyMax} onChange={e => setPolicyMax(e.target.value)} /></div>
-            <label className={labelClass}>Required distinct approvals</label>
-            <input className={fieldClass} type="number" min="1" step="1" value={requiredApprovals} onChange={e => setRequiredApprovals(e.target.value)} />
-            <p className="mt-1 text-xs text-slate-500">Any active profile with the applicable branch-scoped approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
-            <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Add {policyType === 'budget' ? 'budget' : 'finance'} policy and amount band</button>
-          </div>
-          <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.approvalPolicies.map(policy => <li key={policy.id}>{policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.district_id ? 'District' : policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}</li>)}</ul>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 className="font-black text-slate-900">Department requisition approval</h3>
-          <p className="mt-1 text-xs text-slate-500">Configure a separate, ordered approval policy for ministry and department funding requests. Every step requires the branch-scoped approve_requisitions permission and prohibits submitter approval.</p>
-          <div className="mt-3 space-y-2">
-            <label className={labelClass}>Policy name</label>
-            <input className={fieldClass} value={requisitionPolicyName} onChange={e => setRequisitionPolicyName(e.target.value)} placeholder="Department Requisition Approval" />
-            <div className="grid grid-cols-2 gap-2">
-              <input className={fieldClass} type="number" min="0" value={requisitionPolicyMin} onChange={e => setRequisitionPolicyMin(e.target.value)} placeholder="Minimum base amount" />
-              <input className={fieldClass} type="number" min="0" value={requisitionPolicyMax} onChange={e => setRequisitionPolicyMax(e.target.value)} placeholder="Maximum (blank = no limit)" />
-            </div>
-            <label className={labelClass}>Ordered approval steps</label>
-            {requisitionSteps.map((value, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <span className="w-24 shrink-0 text-xs font-semibold text-slate-600">Step {index + 1}</span>
-                <input className={fieldClass} type="number" min="1" step="1" value={value}
-                  onChange={e => setRequisitionSteps(current => current.map((item, itemIndex) => itemIndex === index ? e.target.value : item))}
-                  aria-label={`Required approvals for step ${index + 1}`} />
+          <p className="mt-1 text-xs text-slate-500">Configure scope-owned approval rules with one or more non-overlapping base-currency amount bands and ordered approval steps. Policies are persisted when you click Save configuration.</p>
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <label className={labelClass}>Workflow type</label>
+                <select className={fieldClass} value={policyType} onChange={e => {
+                  const next = e.target.value as typeof policyType;
+                  setPolicyType(next);
+                  setPolicyName(next === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
+                }}>
+                  <option value="financial_document">Receipts and payments</option>
+                  <option value="budget">Event budget approval</option>
+                </select>
               </div>
-            ))}
+              <div>
+                <label className={labelClass}>Policy name</label>
+                <input className={fieldClass} placeholder="Policy name" value={policyName} onChange={e => setPolicyName(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {policyBands.map((band, bandIndex) => (
+                <div key={bandIndex} className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black uppercase tracking-wide text-slate-700">Amount band {bandIndex + 1}</span>
+                    {policyBands.length > 1 && (
+                      <button type="button" onClick={() => removePolicyBand(bandIndex)} className="text-xs font-bold text-rose-600 hover:text-rose-800">Remove band</button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className={labelClass}>Minimum base amount</label>
+                      <input className={fieldClass} type="number" min="0" placeholder="Minimum base amount" value={band.min} onChange={e => updatePolicyBandField(bandIndex, 'min', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Maximum (blank = no limit)</label>
+                      <input className={fieldClass} type="number" min="0" placeholder="Maximum (blank = no limit)" value={band.max} onChange={e => updatePolicyBandField(bandIndex, 'max', e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelClass}>Ordered approval steps</label>
+                    {band.steps.map((count, stepIndex) => (
+                      <div key={stepIndex} className="flex items-center gap-2">
+                        <span className="w-20 shrink-0 text-xs font-semibold text-slate-600">Step {stepIndex + 1}</span>
+                        <input
+                          className={fieldClass}
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={count}
+                          onChange={e => updatePolicyBandStep(bandIndex, stepIndex, e.target.value)}
+                          aria-label={`Band ${bandIndex + 1} step ${stepIndex + 1} required approvals`}
+                        />
+                        {band.steps.length > 1 && (
+                          <button type="button" onClick={() => removePolicyBandStep(bandIndex, stepIndex)} className="shrink-0 text-xs font-bold text-rose-600 hover:text-rose-800">Remove</button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" className="text-xs font-bold text-indigo-700 hover:text-indigo-900" onClick={() => addPolicyBandStep(bandIndex)}>
+                      + Add step to band {bandIndex + 1}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-slate-500">Any active profile with the applicable scope-compatible approve_finances permission may approve. The submitter cannot approve their own transaction.</p>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className={buttonClass} onClick={addRequisitionApprovalStep}><Plus size={14} /> Add approval step</button>
-              <button type="button" className={buttonClass} disabled={savingRequisitionPolicy} onClick={() => void saveRequisitionPolicy()}>
-                <Save size={14} /> {savingRequisitionPolicy ? 'Saving…' : 'Save requisition policy'}
-              </button>
+              <button type="button" className={buttonClass} onClick={addPolicyBand}><Plus size={14} /> Add amount band</button>
+              <button type="button" className={buttonClass} onClick={addApprovalPolicy}><Plus size={14} /> Queue {policyType === 'budget' ? 'budget' : 'finance'} policy</button>
             </div>
           </div>
-          <ul className="mt-3 space-y-1 text-xs text-slate-600">
-            {requisitionConfiguration.policies.map(policy => {
-              const policyBands = requisitionConfiguration.bands.filter(band => band.policy_id === policy.id);
-              const stepCount = policyBands.reduce((count, band) =>
-                count + requisitionConfiguration.steps.filter(step => step.band_id === band.id).length, 0);
-              return <li key={policy.id}>{policy.name} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {stepCount} approval step(s) · {policy.is_active ? 'Active' : 'Inactive'}</li>;
+          <ul className="mt-4 space-y-2 text-xs text-slate-700">
+            {configuration.approvalPolicies.map(policy => {
+              const bandsForPolicy = configuration.approvalPolicyBands
+                .filter(band => band.policy_id === policy.id)
+                .sort((a, b) => Number(a.min_amount_base) - Number(b.min_amount_base));
+              return (
+                <li key={policy.id} className="rounded-xl bg-slate-50 p-3 space-y-1">
+                  <div className="font-bold text-slate-900">
+                    {policy.name} · {policy.transaction_type === 'budget' ? 'Event budgets' : 'Receipts/payments'} · {policy.district_id ? 'District' : policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {policy.is_active ? 'Active' : 'Inactive'}
+                  </div>
+                  {bandsForPolicy.map(band => {
+                    const stepsForBand = configuration.approvalPolicySteps
+                      .filter(step => step.band_id === band.id)
+                      .sort((a, b) => Number(a.step_number) - Number(b.step_number));
+                    return (
+                      <div key={band.id} className="text-[11px] text-slate-600">
+                        Band {band.min_amount_base} to {band.max_amount_base ?? '∞'}: {stepsForBand.length ? stepsForBand.map(step => `Step ${step.step_number} (${step.required_approvals})`).join(' → ') : 'No approval steps'}
+                      </div>
+                    );
+                  })}
+                </li>
+              );
             })}
-            {requisitionConfiguration.policies.length === 0 && <li className="text-slate-500">No requisition approval policy is configured yet. Requisition submission will remain unavailable until one is saved.</li>}
+            {configuration.approvalPolicies.length === 0 && (
+              <li className="text-slate-500">No approval policies are configured in this scope yet.</li>
+            )}
           </ul>
         </div>
+
+        {(!scope || scope.type === 'church') ? (
+          <>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="font-black text-slate-900">Financial years & periods</h3>
+              <div className="mt-3 flex gap-2"><input className={fieldClass} aria-label="Financial year" type="number" value={yearNumber} onChange={e => setYearNumber(e.target.value)} /><button type="button" className={buttonClass} onClick={addYear}><Plus size={14} /> Add year</button></div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <select className={fieldClass} value={periodYearId} onChange={e => setPeriodYearId(e.target.value)}><option value="">Year</option>{configuration.financialYears.map(year => <option key={year.id} value={year.id}>{year.year_number}</option>)}</select>
+                <input className={fieldClass} placeholder="Period name" value={periodName} onChange={e => setPeriodName(e.target.value)} />
+                <input className={fieldClass} type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} />
+                <input className={fieldClass} type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} />
+              </div>
+              <button type="button" className={buttonClass + ' mt-2'} onClick={addPeriod}><Plus size={14} /> Add period</button>
+              <ul className="mt-3 space-y-1 text-xs text-slate-600">{configuration.periods.map(period => <li key={period.id}>{period.name}: {period.start_date} to {period.end_date} ({period.status})</li>)}</ul>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h3 className="font-black text-slate-900">Department requisition approval</h3>
+              <p className="mt-1 text-xs text-slate-500">Configure a separate, ordered approval policy for ministry and department funding requests. Every step requires the branch-scoped approve_requisitions permission and prohibits submitter approval.</p>
+              <div className="mt-3 space-y-2">
+                <label className={labelClass}>Policy name</label>
+                <input className={fieldClass} value={requisitionPolicyName} onChange={e => setRequisitionPolicyName(e.target.value)} placeholder="Department Requisition Approval" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input className={fieldClass} type="number" min="0" value={requisitionPolicyMin} onChange={e => setRequisitionPolicyMin(e.target.value)} placeholder="Minimum base amount" />
+                  <input className={fieldClass} type="number" min="0" value={requisitionPolicyMax} onChange={e => setRequisitionPolicyMax(e.target.value)} placeholder="Maximum (blank = no limit)" />
+                </div>
+                <label className={labelClass}>Ordered approval steps</label>
+                {requisitionSteps.map((value, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <span className="w-24 shrink-0 text-xs font-semibold text-slate-600">Step {index + 1}</span>
+                    <input className={fieldClass} type="number" min="1" step="1" value={value}
+                      onChange={e => setRequisitionSteps(current => current.map((item, itemIndex) => itemIndex === index ? e.target.value : item))}
+                      aria-label={`Required approvals for step ${index + 1}`} />
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={buttonClass} onClick={addRequisitionApprovalStep}><Plus size={14} /> Add approval step</button>
+                  <button type="button" className={buttonClass} disabled={savingRequisitionPolicy} onClick={() => void saveRequisitionPolicy()}>
+                    <Save size={14} /> {savingRequisitionPolicy ? 'Saving…' : 'Save requisition policy'}
+                  </button>
+                </div>
+              </div>
+              <ul className="mt-3 space-y-1 text-xs text-slate-600">
+                {requisitionConfiguration.policies.map(policy => {
+                  const policyBands = requisitionConfiguration.bands.filter(band => band.policy_id === policy.id);
+                  const stepCount = policyBands.reduce((count, band) =>
+                    count + requisitionConfiguration.steps.filter(step => step.band_id === band.id).length, 0);
+                  return <li key={policy.id}>{policy.name} · {policy.branch_id ? 'Branch' : 'Church-wide'} · v{policy.version} · {stepCount} approval step(s) · {policy.is_active ? 'Active' : 'Inactive'}</li>;
+                })}
+                {requisitionConfiguration.policies.length === 0 && <li className="text-slate-500">No requisition approval policy is configured yet. Requisition submission will remain unavailable until one is saved.</li>}
+              </ul>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 lg:col-span-2">Financial years and open periods are managed at church level. Department requisition approval policies remain branch-level workflows.</div>
+        )}
       </section>
-      ) : (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Financial years, periods and approval-policy editing remain church-level or legacy branch workflows. Scoped approval-policy writes will be enabled in a later integration step.</div>
-      )}
 
-      <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, branch scope, validation and audit controls.</p>
+      <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, organizational scope, validation and audit controls.</p>
 
-      {scope?.type === 'district' ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Transaction entry is currently branch-specific. District-level treasury transactions and internal transfers will be enabled in the next finance integration step.</div>
-      ) : (branchId || scope?.type === 'branch') ? (
-        <FinanceTransactionEntryWorkspace branchId={scope?.type === 'branch' ? scope.id : branchId} />
+      {(scope || branchId) ? (
+        <FinanceTransactionEntryWorkspace
+          branchId={scope ? (scope.type === 'branch' ? scope.id : null) : branchId}
+          scope={scope}
+        />
       ) : null}
     </div>
   );

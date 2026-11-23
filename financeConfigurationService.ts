@@ -80,6 +80,17 @@ export async function getFinanceScopeConfiguration(
   });
 }
 
+/** Loads transaction entry options including hierarchically eligible accounts, funds and approval policies for one authorized scope. */
+export async function getFinanceScopeTransactionOptions(
+  scope: FinanceOwnershipScope,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceConfiguration & { scope: FinanceOwnershipScope }>> {
+  return client.rpc('get_finance_scope_transaction_options', {
+    p_scope_type: scope.type,
+    p_scope_id: scope.id
+  });
+}
+
 export interface FinanceScopeApprovalPolicyWriteResult {
   saved: boolean;
   policies_created: number;

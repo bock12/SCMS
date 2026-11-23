@@ -13,7 +13,7 @@ export interface MockFinanceState {
   baseCurrencyCode: string | null;
   financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
   chartAccounts: Array<{ id: string; is_active: boolean; account_type: string; is_control_account?: boolean; [key: string]: any }>;
-  funds: Array<{ id: string; is_active: boolean; [key: string]: any }>;
+  funds: Array<{ id: string; is_active: boolean; branch_id?: string | null; district_id?: string | null; [key: string]: any }>;
   periods: Array<{ id: string; start_date: string; end_date: string; status: string; year_status: string; [key: string]: any }>;
   financialYears: Array<Record<string, any>>;
   approvalPolicyBands: Array<Record<string, any>>;
@@ -24,7 +24,7 @@ export interface MockFinanceState {
   approvalPolicies: Array<{
     id: string; is_active: boolean; transaction_type: 'financial_document' | 'budget' | 'requisition';
     branch_id: string | null; district_id?: string | null; min_amount: number; max_amount: number | null;
-    approver_profile_ids: string[];
+    approver_profile_ids: string[]; [key: string]: any;
   }>;
   documents: Array<Record<string, any>>;
   journals: Array<Record<string, any>>;
@@ -131,25 +131,101 @@ export function createMockFinanceRpc(
       ((p.district_id == null && (p.branch_id === null || p.branch_id === branchId)) ||
        (branchDistrictId !== null && p.district_id === branchDistrictId)));
   };
+  const hasDistrictPermission = (state: MockFinanceState, profileId: string, permission: string, districtId: string) => {
+    return state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
+      ((p.branch_id == null && p.district_id == null) || p.district_id === districtId));
+  };
+  const hasScopePermission = (
+    state: MockFinanceState,
+    profileId: string,
+    permission: string,
+    branchId: string | null,
+    districtId: string | null
+  ) => {
+    if (branchId) return hasPermission(state, profileId, permission, branchId);
+    if (districtId) return hasDistrictPermission(state, profileId, permission, districtId);
+    return hasPermission(state, profileId, permission, null);
+  };
+  const matchesHierarchicalScope = (
+    item: { branch_id?: string | null; district_id?: string | null },
+    scopeType: string,
+    branchId: string | null,
+    districtId: string | null
+  ) => {
+    const itemBranch = item.branch_id ?? null;
+    const itemDistrict = item.district_id ?? null;
+    if (scopeType === 'branch') {
+      return itemBranch === branchId || (itemBranch === null && (itemDistrict === null || itemDistrict === districtId));
+    }
+    if (scopeType === 'district') {
+      return itemBranch === null && (itemDistrict === districtId || itemDistrict === null);
+    }
+    return itemBranch === null && itemDistrict === null;
+  };
+  const matchesExactScope = (
+    item: { branch_id?: string | null; district_id?: string | null },
+    scopeType: string,
+    branchId: string | null,
+    districtId: string | null
+  ) => {
+    const itemBranch = item.branch_id ?? null;
+    const itemDistrict = item.district_id ?? null;
+    if (scopeType === 'branch') return itemBranch === branchId;
+    if (scopeType === 'district') return itemBranch === null && itemDistrict === districtId;
+    return itemBranch === null && itemDistrict === null;
+  };
 
-  function createTransaction(args: Record<string, any>, stateOverride?: MockFinanceState, persist = true) {
+  function createScopedTransaction(
+    args: Record<string, any>,
+    includeScopeMetadata = false,
+    stateOverride?: MockFinanceState,
+    persist = true
+  ) {
     const state = stateOverride ?? clone(storage.load());
     const auth = getAuth();
     if (!auth.userId) return fail('Authentication required', '42501');
     const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
     if (!actor) return fail('No active member profile is linked to this account', '42501');
 
-    const type = args.p_document_type as MockFinanceDocumentType;
-    const branchId = args.p_branch_id;
-    if (!hasPermission(state, actor.id, 'manage_finances', branchId)) {
-      return fail('Insufficient permission to create financial transactions in this branch', '42501');
+    const scopeType = String(args.p_scope_type ?? (args.p_branch_id ? 'branch' : 'church'));
+    const scopeId: string | null = args.p_scope_id !== undefined ? (args.p_scope_id ?? null) : (args.p_branch_id ?? null);
+    if (!['church', 'district', 'branch'].includes(scopeType)) {
+      return fail('Finance scope must be church, district or branch');
     }
+    let branchId: string | null = null;
+    let districtId: string | null = null;
+    if (scopeType === 'church') {
+      if (scopeId !== null) return fail('Church-wide finance scope must not include a scope ID');
+      if (!hasPermission(state, actor.id, 'manage_finances', null)) {
+        return fail('Insufficient permission to create church-wide financial transactions', '42501');
+      }
+    } else if (scopeType === 'district') {
+      if (!scopeId || !state.districts.some(d => d.id === scopeId && d.status !== 'inactive' && d.status !== 'archived')) {
+        return fail('Finance district does not exist or is inactive');
+      }
+      if (!hasDistrictPermission(state, actor.id, 'manage_finances', scopeId)) {
+        return fail('Insufficient permission to create financial transactions in this district', '42501');
+      }
+      districtId = scopeId;
+    } else {
+      if (!scopeId || !hasPermission(state, actor.id, 'manage_finances', scopeId)) {
+        return fail('Insufficient permission to create financial transactions in this branch', '42501');
+      }
+      const branch = state.branches.find(b => b.id === scopeId && b.status !== 'inactive' && b.status !== 'archived');
+      if (!branch && (includeScopeMetadata || state.branches.length > 0)) {
+        return fail('Finance branch does not exist or is inactive');
+      }
+      branchId = scopeId;
+      districtId = branch?.district_id ?? null;
+    }
+
+    const type = args.p_document_type as MockFinanceDocumentType;
     const idempotencyKey = String(args.p_idempotency_key || '').trim();
     if (!idempotencyKey) return fail('A transaction idempotency key is required');
     const requestFingerprint = JSON.stringify({
+      ...(includeScopeMetadata ? { scope_type: scopeType, scope_id: scopeId } : { branch_id: branchId }),
       document_type: args.p_document_type,
       transaction_date: args.p_transaction_date,
-      branch_id: branchId,
       profile_id: args.p_profile_id ?? null,
       party_name: String(args.p_party_name || '').trim(),
       amount: Number(args.p_amount),
@@ -175,7 +251,8 @@ export function createMockFinanceRpc(
         document_number: priorDocument.document_number ?? null,
         journal_entry_id: priorJournal?.id ?? priorDocument.journal_entry_id ?? null,
         approval_request_id: priorDocument.approval_request_id ?? null,
-        status: priorDocument.status
+        status: priorDocument.status,
+        ...(includeScopeMetadata ? { scope_type: scopeType, scope_id: scopeId, idempotent_replay: true } : {})
       });
     }
     const amount = Number(args.p_amount);
@@ -195,25 +272,29 @@ export function createMockFinanceRpc(
     if (currency === state.baseCurrencyCode && rate !== 1) return fail('Exchange rate must be 1 for the base currency');
     if (args.p_profile_id && !state.profiles.some(p => p.id === args.p_profile_id)) return fail('Selected member profile does not exist');
     const financialAccount = state.financialAccounts.find(a => a.id === args.p_financial_account_id &&
-      a.is_active && a.currency_code === currency && (a.branch_id === null || a.branch_id === branchId));
-    if (!financialAccount) return fail('Financial account is inactive or incompatible with transaction branch/currency');
+      a.is_active && a.currency_code === currency && matchesHierarchicalScope(a, scopeType, branchId, districtId));
+    if (!financialAccount) return fail('Financial account is inactive or incompatible with transaction scope/currency');
     const cashAccount = state.chartAccounts.find(a => a.id === financialAccount.chart_account_id && a.is_active && a.account_type === 'asset');
     if (!cashAccount) return fail('Financial account must link to an active asset chart account');
     const expectedCategory = type === 'receipt' ? 'income' : 'expense';
     const category = state.chartAccounts.find(a => a.id === args.p_category_account_id && a.is_active &&
       !a.is_control_account && a.account_type === expectedCategory);
     if (!category) return fail('Selected category must be an active, non-control account of the correct type');
-    if (args.p_fund_id && !state.funds.some(f => f.id === args.p_fund_id && f.is_active)) return fail('Selected fund is inactive or does not exist');
+    if (args.p_fund_id && !state.funds.some(f => f.id === args.p_fund_id && f.is_active &&
+      matchesHierarchicalScope(f, scopeType, branchId, districtId))) {
+      return fail('Selected fund is inactive or incompatible with this organizational scope');
+    }
     const period = state.periods.find(p => p.status === 'open' && p.year_status === 'open' && date >= p.start_date && date <= p.end_date);
     if (!period) return fail('No open financial period and year exist for the transaction date');
 
     const baseAmount = round4(amount * rate);
     const policy = state.approvalPolicies
       .filter(p => p.is_active && p.transaction_type === 'financial_document' &&
-        (p.branch_id === null || p.branch_id === branchId) &&
+        matchesHierarchicalScope(p, scopeType, branchId, districtId) &&
         (!p.effective_from || p.effective_from <= new Date().toISOString().slice(0, 10)) &&
         (!p.effective_to || p.effective_to >= new Date().toISOString().slice(0, 10)))
-      .sort((a, b) => Number(b.branch_id !== null) - Number(a.branch_id !== null) ||
+      .sort((a: any, b: any) => Number(b.branch_id != null) - Number(a.branch_id != null) ||
+        Number(b.district_id != null) - Number(a.district_id != null) ||
         Number(b.version || 0) - Number(a.version || 0))[0];
     if (!policy) return fail('No active financial-document approval policy is configured for this scope');
     const selectedBand = state.approvalPolicyBands.find(b => b.policy_id === policy.id &&
@@ -234,10 +315,11 @@ export function createMockFinanceRpc(
     const requestId = policySteps.length ? id(state, 'approval') : null;
     const docStatus = policySteps.length ? 'pending_approval' : 'approved';
     const documentNumber = state.documents.reduce((max, item) => Math.max(max, Number(item.document_number) || 0), 0) + 1;
+    const linkedProfileId = args.p_profile_id ?? null;
     const document = {
       id: documentId, document_number: documentNumber, idempotency_key: idempotencyKey, idempotency_fingerprint: requestFingerprint,
-      document_type: type, transaction_date: date, branch_id: branchId,
-      profile_id: args.p_profile_id ?? null, payee_or_payer_name: party, amount, currency_code: currency,
+      document_type: type, transaction_date: date, branch_id: branchId, district_id: districtId,
+      profile_id: linkedProfileId, payee_or_payer_name: party, amount, currency_code: currency,
       payment_method: method, financial_account_id: financialAccount.id, fund_id: args.p_fund_id ?? null,
       external_reference: String(args.p_external_reference || '').trim() || null,
       description, status: docStatus, created_by_profile_id: actor.id, approval_request_id: requestId,
@@ -245,7 +327,7 @@ export function createMockFinanceRpc(
       journal_entry_id: policySteps.length ? null : journalId
     };
     const journal = {
-      id: journalId, period_id: period.id, branch_id: branchId, entry_date: date,
+      id: journalId, period_id: period.id, branch_id: branchId, district_id: districtId, entry_date: date,
       description, reference: document.external_reference, currency_code: currency,
       exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode,
       source_type: policySteps.length ? 'financial_document_pending' : 'financial_document',
@@ -256,17 +338,17 @@ export function createMockFinanceRpc(
     const lines = [
       { id: id(state, 'line'), journal_entry_id: journalId, line_number: 1, account_id: debitAccount,
         fund_id: type === 'payment' ? args.p_fund_id ?? null : null, branch_id: branchId,
-        profile_id: args.p_profile_id ?? null, description, debit_amount: amount, credit_amount: 0,
+        profile_id: linkedProfileId, description, debit_amount: amount, credit_amount: 0,
         base_debit_amount: baseAmount, base_credit_amount: 0 },
       { id: id(state, 'line'), journal_entry_id: journalId, line_number: 2, account_id: creditAccount,
         fund_id: type === 'receipt' ? args.p_fund_id ?? null : null, branch_id: branchId,
-        profile_id: args.p_profile_id ?? null, description, debit_amount: 0, credit_amount: amount,
+        profile_id: linkedProfileId, description, debit_amount: 0, credit_amount: amount,
         base_debit_amount: 0, base_credit_amount: baseAmount }
     ];
     if (requestId) {
       state.approvalRequests.push({
         id: requestId, transaction_type: 'financial_document', target_id: documentId,
-        branch_id: branchId, status: 'pending', policy_id: policy.id,
+        branch_id: branchId, district_id: districtId, status: 'pending', policy_id: policy.id,
         submitted_by_profile_id: actor.id, amount_base: baseAmount
       });
       state.approvalSteps.push(...policySteps.map(policyStep => ({
@@ -282,8 +364,31 @@ export function createMockFinanceRpc(
     state.journals.push(journal);
     state.journalLines.push(...lines);
     if (persist) storage.save(state);
-    return success({ document_id: documentId, document_number: documentNumber, journal_entry_id: journalId,
-      approval_request_id: requestId, status: docStatus });
+    return success({
+      document_id: documentId,
+      document_number: documentNumber,
+      journal_entry_id: journalId,
+      approval_request_id: requestId,
+      status: docStatus,
+      ...(includeScopeMetadata ? { scope_type: scopeType, scope_id: scopeId, idempotent_replay: false } : {})
+    });
+  }
+
+  function createTransaction(args: Record<string, any>, stateOverride?: MockFinanceState, persist = true) {
+    return createScopedTransaction(
+      {
+        ...args,
+        p_scope_type: args.p_branch_id ? 'branch' : 'church',
+        p_scope_id: args.p_branch_id ?? null
+      },
+      false,
+      stateOverride,
+      persist
+    );
+  }
+
+  function createFinanceScopeDocumentTransaction(args: Record<string, any>) {
+    return createScopedTransaction(args, true);
   }
 
   function decideApproval(args: Record<string, any>) {
@@ -305,7 +410,7 @@ export function createMockFinanceRpc(
       return fail('The submitter cannot approve this request', '42501');
     }
     const requiredPermission = step.required_permission_key || 'approve_finances';
-    if (!hasPermission(state, actor.id, requiredPermission, document.branch_id)) {
+    if (!hasScopePermission(state, actor.id, requiredPermission, document.branch_id ?? null, document.district_id ?? null)) {
       return fail('Approver does not have the required permission', '42501');
     }
     if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
@@ -653,11 +758,6 @@ export function createMockFinanceRpc(
     }) });
   }
 
-  function hasDistrictPermission(state: MockFinanceState, profileId: string, permission: string, districtId: string) {
-    return state.permissions.some(p => p.profile_id === profileId && p.permission === permission &&
-      p.district_id === districtId);
-  }
-
   function getMyFinanceScopes() {
     const state = storage.load();
     const auth = getAuth();
@@ -730,9 +830,45 @@ export function createMockFinanceRpc(
       currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
       chartAccounts: clone(state.chartAccounts),
       financialAccounts: clone(state.financialAccounts.filter(account =>
-        (account.branch_id ?? null) === scope.branchId && (scopeType !== 'branch' || account.branch_id === scope.branchId))),
+        matchesExactScope(account, scopeType, scope.branchId, scope.districtId))),
       funds: clone(state.funds.filter(fund =>
-        (fund.branch_id ?? null) === scope.branchId && (scopeType !== 'branch' || fund.branch_id === scope.branchId))),
+        matchesExactScope(fund, scopeType, scope.branchId, scope.districtId))),
+      financialYears: clone(state.financialYears), periods: clone(state.periods),
+      approvalPolicies: clone(policies),
+      approvalPolicyBands: clone(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id))),
+      approvalPolicySteps: clone(state.approvalPolicySteps.filter(step => bandIds.has(step.band_id)))
+    });
+  }
+
+  function getFinanceScopeTransactionOptions(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return fail(scope.error);
+    const canView = ['view_finances', 'manage_finances', 'approve_finances'].some(permission =>
+      hasScopePermission(state, actor.id, permission, scope.branchId, scope.districtId));
+    if (!canView) return fail('Insufficient permission to view finance transaction options in this scope', '42501');
+    const policies = state.approvalPolicies
+      .filter(policy => policy.transaction_type !== 'requisition' &&
+        matchesHierarchicalScope(policy, scopeType, scope.branchId, scope.districtId))
+      .sort((a: any, b: any) => Number(b.branch_id != null) - Number(a.branch_id != null) ||
+        Number(b.district_id != null) - Number(a.district_id != null) ||
+        Number(b.version || 0) - Number(a.version || 0));
+    const policyIds = new Set(policies.map(policy => policy.id));
+    const bandIds = new Set(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id)).map(band => band.id));
+    return success({
+      scope: { type: scopeType, id: scopeId },
+      currencies: clone(state.currencies), baseCurrencyCode: state.baseCurrencyCode,
+      chartAccounts: clone(state.chartAccounts),
+      financialAccounts: clone(state.financialAccounts.filter(account =>
+        matchesHierarchicalScope(account, scopeType, scope.branchId, scope.districtId))),
+      funds: clone(state.funds.filter(fund =>
+        matchesHierarchicalScope(fund, scopeType, scope.branchId, scope.districtId))),
       financialYears: clone(state.financialYears), periods: clone(state.periods),
       approvalPolicies: clone(policies),
       approvalPolicyBands: clone(state.approvalPolicyBands.filter(band => policyIds.has(band.policy_id))),
@@ -1384,7 +1520,7 @@ export function createMockFinanceRpc(
     );
     return success({
       actor_profile_id: actor.id,
-      documents: visible.map(document => {
+      documents: visible.map((document): Record<string, any> => {
         const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
         const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
           .sort((a, b) => Number(a.step_order) - Number(b.step_order));
@@ -1428,7 +1564,7 @@ export function createMockFinanceRpc(
 
     const journal = state.journals.find(item => item.id === args.p_journal_entry_id);
     if (!journal) return fail('Journal entry not found');
-    if (!hasPermission(state, actor.id, 'post_journals', journal.branch_id ?? null)) {
+    if (!hasScopePermission(state, actor.id, 'post_journals', journal.branch_id ?? null, journal.district_id ?? null)) {
       return fail('Insufficient permission to post journals', '42501');
     }
     if (journal.status === 'posted') {
@@ -1440,7 +1576,9 @@ export function createMockFinanceRpc(
     }
     if (journal.source_type === 'financial_document') {
       const document = state.documents.find(item => item.id === journal.source_id);
-      if (!document || document.status !== 'approved' || document.journal_entry_id !== journal.id) {
+      if (!document || document.status !== 'approved' || document.journal_entry_id !== journal.id ||
+          (document.branch_id ?? null) !== (journal.branch_id ?? null) ||
+          (document.district_id ?? null) !== (journal.district_id ?? null)) {
         return fail('Financial-document journal must be linked to an approved document before posting');
       }
     }
@@ -1506,13 +1644,13 @@ export function createMockFinanceRpc(
     if (!canView) return fail('Insufficient permission to view journal entries in this branch', '42501');
 
     const journals = state.journals.filter(journal => (journal.branch_id ?? null) === branchId)
-      .map(journal => {
+      .map((journal): Record<string, any> => {
         const document = ['financial_document', 'financial_document_pending'].includes(journal.source_type)
           ? state.documents.find(item => item.id === journal.source_id)
           : null;
         const lines = state.journalLines.filter(line => line.journal_entry_id === journal.id)
           .sort((a, b) => Number(a.line_number) - Number(b.line_number))
-          .map(line => {
+          .map((line): Record<string, any> => {
             const account = state.chartAccounts.find(item => item.id === line.account_id);
             return {
               ...clone(line),
@@ -1542,6 +1680,136 @@ export function createMockFinanceRpc(
 
     const balances = new Map<string, any>();
     for (const journal of state.journals.filter(item => item.status === 'posted' && (item.branch_id ?? null) === branchId)) {
+      for (const line of state.journalLines.filter(item => item.journal_entry_id === journal.id)) {
+        const account = state.chartAccounts.find(item => item.id === line.account_id);
+        if (!account) continue;
+        const key = account.id + ':' + journal.base_currency_code;
+        const current = balances.get(key) || {
+          account_id: account.id, account_code: account.code ?? '', account_name: account.name ?? '',
+          account_type: account.account_type, normal_balance: account.normal_balance ?? null,
+          base_currency_code: journal.base_currency_code, debit_total: 0, credit_total: 0
+        };
+        current.debit_total += Number(line.base_debit_amount || 0);
+        current.credit_total += Number(line.base_credit_amount || 0);
+        balances.set(key, current);
+      }
+    }
+    const accountBalances = [...balances.values()].map(item => ({
+      ...item, net_debit_balance: item.debit_total - item.credit_total
+    })).sort((a, b) => String(a.account_code).localeCompare(String(b.account_code)));
+
+    return success({ actor_profile_id: actor.id, journals, account_balances: accountBalances });
+  }
+
+  function getFinanceScopeDocuments(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return fail(scope.error);
+    const canView = ['view_finances', 'manage_finances', 'approve_finances'].some(permission =>
+      hasScopePermission(state, actor.id, permission, scope.branchId, scope.districtId));
+    if (!canView) return fail('Insufficient permission to view financial documents in this scope', '42501');
+    const visible = state.documents.filter(document =>
+      ['receipt', 'payment'].includes(document.document_type) &&
+      matchesExactScope(document, scopeType, scope.branchId, scope.districtId));
+    return success({
+      actor_profile_id: actor.id,
+      documents: visible.map((document): Record<string, any> => {
+        const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
+        const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
+          .sort((a, b) => Number(a.step_order) - Number(b.step_order));
+        const actorStep = steps.find(step => step.status === 'pending' &&
+          (!step.prohibit_submitter_approval || request?.submitted_by_profile_id !== actor.id) &&
+          !state.approvalDecisions.some(decision =>
+            decision.approval_request_step_id === step.id && decision.approver_profile_id === actor.id) &&
+          !steps.some(prior => prior.step_order < step.step_order && prior.status !== 'approved') &&
+          hasScopePermission(state, actor.id, step.required_permission_key || 'approve_finances',
+            document.branch_id ?? null, document.district_id ?? null));
+        return {
+          ...clone(document),
+          district_id: document.district_id ?? null,
+          approval_request_id: request?.id ?? null,
+          approval_status: request?.status ?? null,
+          approval_steps: steps.map(step => {
+            const decisions = state.approvalDecisions.filter(decision => decision.approval_request_step_id === step.id);
+            const latestDecision = decisions.sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at)))[0];
+            return {
+              id: step.id, step_order: step.step_order,
+              approver_profile_id: latestDecision?.approver_profile_id ?? null,
+              required_approvals: Number(step.required_approvals || 1),
+              approvals_received: decisions.filter(decision => decision.decision === 'approved').length,
+              status: step.status, decision: latestDecision?.decision ?? null,
+              comments: latestDecision?.comments ?? null
+            };
+          }),
+          actor_approval_step_id: actorStep?.id ?? null,
+          approval_steps_completed: steps.filter(step => step.status === 'approved').length,
+          approval_steps_total: steps.length
+        };
+      }).sort((a, b) => String(b.transaction_date).localeCompare(String(a.transaction_date)) ||
+        String(b.id).localeCompare(String(a.id)))
+    });
+  }
+
+  function getFinanceScopeJournals(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return fail(scope.error);
+    const canView = ['view_finances', 'manage_finances', 'approve_finances', 'post_journals'].some(permission =>
+      hasScopePermission(state, actor.id, permission, scope.branchId, scope.districtId));
+    if (!canView) return fail('Insufficient permission to view journal entries in this scope', '42501');
+
+    const journals = state.journals
+      .filter(journal => matchesExactScope(journal, scopeType, scope.branchId, scope.districtId))
+      .map((journal): Record<string, any> => {
+        const document = ['financial_document', 'financial_document_pending'].includes(journal.source_type)
+          ? state.documents.find(item => item.id === journal.source_id)
+          : null;
+        const lines = state.journalLines.filter(line => line.journal_entry_id === journal.id)
+          .sort((a, b) => Number(a.line_number) - Number(b.line_number))
+          .map((line): Record<string, any> => {
+            const account = state.chartAccounts.find(item => item.id === line.account_id);
+            return {
+              ...clone(line),
+              account_code: account?.code ?? null,
+              account_name: account?.name ?? 'Unknown account',
+              account_type: account?.account_type ?? null,
+              normal_balance: account?.normal_balance ?? null
+            };
+          });
+        const canPost = journal.status === 'draft'
+          && journal.source_type !== 'financial_document_pending'
+          && hasScopePermission(state, actor.id, 'post_journals', journal.branch_id ?? null, journal.district_id ?? null)
+          && (journal.source_type !== 'financial_document'
+            || (document?.status === 'approved' && document.journal_entry_id === journal.id));
+        return {
+          ...clone(journal),
+          district_id: journal.district_id ?? null,
+          source_document_status: document?.status ?? null,
+          can_post: canPost,
+          total_debits: lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0),
+          total_credits: lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0),
+          base_total_debits: lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0),
+          base_total_credits: lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0),
+          lines
+        };
+      })
+      .sort((a, b) => String(b.entry_date).localeCompare(String(a.entry_date)) || String(b.id).localeCompare(String(a.id)));
+
+    const balances = new Map<string, any>();
+    for (const journal of state.journals.filter(item =>
+      item.status === 'posted' && matchesExactScope(item, scopeType, scope.branchId, scope.districtId))) {
       for (const line of state.journalLines.filter(item => item.journal_entry_id === journal.id)) {
         const account = state.chartAccounts.find(item => item.id === line.account_id);
         if (!account) continue;
@@ -1878,7 +2146,8 @@ export function createMockFinanceRpc(
     const scopedBandIds = new Set(config.approvalPolicyBands.map((band: any) => band.id));
     state.approvalPolicies = [
       ...state.approvalPolicies.filter(policy =>
-        !scopedPolicyIds.has(policy.id) && (policy.branch_id ?? null) !== branchId),
+        !scopedPolicyIds.has(policy.id) &&
+        ((policy.branch_id ?? null) !== branchId || (policy.district_id ?? null) !== null)),
       ...clone(config.approvalPolicies).map((policy: any) => ({
         ...policy,
         min_amount: Math.min(...config.approvalPolicyBands.filter((band: any) => band.policy_id === policy.id).map((band: any) => Number(band.min_amount_base)), 0),
@@ -1906,6 +2175,7 @@ export function createMockFinanceRpc(
         if (name === 'get_my_finance_scopes') return getMyFinanceScopes();
         if (name === 'get_finance_configuration') return getFinanceConfiguration(args);
         if (name === 'get_finance_scope_configuration') return getFinanceScopeConfiguration(args);
+        if (name === 'get_finance_scope_transaction_options') return getFinanceScopeTransactionOptions(args);
         if (name === 'save_finance_scope_resources') return saveFinanceScopeResources(args);
         if (name === 'save_finance_scope_approval_policies') return saveFinanceScopeApprovalPolicies(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
@@ -1923,10 +2193,13 @@ export function createMockFinanceRpc(
         if (name === 'create_event_budget_payment') return createEventBudgetPayment(args);
         if (name === 'get_event_budgets') return getEventBudgets(args);
         if (name === 'get_finance_documents') return getFinanceDocuments(args);
+        if (name === 'get_finance_scope_documents') return getFinanceScopeDocuments(args);
         if (name === 'get_finance_journals') return getFinanceJournals(args);
+        if (name === 'get_finance_scope_journals') return getFinanceScopeJournals(args);
         if (name === 'post_finance_journal_entry') return postJournalEntry(args);
         if (name === 'save_finance_configuration') return saveFinanceConfiguration(args);
         if (name === 'create_financial_document_transaction_idempotent') return createTransaction(args);
+        if (name === 'create_finance_scope_document_transaction') return createFinanceScopeDocumentTransaction(args);
         if (name === 'decide_financial_document_approval') return decideApproval(args);
         if (name === 'post_journal_entry') return postJournalEntry(args);
         return fail(`Mock RPC function not implemented: ${name}`);

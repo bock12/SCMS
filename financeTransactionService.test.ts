@@ -2,9 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
 import {
   createFinancialDocumentTransaction,
+  createScopedFinancialDocumentTransaction,
   decideFinancialDocumentApproval,
   type CreateFinancialDocumentTransactionInput
 } from './financeTransactionService';
+import { getFinanceScopeTransactionOptions } from './financeConfigurationService';
+import { getScopedFinanceWorkflowDocuments } from './financeDocumentWorkflowService';
+import { getScopedFinanceJournalLedger } from './financeJournalService';
 
 const baseInput: CreateFinancialDocumentTransactionInput = {
   documentType: 'receipt',
@@ -440,3 +444,175 @@ describe('financial document approval and rejection lifecycle', () => {
     expect(flow.getState().documents[0].status).toBe('rejected');
   });
 });
+
+describe('scoped finance service contracts and lifecycle', () => {
+  test('maps church, district and branch inputs to create_finance_scope_document_transaction', async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const client = {
+      async rpc(name: string, args: Record<string, unknown>) {
+        calls.push({ name, args });
+        return {
+          data: {
+            document_id: 'doc-scoped-1',
+            document_number: 7,
+            journal_entry_id: 'je-scoped-1',
+            approval_request_id: 'req-scoped-1',
+            status: 'pending_approval',
+            scope_type: args.p_scope_type,
+            scope_id: args.p_scope_id
+          },
+          error: null
+        };
+      }
+    };
+
+    const districtRes = await createScopedFinancialDocumentTransaction({
+      scope: { type: 'district', id: 'district-1' },
+      documentType: 'payment',
+      transactionDate: '2026-11-22',
+      partyName: '  District Vendor  ',
+      amount: 500,
+      currencyCode: ' sle ',
+      paymentMethod: 'bank_transfer',
+      financialAccountId: 'district-bank-1',
+      categoryAccountId: 'expense-1',
+      description: '  District conference venue  ',
+      idempotencyKey: '00000000-0000-4000-8000-000000000010'
+    }, client as any);
+
+    expect(districtRes.error).toBeNull();
+    expect(calls[0].name).toBe('create_finance_scope_document_transaction');
+    expect(calls[0].args).toEqual({
+      p_scope_type: 'district',
+      p_scope_id: 'district-1',
+      p_document_type: 'payment',
+      p_transaction_date: '2026-11-22',
+      p_profile_id: null,
+      p_party_name: 'District Vendor',
+      p_amount: 500,
+      p_currency_code: 'SLE',
+      p_payment_method: 'bank_transfer',
+      p_financial_account_id: 'district-bank-1',
+      p_category_account_id: 'expense-1',
+      p_fund_id: null,
+      p_external_reference: null,
+      p_description: 'District conference venue',
+      p_exchange_rate_to_base: 1,
+      p_idempotency_key: '00000000-0000-4000-8000-000000000010'
+    });
+
+    await getFinanceScopeTransactionOptions({ type: 'church', id: null }, client as any);
+    await getScopedFinanceWorkflowDocuments({ type: 'district', id: 'district-1' }, client as any);
+    await getScopedFinanceJournalLedger({ type: 'branch', id: 'branch-1' }, client as any);
+
+    expect(calls.slice(1).map(c => ({ name: c.name, args: c.args }))).toEqual([
+      { name: 'get_finance_scope_transaction_options', args: { p_scope_type: 'church', p_scope_id: null } },
+      { name: 'get_finance_scope_documents', args: { p_scope_type: 'district', p_scope_id: 'district-1' } },
+      { name: 'get_finance_scope_journals', args: { p_scope_type: 'branch', p_scope_id: 'branch-1' } }
+    ]);
+  });
+
+  test('executes church-wide and district receipt/payment lifecycle end-to-end with scope isolation', async () => {
+    const initial: MockFinanceState = {
+      ...createEmptyMockFinanceState(),
+      profiles: [
+        { id: 'church-officer', auth_user_id: 'user-church', branch_id: null },
+        { id: 'district-officer', auth_user_id: 'user-district', branch_id: 'branch-1' },
+        { id: 'district-approver', auth_user_id: 'user-district-approver', branch_id: 'branch-1' }
+      ],
+      permissions: [
+        { profile_id: 'church-officer', permission: 'manage_finances', branch_id: null, district_id: null },
+        { profile_id: 'church-officer', permission: 'view_finances', branch_id: null, district_id: null },
+        { profile_id: 'church-officer', permission: 'post_journals', branch_id: null, district_id: null },
+        { profile_id: 'church-officer', permission: 'approve_finances', branch_id: null, district_id: null },
+        { profile_id: 'district-officer', permission: 'manage_finances', branch_id: null, district_id: 'district-1' },
+        { profile_id: 'district-officer', permission: 'view_finances', branch_id: null, district_id: 'district-1' },
+        { profile_id: 'district-officer', permission: 'post_journals', branch_id: null, district_id: 'district-1' },
+        { profile_id: 'district-approver', permission: 'approve_finances', branch_id: null, district_id: 'district-1' }
+      ],
+      districts: [{ id: 'district-1', name: 'Western District', status: 'active' }],
+      branches: [{ id: 'branch-1', district_id: 'district-1', name: 'Main Branch', status: 'active' }],
+      currencies: ['SLE'],
+      baseCurrencyCode: 'SLE',
+      chartAccounts: [
+        { id: 'bank-chart', code: '1100', name: 'Bank', account_type: 'asset', normal_balance: 'debit', is_active: true },
+        { id: 'income-chart', code: '4000', name: 'District Remittance', account_type: 'income', normal_balance: 'credit', is_active: true },
+        { id: 'expense-chart', code: '5000', name: 'District Operations', account_type: 'expense', normal_balance: 'debit', is_active: true }
+      ],
+      financialAccounts: [
+        { id: 'church-bank', branch_id: null, district_id: null, name: 'HQ Bank', account_type: 'bank', currency_code: 'SLE', is_active: true, chart_account_id: 'bank-chart' },
+        { id: 'district-bank', branch_id: null, district_id: 'district-1', name: 'District Bank', account_type: 'bank', currency_code: 'SLE', is_active: true, chart_account_id: 'bank-chart' }
+      ],
+      financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      periods: [{ id: 'period-1', financial_year_id: 'fy-2026', name: '2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }],
+      approvalPolicies: [
+        { id: 'church-policy', name: 'HQ Policy', transaction_type: 'financial_document', branch_id: null, district_id: null, version: 1, effective_from: '2026-01-01', is_active: true },
+        { id: 'district-policy', name: 'District Policy', transaction_type: 'financial_document', branch_id: null, district_id: 'district-1', version: 1, effective_from: '2026-01-01', is_active: true }
+      ],
+      approvalPolicyBands: [
+        { id: 'church-band', policy_id: 'church-policy', min_amount_base: 0, max_amount_base: null },
+        { id: 'district-band', policy_id: 'district-policy', min_amount_base: 0, max_amount_base: null }
+      ],
+      approvalPolicySteps: [
+        { id: 'church-step', band_id: 'church-band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+        { id: 'district-step', band_id: 'district-band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    };
+
+    let current = structuredClone(initial);
+    let authUserId: string | null = 'user-district';
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: authUserId }));
+
+    const createdDistrictReceipt = await createScopedFinancialDocumentTransaction({
+      scope: { type: 'district', id: 'district-1' },
+      documentType: 'receipt',
+      transactionDate: '2026-11-22',
+      partyName: 'Branch Remittance',
+      amount: 400,
+      currencyCode: 'SLE',
+      paymentMethod: 'bank_transfer',
+      financialAccountId: 'district-bank',
+      categoryAccountId: 'income-chart',
+      description: 'District monthly assessment',
+      idempotencyKey: '00000000-0000-4000-8000-000000000020'
+    }, client);
+
+    expect(createdDistrictReceipt.error).toBeNull();
+    expect(createdDistrictReceipt.data?.scope_type).toBe('district');
+    expect(createdDistrictReceipt.data?.scope_id).toBe('district-1');
+
+    authUserId = 'user-district-approver';
+    const districtDocs = await getScopedFinanceWorkflowDocuments({ type: 'district', id: 'district-1' }, client);
+    expect(districtDocs.error).toBeNull();
+    expect(districtDocs.data?.documents).toHaveLength(1);
+    const stepId = districtDocs.data!.documents[0].actor_approval_step_id!;
+    expect(stepId).toBeTruthy();
+
+    const approved = await decideFinancialDocumentApproval({ requestStepId: stepId, decision: 'approved' }, client);
+    expect(approved.error).toBeNull();
+    expect(approved.data?.approval_status).toBe('approved');
+
+    authUserId = 'user-district';
+    const posted = await client.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: createdDistrictReceipt.data!.journal_entry_id
+    });
+    expect(posted.error).toBeNull();
+    expect(posted.data.status).toBe('posted');
+
+    const districtLedger = await getScopedFinanceJournalLedger({ type: 'district', id: 'district-1' }, client);
+    expect(districtLedger.error).toBeNull();
+    expect(districtLedger.data?.journals).toHaveLength(1);
+    expect(districtLedger.data?.account_balances.find(row => row.account_id === 'income-chart')?.credit_total).toBe(400);
+
+    // Church scope ledger must remain isolated from district transactions
+    authUserId = 'user-church';
+    const churchLedger = await getScopedFinanceJournalLedger({ type: 'church', id: null }, client);
+    expect(churchLedger.error).toBeNull();
+    expect(churchLedger.data?.journals).toHaveLength(0);
+    expect(churchLedger.data?.account_balances).toHaveLength(0);
+  });
+});
+
