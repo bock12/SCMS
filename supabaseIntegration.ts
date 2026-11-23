@@ -15,9 +15,13 @@ const publishableKey = (
 );
 
 const integrationMode = import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowerCase() ?? '';
+// Database integration and authentication are intentionally independent during development.
+// Mock login remains the default until real Supabase Auth is explicitly enabled.
+const authMode = import.meta.env.VITE_SUPABASE_AUTH?.trim().toLowerCase() ?? '';
 export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
 export const supabaseIntegrationEnabled =
   integrationMode === 'enabled' || integrationMode === 'finance';
+export const supabaseAuthEnabled = authMode === 'enabled';
 
 if (supabaseIntegrationEnabled && !isSupabaseConfigured) {
   console.warn(
