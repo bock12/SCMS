@@ -1814,7 +1814,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     try {
       const [directoryRows, branchRes] = await Promise.all([
         getMembers(),
-        supabase.from('church_branches').select('*').order('name', { ascending: true })
+        (supabaseIntegrationEnabled && supabaseDataClient
+          ? supabaseDataClient
+          : supabase).from('church_branches').select('*').order('name', { ascending: true })
       ]);
       setMembers(directoryRows);
       if (branchRes.data) setBranches(branchRes.data as ChurchBranch[]);
@@ -1897,6 +1899,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const handleUnifiedSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (supabaseIntegrationEnabled) {
+      setFormError('Member directory is connected in read-only mode while the secure member write API is being completed. No changes have been saved.');
+      return;
+    }
     setFormSaving(true);
     setFormError('');
 
@@ -1978,6 +1984,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleTogglePortalSuspend = async (person: Profile) => {
+    if (supabaseIntegrationEnabled) {
+      showToast('error', 'Portal account changes require the secure member administration API, which is not yet enabled in the live database.');
+      return;
+    }
     const currentStatus = person.status || 'active';
     const nextStatus: PortalAccountStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
     try {
@@ -1995,6 +2005,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleToggleArchiveMembership = async (person: Profile) => {
+    if (supabaseIntegrationEnabled) {
+      showToast('error', 'Membership changes require the secure member administration API, which is not yet enabled in the live database.');
+      return;
+    }
     const currentMembership = person.membership_status || 'active';
     const nextMembership: MembershipStatus = currentMembership === 'archived' ? 'active' : 'archived';
     try {
@@ -2012,6 +2026,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleEnablePortalFromCard = async (person: Profile) => {
+    if (supabaseIntegrationEnabled) {
+      showToast('error', 'Portal invitations must be created by the secure server-side provisioning workflow; this action is not yet enabled.');
+      return;
+    }
     if (!person.email?.trim()) {
       openEditModal(person);
       setFormEnablePortal(true);
@@ -2034,6 +2052,10 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleDisablePortalFromCard = async (person: Profile) => {
+    if (supabaseIntegrationEnabled) {
+      showToast('error', 'Portal revocation requires the secure server-side provisioning workflow; this action is not yet enabled.');
+      return;
+    }
     try {
       const updated = await disablePortalAccess(person.id);
       setMembers(prev => prev.map(p => (p.id === person.id ? updated : p)));
