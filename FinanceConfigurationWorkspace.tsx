@@ -110,6 +110,66 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setChartCode(''); setChartName('');
   };
 
+  const queueStandardOperationalAccounts = () => {
+    setError(null);
+    setNotice(null);
+    if (!configuration.currencies.includes('SLE')) {
+      setError('SLE is not available in the active currency list. Add or activate SLE before creating operational accounts.');
+      return;
+    }
+
+    const standardAccounts = [
+      { account_type: 'cash' as const, name: 'Cash on Hand', chartCode: '1010' },
+      { account_type: 'bank' as const, name: 'Bank Account', chartCode: '1020' },
+      { account_type: 'mobile_money' as const, name: 'Mobile-Money Account', chartCode: '1030' }
+    ];
+    const queuedTypes = new Set(configuration.financialAccounts
+      .filter(account => account.is_active && account.currency_code === 'SLE' &&
+        (scope?.type === 'branch'
+          ? account.branch_id === scope.id && !account.district_id
+          : scope?.type === 'district'
+            ? account.branch_id === null && account.district_id === scope.id
+            : account.branch_id === null && !account.district_id))
+      .map(account => account.account_type));
+    const missing = standardAccounts.filter(account => !queuedTypes.has(account.account_type));
+    if (missing.length === 0) {
+      setNotice('All three standard SLE operational account types are already configured in this scope.');
+      return;
+    }
+
+    const unresolved = missing.filter(account => !configuration.chartAccounts.some(chart =>
+      chart.code === account.chartCode && chart.account_type === 'asset' &&
+      chart.is_active && !chart.is_control_account
+    ));
+    if (unresolved.length) {
+      setError(`Cannot add standard accounts until these active non-control asset chart accounts are available: ${unresolved.map(item => item.chartCode).join(', ')}.`);
+      return;
+    }
+
+    const queued = missing.map(account => {
+      const chart = configuration.chartAccounts.find(item =>
+        item.code === account.chartCode && item.account_type === 'asset' &&
+        item.is_active && !item.is_control_account
+      )!;
+      return {
+        id: makeId('fin-account'),
+        chart_account_id: chart.id,
+        branch_id: scope ? (scope.type === 'branch' ? scope.id : null) : branchId,
+        district_id: scope?.type === 'district' ? scope.id : null,
+        name: account.name,
+        account_type: account.account_type,
+        currency_code: 'SLE',
+        provider_name: null,
+        account_reference: null,
+        is_active: true
+      };
+    });
+
+    update({ financialAccounts: [...configuration.financialAccounts, ...queued] });
+    setAccountCurrency('SLE');
+    setNotice(`Queued ${queued.length} standard SLE operational account(s). Click Save configuration to persist them to this scope.`);
+  };
+
   const addFinancialAccount = () => {
     if (!accountName.trim() || !accountCurrency || !accountChartId) return;
     update({ financialAccounts: [...configuration.financialAccounts, {
@@ -420,7 +480,13 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h3 className="font-black text-slate-900">Financial accounts</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-black text-slate-900">Financial accounts</h3>
+          <button type="button" className={buttonClass} onClick={queueStandardOperationalAccounts}>
+            <Plus size={14} /> Add standard SLE accounts
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">Adds missing Cash on Hand, Bank Account and Mobile-Money Account records for this exact scope, mapped to chart accounts 1010, 1020 and 1030. Provider details are optional and can be added separately.</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <input className={fieldClass} placeholder="Account name (e.g. Main Branch Cash)" value={accountName} onChange={e => setAccountName(e.target.value)} />
           <select className={fieldClass} value={accountType} onChange={e => setAccountType(e.target.value as typeof accountType)}>{['cash','bank','mobile_money','clearing'].map(type => <option key={type} value={type}>{type === 'mobile_money' ? 'Mobile money' : type === 'cash' ? 'Cash on hand' : type === 'bank' ? 'Bank account' : 'Clearing'}</option>)}</select>
