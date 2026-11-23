@@ -1,6 +1,7 @@
 import type { AppRole, MembershipStatus, PortalAccountStatus, Profile } from './types';
 import { mapCanonicalProfileToProfile, mapProfileInputToCanonicalInsert, mapProfileInputToCanonicalUpdate } from './memberProfileMapper';
 import { supabase } from './supabaseClient';
+import { supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
 
 function createUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -97,6 +98,33 @@ export function hasPortalAccess(person: Pick<Profile, 'auth_user_id'> | null | u
  * Includes all church members whether or not they have portal login access.
  */
 export async function getMembers(): Promise<Profile[]> {
+  if (supabaseIntegrationEnabled) {
+    if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+    const { data, error } = await supabaseDataClient
+      .from('profiles')
+      .select('*')
+      .order('first_name', { ascending: true });
+    if (error) throw error;
+
+    const profiles = (data || []).map(row => toDirectoryProfile(row));
+    const assignments = await Promise.all(profiles.map(async person => {
+      const { data: roleRows, error: roleError } = await supabaseDataClient
+        .from('profile_role_assignments')
+        .select('roles(name)')
+        .eq('profile_id', person.id)
+        .eq('is_active', true);
+      if (roleError) {
+        console.warn('Unable to load member role assignment:', roleError);
+        return person;
+      }
+      const roleName = (roleRows || [])
+        .map((item: any) => Array.isArray(item.roles) ? item.roles[0]?.name : item.roles?.name)
+        .find((name: string | undefined) => Boolean(name));
+      return roleName ? { ...person, primary_role: roleName as AppRole } : person;
+    }));
+    return assignments;
+  }
+
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
