@@ -107,22 +107,27 @@ export async function getMembers(): Promise<Profile[]> {
     if (error) throw error;
 
     const profiles = (data || []).map(row => toDirectoryProfile(row));
-    const assignments = await Promise.all(profiles.map(async person => {
-      const { data: roleRows, error: roleError } = await supabaseDataClient
-        .from('profile_role_assignments')
-        .select('roles(name)')
-        .eq('profile_id', person.id)
-        .eq('is_active', true);
-      if (roleError) {
-        console.warn('Unable to load member role assignment:', roleError);
-        return person;
+    if (profiles.length === 0) return [];
+    const { data: roleRows, error: roleError } = await supabaseDataClient
+      .from('profile_role_assignments')
+      .select('profile_id,roles(name)')
+      .in('profile_id', profiles.map(person => person.id))
+      .eq('is_active', true);
+    if (roleError) console.warn('Unable to load member role assignments:', roleError);
+
+    const roleByProfile = new Map<string, AppRole>();
+    for (const item of roleRows || []) {
+      const role = Array.isArray((item as any).roles)
+        ? (item as any).roles[0]?.name
+        : (item as any).roles?.name;
+      if (role && !roleByProfile.has(item.profile_id)) {
+        roleByProfile.set(item.profile_id, role as AppRole);
       }
-      const roleName = (roleRows || [])
-        .map((item: any) => Array.isArray(item.roles) ? item.roles[0]?.name : item.roles?.name)
-        .find((name: string | undefined) => Boolean(name));
-      return roleName ? { ...person, primary_role: roleName as AppRole } : person;
+    }
+    return profiles.map(person => ({
+      ...person,
+      primary_role: roleByProfile.get(person.id) || 'member'
     }));
-    return assignments;
   }
 
   const { data, error } = await supabase
