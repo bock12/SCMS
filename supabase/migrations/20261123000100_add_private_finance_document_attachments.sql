@@ -88,10 +88,6 @@ with check (
             and private.has_permission('manage_finances', null))
       )
   )
-  and exists (
-    select 1 from storage.objects o
-    where o.bucket_id = bucket_id and o.name = object_path
-  )
 );
 
 drop policy if exists finance_document_attachments_delete on public.financial_document_attachments;
