@@ -207,51 +207,6 @@ const initialProfiles: Profile[] = [
     baptized_by: 'Rev. Sarah Johnson'
   },
   {
-    id: 'usr-role-admin-1',
-    auth_user_id: 'usr-role-admin-1',
-    branch_id: 'branch-1',
-    first_name: 'Daniel',
-    last_name: 'Williams',
-    email: 'churchadmin@faithconnect.church',
-    phone: '+232 76 000 001',
-    gender: 'male',
-    primary_role: 'admin',
-    status: 'active',
-    membership_status: 'active',
-    membership_date: '2024-02-01',
-    created_at: '2024-02-01T00:00:00.000Z'
-  },
-  {
-    id: 'usr-finance-1',
-    auth_user_id: 'usr-finance-1',
-    branch_id: 'branch-1',
-    first_name: 'Esther',
-    last_name: 'Kamara',
-    email: 'finance@faithconnect.church',
-    phone: '+232 76 000 002',
-    gender: 'female',
-    primary_role: 'finance_officer',
-    status: 'active',
-    membership_status: 'active',
-    membership_date: '2024-02-02',
-    created_at: '2024-02-02T00:00:00.000Z'
-  },
-  {
-    id: 'usr-worker-1',
-    auth_user_id: 'usr-worker-1',
-    branch_id: 'branch-1',
-    first_name: 'Joseph',
-    last_name: 'Conteh',
-    email: 'worker@faithconnect.church',
-    phone: '+232 76 000 003',
-    gender: 'male',
-    primary_role: 'worker',
-    status: 'active',
-    membership_status: 'active',
-    membership_date: '2024-02-03',
-    created_at: '2024-02-03T00:00:00.000Z'
-  },
-  {
     id: 'mem-6',
     auth_user_id: null,
     branch_id: 'branch-2',
@@ -915,15 +870,15 @@ function getStoredUsersRaw(): Record<string, { id: string; email: string; passwo
     },
     'churchadmin@faithconnect.church': {
       id: 'usr-role-admin-1', email: 'churchadmin@faithconnect.church', password: 'password123',
-      user_metadata: { first_name: 'Daniel', last_name: 'Williams' }
+      user_metadata: { first_name: 'Daniel', last_name: 'Williams', primary_role: 'admin' }
     },
     'finance@faithconnect.church': {
       id: 'usr-finance-1', email: 'finance@faithconnect.church', password: 'password123',
-      user_metadata: { first_name: 'Esther', last_name: 'Kamara' }
+      user_metadata: { first_name: 'Esther', last_name: 'Kamara', primary_role: 'finance_officer' }
     },
     'worker@faithconnect.church': {
       id: 'usr-worker-1', email: 'worker@faithconnect.church', password: 'password123',
-      user_metadata: { first_name: 'Joseph', last_name: 'Conteh' }
+      user_metadata: { first_name: 'Joseph', last_name: 'Conteh', primary_role: 'worker' }
     }
   };
 
@@ -1224,44 +1179,8 @@ function loadLocalDatabase() {
         migratedLegacyRoleAssignments = true;
       }
 
-      // Restore the fixed development identities and their role assignments
-      // into existing browser databases without replacing user data.
-      let restoredMockRoleProfiles = false;
-      const seededLoginProfiles = initialProfiles.filter(profile => profile.auth_user_id);
-      const existingProfileIds = new Set((parsed.profiles || []).map((profile: any) => profile.id));
-      const existingProfileEmails = new Set((parsed.profiles || []).map((profile: any) => (profile.email || '').toLowerCase()));
-      for (const seedProfile of seededLoginProfiles) {
-        if (!existingProfileIds.has(seedProfile.id) && !existingProfileEmails.has(seedProfile.email.toLowerCase())) {
-          parsed.profiles.push(sanitizeProfileRecord(seedProfile));
-          existingProfileIds.add(seedProfile.id);
-          existingProfileEmails.add(seedProfile.email.toLowerCase());
-          restoredMockRoleProfiles = true;
-        }
-      }
-      const assignmentKeys = new Set((parsed.profile_role_assignments || []).map((item: any) => `${item.profile_id}:${item.role_id}`));
-      const seededRoleIdsByName = new Map((parsed.roles || []).map((role: any) => [role.name, role.id]));
-      for (const seedProfile of seededLoginProfiles) {
-        const roleId = seededRoleIdsByName.get(seedProfile.primary_role);
-        if (existingProfileIds.has(seedProfile.id) && roleId && !assignmentKeys.has(`${seedProfile.id}:${roleId}`)) {
-          parsed.profile_role_assignments.push({
-            id: `mock-assignment-${seedProfile.id}`,
-            profile_id: seedProfile.id,
-            role_id: roleId,
-            scope_type: 'church',
-            branch_id: null,
-            district_id: null,
-            assigned_by_profile_id: 'usr-admin-1',
-            assigned_at: seedProfile.created_at,
-            expires_at: null,
-            is_active: true
-          });
-          assignmentKeys.add(`${seedProfile.id}:${roleId}`);
-          restoredMockRoleProfiles = true;
-        }
-      }
-
       const migrated = migrateUnifiedDirectoryData(parsed);
-      if (migrated.changed || migratedLegacyRoleAssignments || seededMinistryMembers || restoredMockRoleProfiles) {
+      if (migrated.changed || migratedLegacyRoleAssignments || seededMinistryMembers) {
         saveLocalDatabase(migrated.db);
       }
       return migrated.db;
@@ -2131,9 +2050,48 @@ const localAuth = {
     }
 
     localDb = loadLocalDatabase();
-    const matchingProfile = (localDb.profiles || []).find(
+    let matchingProfile = (localDb.profiles || []).find(
       (p: any) => p.auth_user_id === user.id
     );
+    if (!matchingProfile && ['admin', 'finance_officer', 'worker'].includes(user.user_metadata?.primary_role)) {
+      const roleName = user.user_metadata.primary_role;
+      const role = (localDb.roles || []).find((item: any) => item.name === roleName && item.is_active);
+      if (role) {
+        const now = new Date().toISOString();
+        matchingProfile = sanitizeProfileRecord({
+          id: user.id,
+          auth_user_id: user.id,
+          branch_id: localDb.church_branches?.[0]?.id || 'branch-1',
+          first_name: user.user_metadata.first_name || 'Demo',
+          last_name: user.user_metadata.last_name || roleName,
+          email: user.email,
+          phone: '',
+          primary_role: roleName,
+          status: 'active',
+          portal_access_status: 'active',
+          membership_status: 'active',
+          membership_date: now.slice(0, 10),
+          created_at: now
+        });
+        localDb.profiles = [...(localDb.profiles || []), matchingProfile];
+        localDb.profile_role_assignments = [
+          ...(localDb.profile_role_assignments || []),
+          {
+            id: `mock-assignment-${user.id}`,
+            profile_id: user.id,
+            role_id: role.id,
+            scope_type: 'church',
+            branch_id: null,
+            district_id: null,
+            assigned_by_profile_id: 'usr-admin-1',
+            assigned_at: now,
+            expires_at: null,
+            is_active: true
+          }
+        ];
+        saveLocalDatabase(localDb);
+      }
+    }
     if (!matchingProfile) {
       return {
         data: { user: null, session: null },
