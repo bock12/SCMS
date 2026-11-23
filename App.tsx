@@ -10,6 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
+import { supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
 import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import {
@@ -666,7 +667,8 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   initialEmail = '',
   onClose
 }) => {
-  const [isSignUp, setIsSignUp] = useState(initialSignUp);
+  const [isSignUp, setIsSignUp] = useState(supabaseIntegrationEnabled ? false : initialSignUp);
+  const authClient: any = supabaseIntegrationEnabled ? supabaseDataClient : supabase;
   const [isSetupMode, setIsSetupMode] = useState(Boolean(initialSetupToken));
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
@@ -687,7 +689,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
       setSetupToken(initialSetupToken);
       if (initialEmail) setEmail(initialEmail);
     } else {
-      setIsSignUp(initialSignUp);
+      setIsSignUp(supabaseIntegrationEnabled ? false : initialSignUp);
     }
   }, [initialSignUp, initialSetupToken, initialEmail]);
 
@@ -706,7 +708,9 @@ export const AuthCard: React.FC<AuthCardProps> = ({
     setSuccessMsg(null);
 
     try {
-      if (isSetupMode) {
+      if (isSetupMode && supabaseIntegrationEnabled) {
+        throw new Error('Portal activation is managed by an administrator. Ask an administrator to provision your account and send a secure sign-in link.');
+      } else if (isSetupMode) {
         const { error: setupErr } = await supabase.auth.completePasswordSetup({
           email: email.trim(),
           setupToken: setupToken.trim(),
@@ -719,6 +723,8 @@ export const AuthCard: React.FC<AuthCardProps> = ({
           if (onClose) onClose();
           navigate('/portal');
         }, 700);
+      } else if (isSignUp && supabaseIntegrationEnabled) {
+        throw new Error('Public account registration is disabled. Ask a church administrator to create your member record and provision portal access.');
       } else if (isSignUp) {
         const { error: signUpErr } = await supabase.auth.signUp({
           email: email.trim(),
@@ -742,7 +748,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
           navigate('/portal');
         }, 800);
       } else {
-        const { error: signInErr } = await supabase.auth.signInWithPassword({
+        const { error: signInErr } = await authClient.auth.signInWithPassword({
           email: email.trim(),
           password
         });
@@ -764,6 +770,10 @@ export const AuthCard: React.FC<AuthCardProps> = ({
 
   // Quick 1-click Demo Login
   const handleQuickDemo = async (demoEmail: string) => {
+    if (supabaseIntegrationEnabled) {
+      setError('Demo accounts are only available in mock development mode.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -939,7 +949,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
         </button>
 
         <div className="pt-2 text-center space-y-1.5">
-          {!isSetupMode && (
+          {!isSetupMode && !supabaseIntegrationEnabled && (
             <button 
               type="button"
               onClick={() => {
@@ -951,7 +961,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
               {isSignUp ? 'Already have an account? Sign In' : "Don't have an account yet? Create one"}
             </button>
           )}
-          <button
+          {!supabaseIntegrationEnabled && <button
             type="button"
             onClick={() => {
               setIsSetupMode(!isSetupMode);
@@ -961,11 +971,11 @@ export const AuthCard: React.FC<AuthCardProps> = ({
             className="text-[11px] font-semibold text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer block mx-auto"
           >
             {isSetupMode ? 'Back to Standard Sign In' : 'Have an invitation token? Activate Portal Access'}
-          </button>
+          </button>}
         </div>
 
-        {/* 1-Click Demo Accounts */}
-        <div className="pt-3 border-t border-slate-100">
+        {/* Mock-only demo accounts; never authenticate against the live database. */}
+        {!supabaseIntegrationEnabled && <div className="pt-3 border-t border-slate-100">
           <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider mb-2 text-center">
             ⚡ Quick 1-Click Demo Accounts
           </p>
@@ -1003,7 +1013,7 @@ export const AuthCard: React.FC<AuthCardProps> = ({
               <div className="text-[10px] text-slate-400 font-semibold">Active Member</div>
             </button>
           </div>
-        </div>
+        </div>}
 
         {/* Back to Home Link */}
         <div className="text-center pt-2">
@@ -12228,24 +12238,57 @@ const AppShell = () => {
     });
   };
 
+  const appAuthClient: any = supabaseIntegrationEnabled ? supabaseDataClient : supabase;
+
   const fetchProfile = async (userId: string) => {
     try {
+      if (supabaseIntegrationEnabled) {
+        if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+        const { data, error } = await supabaseDataClient
+          .from('profiles')
+          .select('id,auth_user_id,branch_id,first_name,last_name,email,phone,avatar_url,portal_access_status,record_status,membership_status,membership_date,created_at,is_baptized,baptism_date,date_of_birth,marital_status,marriage_date')
+          .eq('auth_user_id', userId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          console.warn('Authenticated user has no explicitly linked church profile; ending the session.');
+          await supabaseDataClient.auth.signOut();
+          setSession(null);
+          setProfile(null);
+          return;
+        }
+        if (data.portal_access_status !== 'active' || data.record_status !== 'active') {
+          await supabaseDataClient.auth.signOut();
+          setSession(null);
+          setProfile(null);
+          return;
+        }
+        const { data: assignments, error: roleError } = await supabaseDataClient
+          .from('profile_role_assignments')
+          .select('roles(name)')
+          .eq('profile_id', data.id)
+          .eq('is_active', true);
+        if (roleError) console.warn('Could not load database role assignments', roleError);
+        const assignedRole = (assignments || [])
+          .map((item: any) => Array.isArray(item.roles) ? item.roles[0]?.name : item.roles?.name)
+          .find((name: string | undefined) => Boolean(name));
+        setProfile({
+          ...data,
+          email: data.email || '',
+          phone: data.phone || '',
+          primary_role: assignedRole || 'member',
+          status: data.portal_access_status === 'active' ? 'active' : data.portal_access_status,
+        } as Profile);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('auth_user_id', userId)
         .maybeSingle();
-
       if (error) throw error;
-      if (!data) {
-        console.warn('Authenticated user has no linked directory person; ending the session.');
-        await supabase.auth.signOut();
-        setSession(null);
-        setProfile(null);
-        return;
-      }
-
-      if (data.status === 'suspended' || data.status === 'archived') {
+      if (!data || data.status === 'suspended' || data.status === 'archived') {
         await supabase.auth.signOut();
         setSession(null);
         setProfile(null);
@@ -12253,7 +12296,8 @@ const AppShell = () => {
       }
       setProfile(data);
     } catch (e) {
-      console.warn("Profile fetch issue", e);
+      console.warn('Profile fetch issue', e);
+      setProfile(null);
     } finally {
       setLoading(false);
     }
@@ -12262,19 +12306,20 @@ const AppShell = () => {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const { data } = await supabase.auth.getSession();
-        setSession(data?.session || null);
-        if (data?.session) {
-          await fetchProfile(data.session.user.id);
-        } else {
-          setLoading(false);
+        if (supabaseIntegrationEnabled && !supabaseDataClient) {
+          throw new Error('Supabase is enabled but configuration is missing.');
         }
+        const { data } = await appAuthClient.auth.getSession();
+        setSession(data?.session || null);
+        if (data?.session) await fetchProfile(data.session.user.id);
+        else setLoading(false);
       } catch (err) {
+        console.warn('Authentication initialization failed', err);
         setLoading(false);
       }
     };
 
-    initializeAuth();
+    void initializeAuth();
 
     const handleProfileSync = (e: any) => {
       if (e.detail) {
@@ -12287,11 +12332,10 @@ const AppShell = () => {
     };
     window.addEventListener('profile-updated', handleProfileSync);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    const { data: { subscription } } = appAuthClient.auth.onAuthStateChange((_event: string, currentSession: any) => {
       setSession(currentSession);
-      if (currentSession) {
-        fetchProfile(currentSession.user.id);
-      } else {
+      if (currentSession) void fetchProfile(currentSession.user.id);
+      else {
         setProfile(null);
         setLoading(false);
       }
