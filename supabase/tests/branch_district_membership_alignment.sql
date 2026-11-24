@@ -752,8 +752,8 @@ SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_ad
 
 DO $leadership_appointment_lifecycle$
 DECLARE
-  v_standalone_member uuid := current_setting('scms.mem4a_standalone_member_id')::uuid;
-  v_standalone_branch uuid := current_setting('scms.mem4a_standalone_1')::uuid;
+  v_standalone_member uuid := current_setting('scms.mem4a_beta_member_id')::uuid;
+  v_standalone_branch uuid := current_setting('scms.mem4a_branch_b1')::uuid;
   v_transfer_member uuid := current_setting('scms.mem4a_transfer_member_id')::uuid;
   v_branch_a2 uuid := current_setting('scms.mem4a_branch_a2')::uuid;
   v_dist_a uuid := current_setting('scms.mem4a_dist_a')::uuid;
