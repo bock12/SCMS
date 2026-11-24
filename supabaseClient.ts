@@ -2670,8 +2670,12 @@ export const supabase = {
               ? { ...c, leader_id: null, updated_at: now }
               : c
           );
-          localDb.cell_members = (localDb.cell_members || []).filter(
-            (cm: any) => !(cm.member_id === member.id && cm.branch_id === transfer.from_branch_id)
+          localDb.cell_members = (localDb.cell_members || []).map((cm: any) =>
+            cm.member_id === member.id &&
+            cm.branch_id === transfer.from_branch_id &&
+            cm.status === 'active'
+              ? { ...cm, status: 'transferred' }
+              : cm
           );
         }
 
