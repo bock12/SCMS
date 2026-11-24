@@ -320,6 +320,7 @@ SET LOCAL ROLE authenticated;
 DO $suspended_identity$
 DECLARE
   v_branch_notifications integer;
+  v_self_profile_reads integer;
   v_self_update_rows integer;
 BEGIN
   IF private.current_profile_id() IS NOT NULL THEN
@@ -331,6 +332,13 @@ BEGIN
   WHERE title = 'MEM-INT-003 Scoped Notification';
   IF v_branch_notifications <> 0 THEN
     RAISE EXCEPTION 'A suspended portal identity can still read branch-scoped notifications.';
+  END IF;
+
+  SELECT count(*) INTO v_self_profile_reads
+  FROM public.profiles
+  WHERE auth_user_id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
+  IF v_self_profile_reads <> 0 THEN
+    RAISE EXCEPTION 'A suspended portal identity can still read its own profile.';
   END IF;
 
   UPDATE public.profiles
