@@ -41,6 +41,10 @@ BEGIN
     (v_finance_profile, v_finance_auth, v_branch_id, 'Requisition', 'Finance', 'fin-int-002-requisition-finance@example.invalid'),
     (v_member_profile, v_member_auth, v_branch_id, 'Requisition', 'Member', 'fin-int-002-requisition-member@example.invalid');
 
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id IN (v_submitter_auth, v_pastor_auth, v_finance_auth, v_member_auth);
+
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
   )
