@@ -46,6 +46,7 @@ on:
       - "supabase/migrations/20261124031522_scope_event_attendance_sessions_by_branch.sql"
       - "supabase/migrations/20261124031837_secure_welfare_case_campaign_finance_apis.sql"
       - "supabase/migrations/20261124032240_scope_transfer_manager_reads.sql"
+      - "supabase/migrations/20261124032413_least_privilege_transfer_directory_rpc.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1278,6 +1279,9 @@ jobs:
 
       - name: Scope member directory reads for transfer managers
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032240_scope_transfer_manager_reads.sql
+
+      - name: Expose least-privilege transfer directory RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032413_least_privilege_transfer_directory_rpc.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
