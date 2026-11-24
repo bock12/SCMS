@@ -595,7 +595,7 @@ describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
       membership_date: '2026-05-01',
       enable_portal_access: false
     });
-    const ministry = (await getMinistriesList()).find(item => item.branch_id === 'branch-1')!;
+    const ministry = (await getMinistriesList())[0];
     await supabase.from('profiles').update({
       assigned_department: ministry.name,
       department_name: ministry.name
