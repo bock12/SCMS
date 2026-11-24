@@ -40,8 +40,10 @@ on:
       - "supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql"
       - "supabase/migrations/20261124022203_block_suspended_self_profile_reads.sql"
       - "supabase/migrations/20261124022800_sync_trusted_auth_link_portal_state.sql"
+      - "supabase/migrations/20261124030633_secure_ministry_roster_mutations.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
+      - "supabase/tests/ministry_roster_lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
@@ -1251,6 +1253,9 @@ jobs:
       - name: Synchronize trusted Auth links with portal lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124022800_sync_trusted_auth_link_portal_state.sql
 
+      - name: Apply secure ministry roster mutation API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030633_secure_ministry_roster_mutations.sql
+
       - name: Prepare authenticated member directory test fixture
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1291,6 +1296,9 @@ jobs:
 
       - name: Verify secure member portal lifecycle and branch-scoped reads
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/member-portal-lifecycle.sql
+
+      - name: Verify secure ministry roster mutation lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/ministry_roster_lifecycle.sql
 
       - name: Verify private finance document attachment storage contract
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_attachments.sql
