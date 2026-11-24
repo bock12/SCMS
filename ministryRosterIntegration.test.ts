@@ -579,6 +579,7 @@ describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
       roles_and_responsibilities: [],
       leader_id: null
     })).rejects.toMatchObject({ code: '42501' });
+    await setAdminScope('church', null, null);
   });
 
   test('Scenario 5: ministry join request approval persists member to canonical roster and removal cleans up cleanly', async () => {
