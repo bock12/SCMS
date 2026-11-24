@@ -136,6 +136,9 @@ BEGIN
     v_no_access_profile_id, v_no_access_auth_id, v_branch_id,
     'No', 'Finance Access', 'fin-int-listing-no-access@example.invalid'
   );
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id = v_no_access_auth_id;
 
   PERFORM set_config('request.jwt.claim.sub', v_no_access_auth_id::text, true);
   BEGIN
