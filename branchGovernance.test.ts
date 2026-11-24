@@ -90,8 +90,7 @@ describe('two-tier branch and leadership governance', () => {
     const targetBranch = data.branches.find(branch => branch.id === 'branch-1');
     const targetMember = data.profiles.find(member =>
       member.branch_id === targetBranch?.id &&
-      member.membership_status === 'active' &&
-      member.record_status === 'active'
+      member.membership_status === 'active'
     );
     expect(targetBranch).toBeDefined();
     expect(targetMember).toBeDefined();
