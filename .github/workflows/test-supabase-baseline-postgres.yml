@@ -56,6 +56,7 @@ on:
       - "supabase/migrations/20261124160000_add_scoped_leadership_appointments.sql"
       - "supabase/migrations/20261124170000_reconcile_leadership_appointments_on_transfer.sql"
       - "supabase/migrations/20261124180000_secure_ministry_definition_management.sql"
+      - "supabase/migrations/20261124200000_secure_ministry_join_request_lifecycle.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1320,6 +1321,9 @@ jobs:
 
       - name: Secure ministry definition management
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124180000_secure_ministry_definition_management.sql
+
+      - name: Secure ministry join request lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124200000_secure_ministry_join_request_lifecycle.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
