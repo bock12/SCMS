@@ -3064,6 +3064,14 @@ export const supabase = {
         );
       };
 
+      const syncMinistryMemberCount = (ministryId: string) => {
+        const ministry = (localDb.ministries || []).find((item: any) => item.id === ministryId);
+        if (!ministry) return;
+        ministry.member_count = (localDb.ministry_members || []).filter((item: any) =>
+          item.ministry_id === ministryId && ['active', 'on_leave', 'in_training'].includes(item.status)
+        ).length;
+      };
+
       let ministry: any;
       let existing: any;
       let targetMember: any;
@@ -3114,6 +3122,7 @@ export const supabase = {
           created_by_profile_id: actor.id
         };
         localDb.ministry_members = [...(localDb.ministry_members || []), saved];
+        syncMinistryMemberCount(p_ministry_id);
         saveLocalDatabase(localDb);
         return { data: saved, error: null };
       }
@@ -3138,6 +3147,7 @@ export const supabase = {
           status: p_status || existing.status
         };
         localDb.ministry_members = (localDb.ministry_members || []).map((item: any) => item.id === p_assignment_id ? updated : item);
+        syncMinistryMemberCount(ministry.id);
         saveLocalDatabase(localDb);
         return { data: updated, error: null };
       }
@@ -3147,6 +3157,7 @@ export const supabase = {
       }
 
       localDb.ministry_members = (localDb.ministry_members || []).filter((item: any) => item.id !== p_assignment_id);
+      syncMinistryMemberCount(ministry.id);
       saveLocalDatabase(localDb);
       return { data: null, error: null };
     }
