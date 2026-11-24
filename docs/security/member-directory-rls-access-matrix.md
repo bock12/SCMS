@@ -33,7 +33,7 @@ The canonical `profiles` table contains church membership records and optional p
 | Staff with trusted `manage_members` and branch/district scope | Own profile or `view_members` scope | Through `create_member_profile` within scope | Through `update_member_profile` within scope | Deny |
 | Church-wide administrator with trusted permission | Church-wide | Through scoped RPC | Through scoped RPC | Deny by default |
 
-The Pastor role now has the `manage_members` permission in the database, but that permission is effective only for branches covered by the pastor's active trusted role assignment. District administrators are similarly limited to their assigned district. A role name alone does not grant access.
+The Pastor role now has the `manage_members` permission in the database, but that permission is effective only for branches covered by the pastor's active trusted role assignment. District administrators are similarly limited to their assigned district. A role name alone does not grant access. The active assignment's stored scope is authoritative; the role-assignment API does not yet enforce role-name-specific scope types. Pastors should normally receive branch assignments and district administrators district assignments. A church-wide manager can explicitly assign church scope today, so role-to-scope restrictions remain a governance follow-up.
 
 ## 4. Scope and field requirements
 
