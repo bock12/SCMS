@@ -2229,6 +2229,97 @@ export const supabase = {
       return true;
     };
 
+    if (functionName === 'manage_ministry_member') {
+      const {
+        p_action,
+        p_ministry_id,
+        p_assignment_id,
+        p_member_id,
+        p_role_title,
+        p_duty,
+        p_status,
+        p_joined_at
+      } = args;
+      if (!['add', 'update', 'remove'].includes(p_action)) {
+        return { data: null, error: { code: '22023', message: 'Unsupported ministry roster operation.' } };
+      }
+
+      const ministryAssignments = getActorAssignmentsForPermission('manage_ministries');
+      const canManageMinistryBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return ministryAssignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return ministryAssignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+
+      let ministry: any;
+      let existing: any;
+      if (p_action === 'add') {
+        ministry = (localDb.ministries || []).find((item: any) => item.id === p_ministry_id && (item.status || 'active') === 'active');
+        if (!ministry || !p_member_id) {
+          return { data: null, error: { code: '23503', message: 'The selected ministry and church member are required.' } };
+        }
+        const member = (localDb.profiles || []).find((item: any) => item.id === p_member_id);
+        if (!member || member.record_status === 'archived' || member.status === 'archived') {
+          return { data: null, error: { code: '23503', message: 'The selected church member is unavailable.' } };
+        }
+        if (ministry.branch_id && member.branch_id !== ministry.branch_id) {
+          return { data: null, error: { code: '42501', message: 'A member can only join a ministry in their assigned branch.' } };
+        }
+      } else {
+        existing = (localDb.ministry_members || []).find((item: any) => item.id === p_assignment_id);
+        ministry = (localDb.ministries || []).find((item: any) => item.id === existing?.ministry_id);
+        if (!existing || !ministry) {
+          return { data: null, error: { code: 'P0002', message: 'The ministry roster assignment could not be found.' } };
+        }
+      }
+
+      if (!canManageMinistryBranch(ministry.branch_id ?? null)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage this ministry roster.' } };
+      }
+      if (p_status && !['active', 'on_leave', 'in_training', 'inactive'].includes(p_status)) {
+        return { data: null, error: { code: '22023', message: 'Invalid ministry membership status.' } };
+      }
+
+      if (p_action === 'add') {
+        if ((localDb.ministry_members || []).some((item: any) => item.ministry_id === p_ministry_id && item.member_id === p_member_id)) {
+          return { data: null, error: { code: '23505', message: 'This member is already assigned to the ministry.' } };
+        }
+        const saved = {
+          id: createMockUuid(),
+          ministry_id: p_ministry_id,
+          member_id: p_member_id,
+          role_title: String(p_role_title || '').trim() || 'Team Member',
+          duty: String(p_duty || '').trim() || null,
+          status: p_status || 'active',
+          joined_at: p_joined_at || new Date().toISOString().slice(0, 10),
+          created_by_profile_id: actor.id
+        };
+        localDb.ministry_members = [...(localDb.ministry_members || []), saved];
+        saveLocalDatabase(localDb);
+        return { data: saved, error: null };
+      }
+
+      if (p_action === 'update') {
+        const updated = {
+          ...existing,
+          role_title: String(p_role_title || '').trim() || existing.role_title,
+          duty: p_duty === null || p_duty === undefined ? existing.duty : (String(p_duty).trim() || null),
+          status: p_status || existing.status
+        };
+        localDb.ministry_members = (localDb.ministry_members || []).map((item: any) => item.id === p_assignment_id ? updated : item);
+        saveLocalDatabase(localDb);
+        return { data: updated, error: null };
+      }
+
+      localDb.ministry_members = (localDb.ministry_members || []).filter((item: any) => item.id !== p_assignment_id);
+      saveLocalDatabase(localDb);
+      return { data: null, error: null };
+    }
+
     if (functionName === 'assign_profile_role') {
       const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
       const targetExists = (localDb.profiles || []).some((item: any) => item.id === p_profile_id);
