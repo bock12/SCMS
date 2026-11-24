@@ -29,6 +29,8 @@ Use PostgreSQL RLS for row visibility and narrowly scoped, permission-checked RP
 
 The current schema represents one church. Church-wide authority does not imply cross-tenant access in a future multi-tenant model.
 
+The scope stored on the active role assignment is authoritative; the permission helper does not independently impose role-name-specific scope limits. The current role-assignment RPC permits a church-wide manager to create a church-scoped assignment for any active role. Pastors should normally be assigned at branch scope and district administrators at district scope; stricter role-to-scope enforcement is a separate role-governance follow-up.
+
 Additional rules:
 
 1. Directory deletion is denied by default. Use membership archive/status workflows.
