@@ -702,4 +702,139 @@ BEGIN
 END;
 $scenario_e_f_transfer$;
 
+
+-- Scenario G: Leadership appointments are independent of application roles.
+-- Includes a directory-only member with no portal/auth account.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_admin_auth_id'), true);
+
+DO $leadership_appointment_lifecycle$
+DECLARE
+  v_standalone_member uuid := current_setting('scms.mem4a_standalone_member_id')::uuid;
+  v_standalone_branch uuid := current_setting('scms.mem4a_standalone_1')::uuid;
+  v_transfer_member uuid := current_setting('scms.mem4a_transfer_member_id')::uuid;
+  v_branch_a2 uuid := current_setting('scms.mem4a_branch_a2')::uuid;
+  v_dist_a uuid := current_setting('scms.mem4a_dist_a')::uuid;
+  v_dist_b uuid := current_setting('scms.mem4a_dist_b')::uuid;
+  v_branch_appointment public.leadership_appointments;
+  v_district_appointment public.leadership_appointments;
+  v_role_count bigint;
+BEGIN
+  IF (SELECT auth_user_id FROM public.profiles WHERE id = v_standalone_member) IS NOT NULL THEN
+    RAISE EXCEPTION 'The directory-only appointment fixture unexpectedly has a portal account.';
+  END IF;
+
+  SELECT count(*) INTO v_role_count
+  FROM public.profile_role_assignments
+  WHERE profile_id = v_standalone_member;
+
+  v_branch_appointment := public.create_leadership_appointment(
+    v_standalone_member,
+    'branch',
+    v_standalone_branch,
+    NULL,
+    'Congregation Care Coordinator',
+    'Coordinates member care and follow-up.',
+    current_date
+  );
+
+  IF v_branch_appointment.status <> 'active'
+    OR v_branch_appointment.scope_type <> 'branch'
+    OR v_branch_appointment.profile_id <> v_standalone_member THEN
+    RAISE EXCEPTION 'Branch leadership appointment was not created correctly for a directory-only member.';
+  END IF;
+
+  IF (SELECT count(*) FROM public.profile_role_assignments WHERE profile_id = v_standalone_member) <> v_role_count THEN
+    RAISE EXCEPTION 'Creating a leadership appointment unexpectedly modified RBAC assignments.';
+  END IF;
+
+  v_district_appointment := public.create_leadership_appointment(
+    v_transfer_member,
+    'district',
+    NULL,
+    v_dist_a,
+    'District Outreach Coordinator',
+    NULL,
+    current_date
+  );
+
+  IF v_district_appointment.status <> 'active'
+    OR v_district_appointment.scope_type <> 'district'
+    OR v_district_appointment.district_id <> v_dist_a THEN
+    RAISE EXCEPTION 'District leadership appointment was not created correctly.';
+  END IF;
+
+  v_branch_appointment := public.end_leadership_appointment(
+    v_branch_appointment.id,
+    'Appointment concluded for lifecycle test.'
+  );
+
+  IF v_branch_appointment.status <> 'ended'
+    OR v_branch_appointment.ended_at IS NULL
+    OR v_branch_appointment.ended_by_profile_id IS DISTINCT FROM private.current_profile_id() THEN
+    RAISE EXCEPTION 'Ending a leadership appointment did not preserve its lifecycle attribution.';
+  END IF;
+
+  BEGIN
+    PERFORM public.create_leadership_appointment(
+      v_standalone_member,
+      'branch',
+      v_branch_a2,
+      NULL,
+      'Invalid Cross-Branch Appointment',
+      NULL,
+      current_date
+    );
+    RAISE EXCEPTION 'A member was appointed to a branch they do not belong to.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    PERFORM public.create_leadership_appointment(
+      v_transfer_member,
+      'district',
+      NULL,
+      v_dist_b,
+      'Invalid Cross-District Appointment',
+      NULL,
+      current_date
+    );
+    RAISE EXCEPTION 'A member was appointed to a district outside their current branch.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  IF (SELECT count(*) FROM public.profile_role_assignments WHERE profile_id = v_standalone_member) <> v_role_count THEN
+    RAISE EXCEPTION 'Leadership appointment lifecycle changed application RBAC assignments.';
+  END IF;
+END;
+$leadership_appointment_lifecycle$;
+
+-- A district administrator may appoint only within their own district.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_dist_admin_auth_id'), true);
+
+DO $district_leadership_scope$
+BEGIN
+  BEGIN
+    PERFORM public.create_leadership_appointment(
+      current_setting('scms.mem4a_beta_member_id')::uuid,
+      'district',
+      NULL,
+      current_setting('scms.mem4a_dist_b')::uuid,
+      'Out-of-Scope Overseer',
+      NULL,
+      current_date
+    );
+    RAISE EXCEPTION 'District administrator created an appointment outside their assigned district.'
+      USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+END;
+$district_leadership_scope$;
+
 ROLLBACK;
