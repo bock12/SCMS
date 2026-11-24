@@ -615,8 +615,9 @@ BEGIN
 END;
 $role_reactivation_guards$;
 
--- Scenario E & F: Atomic transfer approval moves member, clears source cell leadership/membership,
--- deactivates branch-scoped ministry membership (preserving row), and preserves church-wide ministry membership.
+-- Scenario E & F: Atomic transfer approval moves member, clears current cell leadership,
+-- preserves the source cell membership as transferred history, deactivates branch-scoped
+-- ministry membership, and preserves church-wide ministry membership.
 RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_admin_auth_id'), true);
@@ -634,6 +635,9 @@ DECLARE
   v_church_mm_status text;
   v_cell_leader uuid;
   v_cell_member_count bigint;
+  v_cell_member_status text;
+  v_cell_member_role text;
+  v_source_branch uuid := current_setting('scms.mem4a_branch_a1')::uuid;
   v_role_count bigint;
 BEGIN
   v_transfer := public.manage_member_transfer(
@@ -647,9 +651,30 @@ BEGIN
   END IF;
 
   SELECT leader_id INTO v_cell_leader FROM public.cells WHERE id = v_cell_a1;
-  SELECT count(*) INTO v_cell_member_count FROM public.cell_members WHERE member_id = v_transfer_member;
-  IF v_cell_leader IS NOT NULL OR v_cell_member_count <> 0 THEN
-    RAISE EXCEPTION 'Source-branch cell leadership/membership was not cleared prior to branch move.';
+  SELECT count(*) INTO v_cell_member_count
+  FROM public.cell_members
+  WHERE member_id = v_transfer_member AND branch_id = v_source_branch;
+
+  SELECT status, role
+  INTO v_cell_member_status, v_cell_member_role
+  FROM public.cell_members
+  WHERE member_id = v_transfer_member
+    AND branch_id = v_source_branch;
+
+  IF v_cell_leader IS NOT NULL
+    OR v_cell_member_count <> 1
+    OR v_cell_member_status IS DISTINCT FROM 'transferred'
+    OR v_cell_member_role IS DISTINCT FROM 'leader' THEN
+    RAISE EXCEPTION 'Source cell membership history was not preserved as transferred, or current cell leadership was not released.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.cell_members
+    WHERE member_id = v_transfer_member
+      AND status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'A transferred member retained an active source cell membership.';
   END IF;
 
   SELECT status INTO v_branch_mm_status
