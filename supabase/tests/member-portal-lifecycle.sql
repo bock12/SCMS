@@ -276,6 +276,8 @@ SET email_confirmed_at = now()
 WHERE id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
 SET LOCAL ROLE service_role;
 
+-- Inspect fixture state as the database owner, not the service_role API role.
+RESET ROLE;
 DO $confirmed$
 DECLARE
   v_profile public.profiles;
@@ -391,6 +393,7 @@ SELECT public.complete_member_portal_action(
   NULL
 );
 
+RESET ROLE;
 DO $revoked$
 DECLARE
   v_profile public.profiles;
