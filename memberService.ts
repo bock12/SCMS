@@ -114,7 +114,7 @@ export function hasPortalAccess(person: Pick<Profile, 'auth_user_id'> | null | u
  * Includes all church members whether or not they have portal login access.
  */
 export async function getMembers(): Promise<Profile[]> {
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
     const { data, error } = await supabaseDataClient
       .from('profiles')
@@ -261,7 +261,7 @@ export async function registerUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     if (enablePortal) {
       throw new Error('The member can be saved without Portal Access. Live portal invitations will be enabled after the trusted server-side provisioning workflow is completed.');
     }
@@ -432,7 +432,8 @@ export async function updateUnifiedMember(
     portal_status: input.portal_status
   });
 
-  const readClient = supabaseIntegrationEnabled
+  const liveMemberDirectoryEnabled = supabaseIntegrationEnabled && supabaseAuthEnabled;
+  const readClient = liveMemberDirectoryEnabled
     ? requireLiveMemberWriteClient()
     : supabase;
   const { data: existing, error: lookupError } = await readClient
@@ -457,7 +458,7 @@ export async function updateUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
-  if (!supabaseIntegrationEnabled && input.branch_id) {
+  if (!(supabaseIntegrationEnabled && supabaseAuthEnabled) && input.branch_id) {
     const { data: branch, error: branchError } = await supabase
       .from('church_branches')
       .select('id')
@@ -467,7 +468,7 @@ export async function updateUnifiedMember(
     if (!branch) throw new Error('The selected branch does not exist.');
   }
 
-  if (!supabaseIntegrationEnabled) {
+  if (!(supabaseIntegrationEnabled && supabaseAuthEnabled)) {
     await assertUniqueContactDetails(email, phone, personId);
   }
 
@@ -493,7 +494,7 @@ export async function updateUnifiedMember(
     } : {})
   });
 
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     const portalCurrentlyEnabled = Boolean(current.auth_user_id);
     if (
       input.enable_portal_access !== undefined &&
@@ -571,7 +572,7 @@ export async function updateMembershipStatus(
   membershipStatus: MembershipStatus
 ): Promise<Profile> {
   validateMemberAttributes({ membership_status: membershipStatus });
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     const client = requireLiveMemberWriteClient();
     const { data, error } = await (client as any).rpc('update_member_profile', {
       p_profile_id: personId,
@@ -596,7 +597,7 @@ export async function updatePortalAccountStatus(
   portalStatus: PortalAccountStatus
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     throw new Error('Portal account lifecycle changes require the trusted server-side Auth provisioning workflow.');
   }
   if (portalStatus === 'active') {
@@ -633,7 +634,7 @@ export async function enablePortalAccess(
   personId: string,
   options?: { email?: string; primary_role?: AppRole }
 ): Promise<UnifiedMemberSaveResult> {
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     throw new Error('Portal invitations require the trusted server-side Auth provisioning workflow.');
   }
   const { data: existing, error: lookupError } = await supabase
@@ -675,7 +676,7 @@ export async function enablePortalAccess(
 
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
 export async function disablePortalAccess(personId: string): Promise<Profile> {
-  if (supabaseIntegrationEnabled) {
+  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     throw new Error('Portal revocation requires the trusted server-side Auth provisioning workflow.');
   }
   await supabase.auth.revokePortalAccess(personId);
