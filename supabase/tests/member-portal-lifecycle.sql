@@ -286,7 +286,7 @@ BEGIN
   END IF;
 
   DELETE FROM auth.users WHERE id = v_auth_user_id;
-  DELETE FROM public.profiles WHERE id = v_profile_id;
+  -- Keep the profile until the enclosing test transaction rolls back; audit logs are append-only.
 END;
 $trusted_link_lifecycle$;
 SET LOCAL ROLE authenticated;
