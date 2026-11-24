@@ -1,7 +1,5 @@
--- MEM-INT-003 portal lifecycle regression checks.
--- Requires one active church-wide manage_members Auth actor and one active branch.
--- All changes, including the temporary Auth/profile link, are rolled back.
-
+-- Regression suite for the secure Member Directory portal lifecycle.
+-- Kept in the PostgreSQL 17 fresh-install workflow as well as the live dev DB.
 BEGIN;
 
 SELECT set_config(
