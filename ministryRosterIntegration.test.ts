@@ -52,6 +52,11 @@ const {
   approveMinistryJoinRequest
 } = await import('./ministryJoinRequestService');
 const {
+  createMinistryDefinition,
+  updateMinistryDefinition,
+  archiveMinistryDefinition
+} = await import('./ministryDefinitionService');
+const {
   getProfileRoleData,
   assignProfileRole
 } = await import('./profileRoleAssignmentService');
@@ -471,6 +476,109 @@ describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
         status: 'active'
       })
     ).rejects.toMatchObject({ code: '23503' });
+  });
+
+  test('Scenario 5: ministry definitions use scoped RPCs, canonical leaders, and retained roster history', async () => {
+    await signInAsChurchSuperAdmin();
+
+    const { profile: firstLeader } = await registerUnifiedMember({
+      first_name: 'Hawa',
+      last_name: 'Bangura',
+      branch_id: 'branch-1',
+      membership_date: '2026-06-01',
+      enable_portal_access: false
+    });
+    const { profile: secondLeader } = await registerUnifiedMember({
+      first_name: 'Abdul',
+      last_name: 'Kamara',
+      branch_id: 'branch-1',
+      membership_date: '2026-06-02',
+      enable_portal_access: false
+    });
+    const { profile: crossBranchMember } = await registerUnifiedMember({
+      first_name: 'Mabinty',
+      last_name: 'Jalloh',
+      branch_id: 'branch-2',
+      membership_date: '2026-06-03',
+      enable_portal_access: false
+    });
+
+    const created = await createMinistryDefinition({
+      branch_id: 'branch-1',
+      name: 'MEM-INT-004B Definition Lifecycle',
+      description: 'Secure definition management test.',
+      category: 'Worship',
+      meeting_time: 'Sunday 9 AM',
+      type: 'social_fellowship',
+      roles_and_responsibilities: ['Coordinator', 'Volunteer'],
+      leader_id: firstLeader.id
+    });
+    expect(created.entity_type).toBe('fellowship');
+    expect(created.type).toBe('social_fellowship');
+    expect(created.member_count).toBe(1);
+
+    const firstRoster = await getMinistryRoster(created.id);
+    expect(firstRoster.find(row => row.member_id === firstLeader.id)?.role_title).toBe('Department Leader');
+
+    const updated = await updateMinistryDefinition(created.id, {
+      name: created.name,
+      description: created.description,
+      category: created.category,
+      meeting_time: created.meeting_time,
+      type: 'service_department',
+      roles_and_responsibilities: ['Sound', 'Media'],
+      leader_id: secondLeader.id
+    });
+    expect(updated.entity_type).toBe('department');
+    expect(updated.type).toBe('service_department');
+    expect(updated.leader_id).toBe(secondLeader.id);
+    expect(updated.member_count).toBe(2);
+
+    const updatedRoster = await getMinistryRoster(created.id);
+    expect(updatedRoster.find(row => row.member_id === firstLeader.id)?.role_title).toBe('Team Member');
+    expect(updatedRoster.find(row => row.member_id === secondLeader.id)?.role_title).toBe('Department Leader');
+
+    await expect(
+      updateMinistryDefinition(created.id, {
+        name: updated.name,
+        description: updated.description,
+        category: updated.category,
+        meeting_time: updated.meeting_time,
+        type: updated.type!,
+        roles_and_responsibilities: updated.roles_and_responsibilities || [],
+        leader_id: crossBranchMember.id
+      })
+    ).rejects.toMatchObject({ code: '23514' });
+
+    const archived = await archiveMinistryDefinition(created.id);
+    expect(archived.status).toBe('archived');
+    expect((await getMinistryRoster(created.id))).toHaveLength(2);
+    expect((await getMinistriesList()).some(item => item.id === created.id)).toBe(false);
+
+    // A branch-scoped ministry manager cannot create in another branch or church-wide.
+    await setAdminScope('branch', 'branch-1', null);
+    await signInAsChurchSuperAdmin();
+    await expect(createMinistryDefinition({
+      branch_id: 'branch-2',
+      name: 'Out of Scope Branch Ministry',
+      description: '',
+      category: 'General',
+      meeting_time: 'Weekly',
+      type: 'service_department',
+      roles_and_responsibilities: [],
+      leader_id: null
+    })).rejects.toMatchObject({ code: '42501' });
+
+    await expect(createMinistryDefinition({
+      branch_id: null,
+      name: 'Out of Scope Churchwide Ministry',
+      description: '',
+      category: 'General',
+      meeting_time: 'Weekly',
+      type: 'service_department',
+      roles_and_responsibilities: [],
+      leader_id: null
+    })).rejects.toMatchObject({ code: '42501' });
   });
 
   test('Scenario 5: ministry join request approval persists member to canonical roster and removal cleans up cleanly', async () => {
