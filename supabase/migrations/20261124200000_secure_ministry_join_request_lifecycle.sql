@@ -205,6 +205,8 @@ DECLARE
   v_member public.profiles;
   v_roster_entry public.ministry_members;
   v_existing_assignment public.ministry_members;
+  v_has_existing_assignment boolean := false;
+  v_target_status text := coalesce(p_member_status, 'active');
   v_role_title text;
   v_duty text;
   v_note text := nullif(pg_catalog.btrim(coalesce(p_review_note, '')), '');
@@ -238,7 +240,7 @@ BEGIN
     IF v_request.status <> 'pending' OR v_ministry.status <> 'active' THEN
       RAISE EXCEPTION 'Only pending requests for active ministries can be approved.' USING ERRCODE = '22023';
     END IF;
-    IF p_member_status NOT IN ('active', 'in_training', 'on_leave') THEN
+    IF v_target_status NOT IN ('active', 'in_training', 'on_leave') THEN
       RAISE EXCEPTION 'Invalid approved ministry membership status.' USING ERRCODE = '22023';
     END IF;
 
@@ -259,29 +261,30 @@ BEGIN
     WHERE ministry_id = v_request.ministry_id
       AND member_id = v_request.member_id
     FOR UPDATE;
+    v_has_existing_assignment := FOUND;
 
     v_role_title := coalesce(
       nullif(pg_catalog.btrim(p_role_title), ''),
       (
-        SELECT value #>> '{}'
-        FROM pg_catalog.jsonb_array_elements(v_request.preferred_roles) value
-        WHERE coalesce(value #>> '{}', '') <> ''
-          AND lower(coalesce(value #>> '{}', '')) NOT LIKE 'open to%'
+        SELECT role_option.value #>> '{}'
+        FROM pg_catalog.jsonb_array_elements(v_request.preferred_roles) AS role_option(value)
+        WHERE coalesce(role_option.value #>> '{}', '') <> ''
+          AND lower(coalesce(role_option.value #>> '{}', '')) NOT LIKE 'open to%'
         LIMIT 1
       ),
       'Team Member'
     );
     v_duty := coalesce(nullif(pg_catalog.btrim(p_duty), ''), v_request.availability, 'Sunday & Ministry Service Duty');
 
-    IF FOUND THEN
+    IF v_has_existing_assignment THEN
       v_roster_entry := private.manage_ministry_member(
         'update', NULL, v_existing_assignment.id, NULL,
-        v_role_title, v_duty, p_member_status, NULL
+        v_role_title, v_duty, v_target_status, NULL
       );
     ELSE
       v_roster_entry := private.manage_ministry_member(
         'add', v_request.ministry_id, NULL, v_request.member_id,
-        v_role_title, v_duty, p_member_status, CURRENT_DATE
+        v_role_title, v_duty, v_target_status, CURRENT_DATE
       );
     END IF;
 
