@@ -42,10 +42,12 @@ on:
       - "supabase/migrations/20261124022800_sync_trusted_auth_link_portal_state.sql"
       - "supabase/migrations/20261124030633_secure_ministry_roster_mutations.sql"
       - "supabase/migrations/20261124030904_secure_member_transfer_lifecycle.sql"
+      - "supabase/migrations/20261124031237_secure_event_registration_and_attendance_api.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
       - "supabase/tests/member_transfer_lifecycle.sql"
+      - "supabase/tests/event_registration_attendance_lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
@@ -1261,6 +1263,9 @@ jobs:
       - name: Apply secure member transfer lifecycle API
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030904_secure_member_transfer_lifecycle.sql
 
+      - name: Apply secure event registration and attendance APIs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124031237_secure_event_registration_and_attendance_api.sql
+
       - name: Prepare authenticated member directory test fixture
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1307,6 +1312,9 @@ jobs:
 
       - name: Verify atomic member transfer lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/member_transfer_lifecycle.sql
+
+      - name: Verify event registration and attendance integration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_registration_attendance_lifecycle.sql
 
       - name: Verify private finance document attachment storage contract
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_attachments.sql
