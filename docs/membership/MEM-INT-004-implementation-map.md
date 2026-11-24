@@ -61,7 +61,7 @@ The first server-side increment is now applied to the development database and c
 - `memberTransferService.ts` exposes read, request, approve/reject and cancel operations; the mock client implements the same lifecycle. `MemberTransfer` now matches the database status and timestamp fields while retaining the legacy optional `request_date` alias.
 - Regression scripts `supabase/tests/ministry_roster_lifecycle.sql` and `supabase/tests/member_transfer_lifecycle.sql` are included in PostgreSQL fresh-install CI.
 
-**Still outstanding in 004A:** application UI wiring for transfer requests/review and ministry join-request approval integration (the current live schema does not contain `ministry_join_requests`). The development database lifecycle scripts passed transactionally and rolled back all fixtures.
+**Still outstanding in 004A:** ministry join-request approval integration (the current live schema does not contain `ministry_join_requests`) and end-to-end browser acceptance of transfer creation/review. A dedicated `Member Transfers` Admin tab is now wired to the transfer service. Transfer managers receive only branch-scoped read access to profiles, branches and transfer rows; broader `view_members` access is not required. The transfer lifecycle and read-policy assertions are included in PostgreSQL CI.
 
 ### MEM-INT-004B implementation progress (2026-11-24)
 
