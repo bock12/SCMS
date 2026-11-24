@@ -53,6 +53,7 @@ on:
       - "supabase/migrations/20261124130000_align_branch_district_membership_architecture.sql"
       - "supabase/migrations/20261124143000_harden_role_assignment_reactivation.sql"
       - "supabase/migrations/20261124150000_preserve_cell_membership_transfer_history.sql"
+      - "supabase/migrations/20261124160000_add_scoped_leadership_appointments.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1308,6 +1309,9 @@ jobs:
 
       - name: Preserve cell membership history during member transfers
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124150000_preserve_cell_membership_transfer_history.sql
+
+      - name: Add scoped leadership appointments independent of RBAC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124160000_add_scoped_leadership_appointments.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
