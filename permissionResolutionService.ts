@@ -44,7 +44,8 @@ export const ADMIN_CONSOLE_PERMISSION_KEYS = [
 
 export const ADMIN_DASHBOARD_PERMISSION_KEYS = [
   ...ADMIN_CONSOLE_PERMISSION_KEYS,
-  'manage_finances'
+  'manage_finances',
+  'manage_member_transfers'
 ] as const;
 
 export const HIGH_PRIVILEGE_GOVERNANCE_ROLES = [
