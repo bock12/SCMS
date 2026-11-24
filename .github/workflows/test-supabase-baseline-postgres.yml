@@ -1206,7 +1206,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO auth.users (id, email, raw_app_meta_data)
           VALUES (
-            '97000000-0000-4000-8000-000000000001',
+            '98000000-0000-4000-8000-000000000001',
             'member-directory-test@example.invalid',
             '{}'::jsonb
           );
@@ -1214,8 +1214,8 @@ jobs:
           INSERT INTO public.profiles (
             id, auth_user_id, branch_id, first_name, last_name
           ) VALUES (
-            '96000000-0000-4000-8000-000000000001',
-            '97000000-0000-4000-8000-000000000001',
+            '98000000-0000-4000-8000-000000000002',
+            '98000000-0000-4000-8000-000000000001',
             '91000000-0000-4000-8000-000000000001',
             'Member Directory',
             'Test Actor'
@@ -1225,7 +1225,7 @@ jobs:
             profile_id, role_id, scope_type, branch_id, district_id, is_active
           )
           SELECT
-            '96000000-0000-4000-8000-000000000001',
+            '98000000-0000-4000-8000-000000000002',
             r.id,
             'church',
             NULL,
