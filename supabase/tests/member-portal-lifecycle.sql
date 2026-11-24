@@ -67,6 +67,63 @@ BEGIN
 END;
 $preflight$;
 
+-- Convert the fixture actor to a pastor with an explicit branch assignment.
+-- This verifies Member Directory reads do not depend on church-wide access.
+RESET ROLE;
+UPDATE public.profile_role_assignments
+SET is_active = false
+WHERE profile_id = current_setting('scms.mem_int_003_actor_profile_id')::uuid
+  AND is_active;
+
+INSERT INTO public.profile_role_assignments (
+  profile_id, role_id, scope_type, branch_id, district_id, assigned_by_profile_id
+)
+SELECT
+  current_setting('scms.mem_int_003_actor_profile_id')::uuid,
+  r.id,
+  'branch',
+  current_setting('scms.mem_int_003_branch_id')::uuid,
+  NULL,
+  current_setting('scms.mem_int_003_actor_profile_id')::uuid
+FROM public.roles AS r
+WHERE r.name = 'pastor';
+
+-- A second branch and member prove that profile and role reads remain branch scoped.
+DO $other_branch$
+DECLARE
+  v_branch_id uuid := gen_random_uuid();
+  v_profile_id uuid;
+BEGIN
+  INSERT INTO public.church_branches (id, name, code, country, status)
+  VALUES (
+    v_branch_id,
+    'MEM-INT-003 Other Branch',
+    'M3' || upper(substr(replace(v_branch_id::text, '-', ''), 1, 6)),
+    'Sierra Leone',
+    'active'
+  );
+
+  INSERT INTO public.profiles (
+    branch_id, first_name, last_name, email, membership_date, membership_status
+  ) VALUES (
+    v_branch_id, 'MEM-INT-003', 'Out of Scope',
+    'mem-int-003-out-of-scope@example.invalid',
+    CURRENT_DATE, 'active'
+  )
+  RETURNING id INTO v_profile_id;
+
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, assigned_by_profile_id
+  )
+  SELECT v_profile_id, r.id, 'branch', v_branch_id,
+         current_setting('scms.mem_int_003_actor_profile_id')::uuid
+  FROM public.roles AS r
+  WHERE r.name = 'member';
+
+  PERFORM set_config('scms.mem_int_003_other_branch_member_id', v_profile_id::text, true);
+END;
+$other_branch$;
+
 -- Exercise the caller-authorized invitation preflight before changing the
 -- existing actor's temporary profile email (the entire test is transactional).
 SET LOCAL ROLE authenticated;
@@ -110,6 +167,52 @@ BEGIN
   END IF;
 END;
 $create_member$;
+
+-- Branch-scoped Member Directory reads include the authorized branch and its
+-- role labels, but exclude profiles and assignments from another branch.
+RESET ROLE;
+INSERT INTO public.profile_role_assignments (
+  profile_id, role_id, scope_type, branch_id, assigned_by_profile_id
+)
+SELECT
+  current_setting('scms.mem_int_003_member_id')::uuid,
+  r.id,
+  'branch',
+  current_setting('scms.mem_int_003_branch_id')::uuid,
+  current_setting('scms.mem_int_003_actor_profile_id')::uuid
+FROM public.roles AS r
+WHERE r.name = 'member';
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_003_actor_auth_id'), true);
+DO $directory_read_scope$
+DECLARE
+  v_in_scope_profiles integer;
+  v_out_of_scope_profiles integer;
+  v_in_scope_roles integer;
+  v_out_of_scope_roles integer;
+BEGIN
+  SELECT count(*) INTO v_in_scope_profiles
+  FROM public.profiles
+  WHERE id = current_setting('scms.mem_int_003_member_id')::uuid;
+  SELECT count(*) INTO v_out_of_scope_profiles
+  FROM public.profiles
+  WHERE id = current_setting('scms.mem_int_003_other_branch_member_id')::uuid;
+  SELECT count(*) INTO v_in_scope_roles
+  FROM public.profile_role_assignments
+  WHERE profile_id = current_setting('scms.mem_int_003_member_id')::uuid;
+  SELECT count(*) INTO v_out_of_scope_roles
+  FROM public.profile_role_assignments
+  WHERE profile_id = current_setting('scms.mem_int_003_other_branch_member_id')::uuid;
+
+  IF v_in_scope_profiles <> 1 OR v_in_scope_roles <> 1 THEN
+    RAISE EXCEPTION 'A branch-scoped member manager could not read an in-scope member and role assignment.';
+  END IF;
+  IF v_out_of_scope_profiles <> 0 OR v_out_of_scope_roles <> 0 THEN
+    RAISE EXCEPTION 'A branch-scoped member manager read an out-of-scope member or role assignment.';
+  END IF;
+END;
+$directory_read_scope$;
 
 -- Unlinked identities must not be able to authorize portal lifecycle actions.
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000001', true);
