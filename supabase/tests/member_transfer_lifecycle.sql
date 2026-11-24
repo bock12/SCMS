@@ -151,4 +151,24 @@ BEGIN
 END;
 $api_grants$;
 
+DO $transfer_read_policies$
+DECLARE
+  v_profiles_policy text;
+  v_branches_policy text;
+  v_transfers_policy text;
+BEGIN
+  SELECT qual INTO v_profiles_policy FROM pg_policies
+  WHERE schemaname='public' AND tablename='profiles' AND policyname='profiles_scoped_read';
+  SELECT qual INTO v_branches_policy FROM pg_policies
+  WHERE schemaname='public' AND tablename='church_branches' AND policyname='branches_authorized_read';
+  SELECT qual INTO v_transfers_policy FROM pg_policies
+  WHERE schemaname='public' AND tablename='member_transfers' AND policyname='member_transfers_scoped_read';
+  IF v_profiles_policy NOT LIKE '%manage_member_transfers%'
+    OR v_branches_policy NOT LIKE '%manage_member_transfers%'
+    OR v_transfers_policy NOT LIKE '%manage_member_transfers%' THEN
+    RAISE EXCEPTION 'Transfer managers are missing scoped directory, branch or transfer read access.';
+  END IF;
+END;
+$transfer_read_policies$;
+
 ROLLBACK;
