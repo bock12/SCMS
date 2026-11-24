@@ -705,13 +705,14 @@ DECLARE
   v_request_id uuid := current_setting('scms.mem_int_004_join_request_id')::uuid;
   v_result jsonb;
   v_request_status text;
+  v_visible_count bigint;
   v_roster_member_id uuid;
   v_roster_status text;
 BEGIN
-  SELECT count(*) INTO v_roster_member_id
+  SELECT count(*) INTO v_visible_count
   FROM public.ministry_join_requests
   WHERE id = v_request_id;
-  IF v_roster_member_id <> 1 THEN
+  IF v_visible_count <> 1 THEN
     RAISE EXCEPTION 'Branch manager cannot read the request in their ministry scope.';
   END IF;
 
