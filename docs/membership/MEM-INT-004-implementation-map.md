@@ -25,15 +25,17 @@ The deployed foreign keys confirm that these dependent records reference `public
 | Attendance | `attendance_records.member_id` | `profiles.id` |
 | Event registrations | `event_registrations.member_id` | `profiles.id` |
 | Welfare cases | `welfare_cases.member_id` | `profiles.id` |
+| Welfare assistance | `welfare_assistance.case_id` | `welfare_cases.id` (which links to `profiles.id`) |
+| Welfare campaigns | `welfare_campaigns.branch_id` | `church_branches.id` (branch-scoped; no member FK) |
 | Member contributions | `welfare_contributions.contributing_member_id` | `profiles.id` |
 
 The historical `20261111000200_create_ministry_membership.sql` migration references `members(id)`, while the deployed/reconciled schema references `profiles(id)`. Treat the deployed canonical schema and the current fresh-install baseline as authoritative; update the historical migration only through an explicit baseline reconciliation, not by silently rewriting applied migration history.
 
 ### Database security
 
-RLS is enabled on `profiles`, `ministry_members`, `member_transfers`, `attendance_sessions`, `attendance_records`, `event_registrations`, `welfare_cases`, and `welfare_contributions`.
+RLS is enabled on `profiles`, `ministry_members`, `member_transfers`, `attendance_sessions`, `attendance_records`, `event_registrations`, `welfare_cases`, `welfare_assistance`, `welfare_campaigns`, and `welfare_contributions`.
 
-The deployed policy inventory currently provides scoped/self SELECT access for these dependent tables. Event registrations additionally have a member-self INSERT policy. No manager-scoped write policies or module-specific write RPCs were found for ministry roster writes, transfers, attendance records/sessions, event registration management, welfare cases, or welfare contributions. The UI must not assume direct table writes will be authorized in live mode.
+The deployed policy inventory currently provides scoped/self SELECT access for these dependent tables, including case-derived access to welfare assistance and active/branch-scoped campaign reads. Event registrations additionally have a member-self INSERT policy. No manager-scoped write policies or module-specific write RPCs were found for ministry roster writes, transfers, attendance records/sessions, event registration management, welfare cases, or welfare contributions. The UI must not assume direct table writes will be authorized in live mode.
 
 The live project currently contains one profile and zero rows in the reviewed dependent tables. This allows schema/policy verification but not reconciliation of populated dependent records.
 
@@ -45,7 +47,8 @@ The live project currently contains one profile and zero rows in the reviewed de
 | Transfers | `member_transfers` exists and its member FK targets `profiles.id`; the Admin dashboard currently contains roadmap copy describing transfers but no complete transfer workflow was found. | Add request, review/approval, and completion workflow with source/destination branch authorization, status transition validation, audit attribution, and atomic membership branch/status update. |
 | Attendance | `attendance_sessions` and `attendance_records` exist; records reference `profiles.id`. Event check-in currently updates `event_registrations` instead. No canonical attendance service path was found in the reviewed application files. | Add a scoped session/record service and secure write API; define how event check-in maps to attendance without double counting or maintaining conflicting totals. |
 | Event registrations | Admin UI reads `event_registrations`; manual registration inserts `user_id` and contact snapshots but does not populate canonical `member_id`; check-in updates registration status directly. | Populate `member_id` from selected profile; retain guest snapshots only for non-member attendees; enforce event/branch scope; make capacity and registration-count updates atomic; use a secure manager API for create/update/cancel/check-in. |
-| Welfare cases | `welfare_cases.member_id` references `profiles.id`; scoped/self SELECT policy exists. | Ensure case creation/assignment/status changes use authorized server-side operations; preserve sensitive case details under least-privilege access. |
+| Welfare cases and assistance | `welfare_cases.member_id` references `profiles.id`; assistance is reached through its case; both have member/manager SELECT policies. | Ensure case creation, assignment, assistance recording and status changes use authorized server-side operations; preserve sensitive case details under least-privilege access. |
+| Welfare campaigns | Campaign reads are active-status and branch scoped; no campaign write policy was found. | Move campaign creation and lifecycle changes from local state to authorized persistence, scoped to the campaign branch. |
 | Member contributions | `welfare_contributions` links optional contributing profile and required `financial_documents.id`; deployed policy is read-only. `welfareContributionService.ts` currently reads/writes department-keyed `localStorage` and separately syncs a local department ledger. | Replace local persistence with a secure contribution workflow that creates/links a finance document and contribution row atomically; retain mock behavior when mock auth is active; do not create a second independent money ledger. |
 
 ## Recommended implementation sequence
