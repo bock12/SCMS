@@ -1,8 +1,8 @@
 # Unified Member Directory — Acceptance Checklist
 
 **Scope:** ADR-0001 unified person directory with optional portal access  
-**Environment:** local mock authentication and local mock database only  
-**Supabase:** keep disconnected for this checklist; do not run migrations or use live credentials  
+**Environment:** local mock authentication for UI acceptance; connected development Supabase for separate SQL security regression checks  
+**Supabase:** the development schema includes the canonical profile directory and MEM-INT-002 write RPCs. Do not use real member data in regression tests.  
 **Test roles:** administrator or pastor, plus a standard member account for access-boundary checks
 
 ## Preconditions
@@ -115,3 +115,22 @@ service-role operation. The current browser mock implements a simulated
 provisioning flow; it is not a production service-role implementation. Do not
 enable live Supabase portal invitations until that server-side operation exists
 and is tested.
+
+
+## Live database write API regression (2026-11-24)
+
+The SQL script `supabase/tests/member-directory-write-api.sql` was executed against the connected development database. It uses a transaction and rolls back all test writes.
+
+Verified scenarios:
+- An authenticated church-wide manager can create and update a canonical member through the RPCs.
+- Protected auth fields are rejected from the create payload.
+- Generic member editing cannot change the branch.
+- Duplicate email is rejected by the database.
+- An unlinked auth identity cannot create a member.
+- An authenticated user cannot directly change their own membership status through table UPDATE.
+
+The script requires a test database containing an active church-wide `manage_members` assignment and at least one active branch. It is not a substitute for branch/district isolation tests or browser acceptance.
+
+## Live browser limitation
+
+The app's mock development login does not create a Supabase Auth session. Live member writes remain unavailable unless real Supabase Auth is explicitly enabled and a real authorized user is signed in. Live portal invitation/provisioning is not yet implemented; the Portal Access control is disabled while database integration is enabled.
