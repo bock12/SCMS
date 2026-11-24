@@ -219,11 +219,20 @@ Deno.serve(async (request: Request) => {
     }
 
     const { data: authUserData, error: getUserError } = await adminClient.auth.admin.getUserById(authUserId);
-    if (getUserError) {
-      return jsonResponse({ error: "The portal account is suspended in SCMS, but its Auth ban could not be verified." }, 503);
+    const authUserMissing = Boolean(
+      getUserError && (
+        (getUserError as any).status === 404 ||
+        (getUserError as any).code === "user_not_found"
+      )
+    );
+    if (getUserError && !authUserMissing) {
+      return jsonResponse({ error: "The portal account is suspended in SCMS, but its Auth state could not be verified." }, 503);
     }
 
     if (action === "suspend") {
+      if (authUserMissing || !authUserData?.user) {
+        return jsonResponse({ error: "The portal account is suspended in SCMS, but its linked Auth identity is missing and needs reconciliation." }, 503);
+      }
       if (authUserData.user) {
         const { error: banError } = await adminClient.auth.admin.updateUserById(authUserId, {
           ban_duration: "876000h",
@@ -241,7 +250,7 @@ Deno.serve(async (request: Request) => {
     // Revoke means permanently remove the Auth identity and unlink it from the
     // member. If Auth deletion is blocked (for example, by owned Storage objects),
     // the member remains suspended and the operation can be retried after cleanup.
-    if (authUserData.user) {
+    if (!authUserMissing && authUserData?.user) {
       const { error: banError } = await adminClient.auth.admin.updateUserById(authUserId, {
         ban_duration: "876000h",
       });
