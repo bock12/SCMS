@@ -124,6 +124,17 @@ BEGIN
 END;
 $other_branch$;
 
+INSERT INTO public.notifications (
+  branch_id, title, message, status, created_by_profile_id, published_at
+) VALUES (
+  current_setting('scms.mem_int_003_branch_id')::uuid,
+  'MEM-INT-003 Scoped Notification',
+  'Branch-scoped portal access regression fixture',
+  'published',
+  current_setting('scms.mem_int_003_actor_profile_id')::uuid,
+  now()
+);
+
 -- Exercise the caller-authorized invitation preflight before changing the
 -- existing actor's temporary profile email (the entire test is transactional).
 SET LOCAL ROLE authenticated;
@@ -191,6 +202,7 @@ DECLARE
   v_out_of_scope_profiles integer;
   v_in_scope_roles integer;
   v_out_of_scope_roles integer;
+  v_branch_notifications integer;
 BEGIN
   SELECT count(*) INTO v_in_scope_profiles
   FROM public.profiles
@@ -204,8 +216,11 @@ BEGIN
   SELECT count(*) INTO v_out_of_scope_roles
   FROM public.profile_role_assignments
   WHERE profile_id = current_setting('scms.mem_int_003_other_branch_member_id')::uuid;
+  SELECT count(*) INTO v_branch_notifications
+  FROM public.notifications
+  WHERE title = 'MEM-INT-003 Scoped Notification';
 
-  IF v_in_scope_profiles <> 1 OR v_in_scope_roles <> 1 THEN
+  IF v_in_scope_profiles <> 1 OR v_in_scope_roles <> 1 OR v_branch_notifications <> 1 THEN
     RAISE EXCEPTION 'A branch-scoped member manager could not read an in-scope member and role assignment.';
   END IF;
   IF v_out_of_scope_profiles <> 0 OR v_out_of_scope_roles <> 0 THEN
@@ -303,9 +318,27 @@ SELECT public.complete_member_portal_action(
 RESET ROLE;
 SET LOCAL ROLE authenticated;
 DO $suspended_identity$
+DECLARE
+  v_branch_notifications integer;
+  v_self_update_rows integer;
 BEGIN
   IF private.current_profile_id() IS NOT NULL THEN
     RAISE EXCEPTION 'A suspended portal identity still resolves to a church profile.';
+  END IF;
+
+  SELECT count(*) INTO v_branch_notifications
+  FROM public.notifications
+  WHERE title = 'MEM-INT-003 Scoped Notification';
+  IF v_branch_notifications <> 0 THEN
+    RAISE EXCEPTION 'A suspended portal identity can still read branch-scoped notifications.';
+  END IF;
+
+  UPDATE public.profiles
+  SET first_name = 'Suspended Self Update Must Fail'
+  WHERE auth_user_id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
+  GET DIAGNOSTICS v_self_update_rows = ROW_COUNT;
+  IF v_self_update_rows <> 0 THEN
+    RAISE EXCEPTION 'A suspended portal identity can still update its own profile.';
   END IF;
 END;
 $suspended_identity$;
