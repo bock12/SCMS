@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import {
+  createLeadershipAppointment,
+  endLeadershipAppointment,
+  getLeadershipAppointments
+} from './leadershipAppointmentService';
 
 const values = new Map<string, string>();
 const memoryStorage = {
@@ -79,6 +84,50 @@ async function signInAsDistrictAdmin(districtId: string) {
 }
 
 describe('two-tier branch and leadership governance', () => {
+  test('leadership appointments are scoped, retain history, and do not grant application roles', async () => {
+    await signInAsChurchAdmin();
+    const data = await getBranchGovernanceData();
+    const targetBranch = data.branches.find(branch => branch.id === 'branch-1');
+    const targetMember = data.profiles.find(member =>
+      member.branch_id === targetBranch?.id &&
+      member.membership_status === 'active' &&
+      member.record_status === 'active'
+    );
+    expect(targetBranch).toBeDefined();
+    expect(targetMember).toBeDefined();
+    if (!targetBranch || !targetMember) return;
+
+    const rolesBefore = await supabase.from('profile_role_assignments')
+      .select('*')
+      .eq('profile_id', targetMember.id);
+
+    const appointment = await createLeadershipAppointment({
+      profile_id: targetMember.id,
+      scope_type: 'branch',
+      branch_id: targetBranch.id,
+      title: 'Branch Safeguarding Coordinator',
+      responsibilities: 'Coordinates safeguarding referrals.'
+    });
+    expect(appointment.status).toBe('active');
+    expect(appointment.scope_type).toBe('branch');
+
+    const rolesAfter = await supabase.from('profile_role_assignments')
+      .select('*')
+      .eq('profile_id', targetMember.id);
+    expect(rolesAfter.data).toEqual(rolesBefore.data);
+
+    const loaded = await getLeadershipAppointments();
+    expect(loaded.some(item => item.id === appointment.id)).toBe(true);
+
+    const ended = await endLeadershipAppointment(appointment.id, 'Role handover');
+    expect(ended.status).toBe('ended');
+    expect(ended.end_reason).toBe('Role handover');
+    expect(ended.ended_at).toBeTruthy();
+
+    const historical = await getLeadershipAppointments();
+    expect(historical.find(item => item.id === appointment.id)?.status).toBe('ended');
+  });
+
   test('district_admin resolves manage_branches and manage_roles only within assigned district and enters admin console', async () => {
     await signInAsDistrictAdmin('dist-1');
 
@@ -398,8 +447,7 @@ describe('two-tier branch and leadership governance', () => {
       districts: data.districts,
       branches: data.branches,
       profiles: data.profiles,
-      assignments: data.assignments,
-      roles: data.roles
+      leadershipAppointments: data.leadershipAppointments
     });
 
     const dist1Summary = summaries.find(s => s.district.id === 'dist-1');
@@ -464,8 +512,7 @@ describe('two-tier branch and leadership governance', () => {
     const standaloneSummaries = buildStandaloneBranchSummaries({
       branches: data.branches,
       profiles: data.profiles,
-      assignments: data.assignments,
-      roles: data.roles,
+      leadershipAppointments: data.leadershipAppointments,
       branchMemberCounts: {
         ...data.branchMemberCounts,
         [secondStandaloneMain.id]: { total: 42, active: 39 }
