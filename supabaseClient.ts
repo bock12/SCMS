@@ -2229,6 +2229,132 @@ export const supabase = {
       return true;
     };
 
+    if (functionName === 'manage_event_registration') {
+      const { p_action, p_event_id, p_registration_id, p_member_id, p_member_name, p_email, p_phone } = args;
+      const canManageEventScope = (permissionKey: string, branchId: string | null | undefined) => {
+        const assignments = getActorAssignmentsForPermission(permissionKey);
+        if (!branchId) return assignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return assignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+      if (!['register_member', 'register_guest', 'cancel', 'check_in', 'mark_absent'].includes(p_action)) {
+        return { data: null, error: { code: '22023', message: 'Unsupported event registration operation.' } };
+      }
+      if (p_action === 'register_member' || p_action === 'register_guest') {
+        const event = (localDb.events || []).find((item: any) => item.id === p_event_id && ['upcoming', 'ongoing'].includes(item.status || 'upcoming'));
+        if (!event) return { data: null, error: { code: '23503', message: 'The event is not available for registration.' } };
+        let member: any = null;
+        if (p_action === 'register_member') {
+          member = (localDb.profiles || []).find((item: any) => item.id === p_member_id && item.membership_status === 'active' && item.record_status !== 'archived');
+          if (!member) return { data: null, error: { code: '23503', message: 'The selected active church member could not be found.' } };
+          if (event.branch_id && member.branch_id !== event.branch_id) return { data: null, error: { code: '42501', message: 'The selected member does not belong to the event branch.' } };
+          if (actor.id === member.id) {
+            if (!canManageEventScope('register_for_events', event.branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to register for this event.' } };
+          } else if (!canManageEventScope('manage_events', event.branch_id)) {
+            return { data: null, error: { code: '42501', message: 'You do not have permission to register another member.' } };
+          }
+          if ((localDb.event_registrations || []).some((item: any) => item.event_id === p_event_id && item.member_id === p_member_id && item.status !== 'cancelled')) {
+            return { data: null, error: { code: '23505', message: 'This member already has an active registration for the event.' } };
+          }
+        } else {
+          if (!canManageEventScope('manage_events', event.branch_id)) return { data: null, error: { code: '42501', message: 'Only event managers may register guests.' } };
+          if (!String(p_member_name || '').trim()) return { data: null, error: { code: '22023', message: 'A guest name is required.' } };
+        }
+        const count = (localDb.event_registrations || []).filter((item: any) => item.event_id === p_event_id && ['confirmed', 'checked_in', 'attended'].includes(item.status)).length;
+        const status = event.max_attendees && count >= event.max_attendees ? 'waitlist' : 'confirmed';
+        const saved = {
+          id: createMockUuid(), event_id: p_event_id, member_id: member?.id || null,
+          member_name: member ? `${member.first_name} ${member.last_name}`.trim() : String(p_member_name).trim(),
+          email: p_email || member?.email || '', phone: p_phone || member?.phone || '',
+          registered_at: new Date().toISOString(), registered_by_profile_id: actor.id,
+          checked_in_at: null, status
+        };
+        localDb.event_registrations = [...(localDb.event_registrations || []), saved];
+        saveLocalDatabase(localDb);
+        return { data: saved, error: null };
+      }
+
+      const registration = (localDb.event_registrations || []).find((item: any) => item.id === p_registration_id);
+      if (!registration) return { data: null, error: { code: 'P0002', message: 'The event registration could not be found.' } };
+      const event = (localDb.events || []).find((item: any) => item.id === registration.event_id);
+      if (!event) return { data: null, error: { code: '23503', message: 'The event could not be found.' } };
+      if (p_action === 'cancel') {
+        if (registration.member_id !== actor.id && !canManageEventScope('manage_events', event.branch_id)) {
+          return { data: null, error: { code: '42501', message: 'You do not have permission to cancel this registration.' } };
+        }
+        if (['cancelled', 'checked_in', 'attended'].includes(registration.status)) return { data: null, error: { code: '22023', message: 'This registration can no longer be cancelled.' } };
+        const updated = { ...registration, status: 'cancelled' };
+        localDb.event_registrations = (localDb.event_registrations || []).map((item: any) => item.id === registration.id ? updated : item);
+        saveLocalDatabase(localDb);
+        return { data: updated, error: null };
+      }
+      if (!canManageEventScope('manage_attendance', event.branch_id) && !canManageEventScope('manage_events', event.branch_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage event attendance.' } };
+      }
+      const now = new Date().toISOString();
+      const updated = { ...registration, status: p_action === 'check_in' ? 'checked_in' : 'absent', checked_in_at: p_action === 'check_in' ? now : null };
+      localDb.event_registrations = (localDb.event_registrations || []).map((item: any) => item.id === registration.id ? updated : item);
+      if (p_action === 'check_in' && registration.member_id) {
+        const member = (localDb.profiles || []).find((item: any) => item.id === registration.member_id);
+        const sessionBranch = event.branch_id || member?.branch_id || actor.branch_id;
+        const sessionDate = String(event.start_time || now).slice(0, 10);
+        let session = (localDb.attendance_sessions || []).find((item: any) => item.event_id === event.id && item.session_date === sessionDate);
+        if (!session) {
+          session = { id: createMockUuid(), branch_id: sessionBranch, event_id: event.id, title: event.title, session_date: sessionDate, session_type: 'event', created_by_profile_id: actor.id, created_at: now };
+          localDb.attendance_sessions = [...(localDb.attendance_sessions || []), session];
+        }
+        const existingRecord = (localDb.attendance_records || []).find((item: any) => item.session_id === session.id && item.member_id === registration.member_id);
+        const record = { ...(existingRecord || {}), id: existingRecord?.id || createMockUuid(), session_id: session.id, member_id: registration.member_id, attendance_status: 'present', check_in_time: now, recorded_by_profile_id: actor.id };
+        localDb.attendance_records = existingRecord
+          ? (localDb.attendance_records || []).map((item: any) => item.id === existingRecord.id ? record : item)
+          : [...(localDb.attendance_records || []), record];
+      }
+      saveLocalDatabase(localDb);
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'manage_attendance') {
+      const { p_action, p_session_id, p_branch_id, p_title, p_session_date, p_session_type, p_member_id, p_attendance_status, p_notes } = args;
+      const attendanceAssignments = getActorAssignmentsForPermission('manage_attendance');
+      const canManageAttendanceBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return attendanceAssignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return attendanceAssignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+      if (p_action === 'create_session') {
+        if (!p_branch_id || !String(p_title || '').trim()) return { data: null, error: { code: '22023', message: 'A branch and attendance session title are required.' } };
+        if (!canManageAttendanceBranch(p_branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to create attendance sessions for this branch.' } };
+        const session = { id: createMockUuid(), branch_id: p_branch_id, title: String(p_title).trim(), session_date: p_session_date || new Date().toISOString().slice(0, 10), session_type: p_session_type || 'service', created_by_profile_id: actor.id, created_at: new Date().toISOString() };
+        localDb.attendance_sessions = [...(localDb.attendance_sessions || []), session];
+        saveLocalDatabase(localDb);
+        return { data: session, error: null };
+      }
+      if (p_action === 'record') {
+        const session = (localDb.attendance_sessions || []).find((item: any) => item.id === p_session_id);
+        const member = (localDb.profiles || []).find((item: any) => item.id === p_member_id && item.record_status !== 'archived');
+        if (!session || !member) return { data: null, error: { code: 'P0002', message: 'The attendance session or member could not be found.' } };
+        if (!canManageAttendanceBranch(session.branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to record attendance for this branch.' } };
+        if (member.branch_id !== session.branch_id) return { data: null, error: { code: '42501', message: 'The selected member is not active in this attendance branch.' } };
+        if (!['present', 'absent', 'late', 'excused'].includes(p_attendance_status)) return { data: null, error: { code: '22023', message: 'Invalid attendance status.' } };
+        const existing = (localDb.attendance_records || []).find((item: any) => item.session_id === p_session_id && item.member_id === p_member_id);
+        const record = { ...(existing || {}), id: existing?.id || createMockUuid(), session_id: p_session_id, member_id: p_member_id, attendance_status: p_attendance_status, check_in_time: ['present', 'late'].includes(p_attendance_status) ? new Date().toISOString() : null, recorded_by_profile_id: actor.id, notes: p_notes || null };
+        localDb.attendance_records = existing
+          ? (localDb.attendance_records || []).map((item: any) => item.id === existing.id ? record : item)
+          : [...(localDb.attendance_records || []), record];
+        saveLocalDatabase(localDb);
+        return { data: record, error: null };
+      }
+      return { data: null, error: { code: '22023', message: 'Unsupported attendance operation.' } };
+    }
+
     if (functionName === 'manage_member_transfer') {
       const { p_action, p_transfer_id, p_member_id, p_to_branch_id, p_notes } = args;
       if (!['request', 'approve', 'reject', 'cancel'].includes(p_action)) {
