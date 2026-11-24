@@ -90,12 +90,6 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
     setNotes('');
   };
 
-  const memberOptions = members.filter(member =>
-    member.membership_status === 'active' &&
-    member.branch_id &&
-    member.branch_id !== toBranchId
-  );
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -107,6 +101,7 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
           <p className="text-sm text-slate-500 mt-1">
             Review branch relocation requests. Approval changes the member's assigned branch and records the transfer together.
           </p>
+          <p className="text-[11px] text-slate-400 mt-1">Signed in as {profile.first_name} {profile.last_name}</p>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading || busy}
           className="min-h-[40px] px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-bold inline-flex items-center gap-2 disabled:opacity-50">
