@@ -620,4 +620,144 @@ END;
 $churchwide_ministry_definition$;
 
 
+
+-- 7. Ministry join requests are member-owned, manager-reviewed, and atomically assigned.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_004_unauth_auth_id'), true);
+
+DO $member_join_request_lifecycle$
+DECLARE
+  v_request public.ministry_join_requests;
+  v_request_id uuid;
+  v_visible_count bigint;
+BEGIN
+  v_request := public.submit_ministry_join_request(
+    current_setting('scms.mem_int_004_ministry_id')::uuid,
+    '["Choir Member","Vocalist"]'::jsonb,
+    'Sunday morning rehearsals',
+    'I can serve twice per month.',
+    '+232761234567'
+  );
+
+  IF v_request.status <> 'pending'
+    OR v_request.member_id <> current_setting('scms.mem_int_004_unauth_profile_id')::uuid
+    OR v_request.applicant_name <> 'MEM-INT-004B Unauthorized User'
+    OR v_request.applicant_phone <> '+232761234567' THEN
+    RAISE EXCEPTION 'Member join request did not preserve canonical applicant details.';
+  END IF;
+
+  v_request_id := v_request.id;
+  PERFORM set_config('scms.mem_int_004_join_request_id', v_request_id::text, true);
+
+  SELECT count(*) INTO v_visible_count
+  FROM public.ministry_join_requests
+  WHERE id = v_request_id;
+  IF v_visible_count <> 1 THEN
+    RAISE EXCEPTION 'Member cannot read their own ministry join request.';
+  END IF;
+
+  BEGIN
+    PERFORM public.submit_ministry_join_request(
+      current_setting('scms.mem_int_004_ministry_id')::uuid,
+      '["Singer"]'::jsonb,
+      'Sunday',
+      NULL,
+      '+232761234567'
+    );
+    RAISE EXCEPTION 'Duplicate pending ministry join request was unexpectedly accepted.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    UPDATE public.ministry_join_requests
+    SET status = 'approved'
+    WHERE id = v_request_id;
+    RAISE EXCEPTION 'Direct member update of a ministry join request unexpectedly succeeded.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  v_request := public.withdraw_ministry_join_request(v_request_id);
+  IF v_request.status <> 'withdrawn' THEN
+    RAISE EXCEPTION 'Member could not withdraw their pending request.';
+  END IF;
+
+  v_request := public.submit_ministry_join_request(
+    current_setting('scms.mem_int_004_ministry_id')::uuid,
+    '["Choir Member"]'::jsonb,
+    'Wednesday evenings',
+    'Resubmitting after correcting my schedule.',
+    '+232761234567'
+  );
+  PERFORM set_config('scms.mem_int_004_join_request_id', v_request.id::text, true);
+END;
+$member_join_request_lifecycle$;
+
+-- The branch manager can review requests in their scope but cannot write the table directly.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_004_branch1_mgr_auth_id'), true);
+
+DO $manager_join_request_review$
+DECLARE
+  v_request_id uuid := current_setting('scms.mem_int_004_join_request_id')::uuid;
+  v_result jsonb;
+  v_request_status text;
+  v_roster_member_id uuid;
+  v_roster_status text;
+BEGIN
+  SELECT count(*) INTO v_roster_member_id
+  FROM public.ministry_join_requests
+  WHERE id = v_request_id;
+  IF v_roster_member_id <> 1 THEN
+    RAISE EXCEPTION 'Branch manager cannot read the request in their ministry scope.';
+  END IF;
+
+  v_result := public.review_ministry_join_request(
+    v_request_id, 'decline', NULL, NULL, 'active', 'Please reapply after the next orientation.'
+  );
+  IF v_result #>> '{request,status}' <> 'declined' THEN
+    RAISE EXCEPTION 'Ministry request decline did not persist.';
+  END IF;
+
+  v_result := public.review_ministry_join_request(v_request_id, 'reopen');
+  IF v_result #>> '{request,status}' <> 'pending' THEN
+    RAISE EXCEPTION 'Ministry request reopen did not persist.';
+  END IF;
+
+  v_result := public.review_ministry_join_request(
+    v_request_id, 'approve', 'Choir Member', 'Sunday vocals', 'in_training', 'Welcome to the team.'
+  );
+  v_request_status := v_result #>> '{request,status}';
+  v_roster_member_id := (v_result #>> '{roster_entry,member_id}')::uuid;
+  v_roster_status := v_result #>> '{roster_entry,status}';
+
+  IF v_request_status <> 'approved'
+    OR v_roster_member_id <> current_setting('scms.mem_int_004_unauth_profile_id')::uuid
+    OR v_roster_status <> 'in_training' THEN
+    RAISE EXCEPTION 'Request approval did not atomically create the canonical ministry roster assignment.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ministry_members
+    WHERE ministry_id = current_setting('scms.mem_int_004_ministry_id')::uuid
+      AND member_id = current_setting('scms.mem_int_004_unauth_profile_id')::uuid
+      AND status = 'in_training'
+      AND role_title = 'Choir Member'
+  ) THEN
+    RAISE EXCEPTION 'Approved ministry request is missing its canonical roster row.';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.ministry_join_requests', 'INSERT')
+    OR has_table_privilege('authenticated', 'public.ministry_join_requests', 'UPDATE')
+    OR has_table_privilege('authenticated', 'public.ministry_join_requests', 'DELETE')
+    OR has_table_privilege('anon', 'public.ministry_join_requests', 'SELECT') THEN
+    RAISE EXCEPTION 'Ministry join request direct write or anon read grants must remain revoked.';
+  END IF;
+END;
+$manager_join_request_review$;
+
+
 ROLLBACK;
