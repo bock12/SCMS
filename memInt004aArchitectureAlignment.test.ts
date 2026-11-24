@@ -32,7 +32,7 @@ const {
   addMinistryMember,
   getMinistryRoster
 } = await import('./ministryMemberService');
-const { getProfileRoleData } = await import('./profileRoleAssignmentService');
+const { getProfileRoleData, reactivateProfileRoleAssignment } = await import('./profileRoleAssignmentService');
 
 beforeEach(() => {
   memoryStorage.clear();
@@ -79,6 +79,65 @@ async function signInAsDistrictAdmin(districtId: string) {
 }
 
 describe('MEM-INT-004A branch, district & congregation membership alignment', () => {
+  test('role assignment reactivation rejects inactive branches and preserves expired assignments', async () => {
+    await signInAsChurchAdmin();
+
+    const inactiveBranchId = 'mem4a-reactivation-inactive-branch';
+    await supabase.from('church_branches').insert({
+      id: inactiveBranchId,
+      district_id: 'dist-1',
+      name: 'Inactive Reactivation Test Branch',
+      address: '1 Test Road',
+      city: 'Test City',
+      state: 'Test State',
+      state_or_region: 'Test State',
+      code: 'M4R-INACTIVE',
+      country: 'Sierra Leone',
+      status: 'inactive',
+      is_main_branch: false
+    });
+
+    await supabase.from('profile_role_assignments').insert([
+      {
+        id: 'mem4a-reactivation-inactive-scope',
+        profile_id: 'usr-admin-1',
+        role_id: 'mock-role-member',
+        scope_type: 'branch',
+        branch_id: inactiveBranchId,
+        district_id: null,
+        assigned_at: '2026-01-01T00:00:00.000Z',
+        expires_at: null,
+        is_active: false
+      },
+      {
+        id: 'mem4a-reactivation-expired',
+        profile_id: 'usr-admin-1',
+        role_id: 'mock-role-member',
+        scope_type: 'branch',
+        branch_id: 'branch-1',
+        district_id: null,
+        assigned_at: '2026-01-01T00:00:00.000Z',
+        expires_at: '2026-01-02T00:00:00.000Z',
+        is_active: false
+      }
+    ]);
+
+    await expect(
+      reactivateProfileRoleAssignment('mem4a-reactivation-inactive-scope')
+    ).rejects.toThrow(/branch is no longer active/i);
+
+    await expect(
+      reactivateProfileRoleAssignment('mem4a-reactivation-expired')
+    ).rejects.toThrow(/assignment has expired/i);
+
+    const expiredRow = await supabase.from('profile_role_assignments')
+      .select('expires_at,is_active')
+      .eq('id', 'mem4a-reactivation-expired')
+      .single();
+    expect(expiredRow.data?.expires_at).toBe('2026-01-02T00:00:00.000Z');
+    expect(expiredRow.data?.is_active).toBe(false);
+  });
+
   test('Scenario A: church-wide admin creates standalone branches without a district, attaches/detaches districts, and preserves member branch_id', async () => {
     await signInAsChurchAdmin();
 
