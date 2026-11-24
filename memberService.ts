@@ -457,7 +457,7 @@ export async function updateUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
-  if (input.branch_id) {
+  if (!supabaseIntegrationEnabled && input.branch_id) {
     const { data: branch, error: branchError } = await supabase
       .from('church_branches')
       .select('id')
