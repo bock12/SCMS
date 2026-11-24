@@ -2296,13 +2296,17 @@ export const supabase = {
         return { data: null, error: { code: '42501', message: 'You do not have permission to manage event attendance.' } };
       }
       const now = new Date().toISOString();
+      if (p_action === 'check_in' && registration.status === 'waitlist' && event.max_attendees) {
+        const activeCount = (localDb.event_registrations || []).filter((item: any) => item.event_id === event.id && ['confirmed', 'checked_in', 'attended'].includes(item.status)).length;
+        if (activeCount >= event.max_attendees) return { data: null, error: { code: '22023', message: 'The event is at capacity; this registration remains waitlisted.' } };
+      }
       const updated = { ...registration, status: p_action === 'check_in' ? 'checked_in' : 'absent', checked_in_at: p_action === 'check_in' ? now : null };
-      localDb.event_registrations = (localDb.event_registrations || []).map((item: any) => item.id === registration.id ? updated : item);
       if (p_action === 'check_in' && registration.member_id) {
         const member = (localDb.profiles || []).find((item: any) => item.id === registration.member_id);
+        if (event.branch_id && member?.branch_id !== event.branch_id) return { data: null, error: { code: '42501', message: 'The member is no longer assigned to the event branch.' } };
         const sessionBranch = event.branch_id || member?.branch_id || actor.branch_id;
         const sessionDate = String(event.start_time || now).slice(0, 10);
-        let session = (localDb.attendance_sessions || []).find((item: any) => item.event_id === event.id && item.session_date === sessionDate);
+        let session = (localDb.attendance_sessions || []).find((item: any) => item.event_id === event.id && item.session_date === sessionDate && item.branch_id === sessionBranch);
         if (!session) {
           session = { id: createMockUuid(), branch_id: sessionBranch, event_id: event.id, title: event.title, session_date: sessionDate, session_type: 'event', created_by_profile_id: actor.id, created_at: now };
           localDb.attendance_sessions = [...(localDb.attendance_sessions || []), session];
@@ -2313,6 +2317,7 @@ export const supabase = {
           ? (localDb.attendance_records || []).map((item: any) => item.id === existingRecord.id ? record : item)
           : [...(localDb.attendance_records || []), record];
       }
+      localDb.event_registrations = (localDb.event_registrations || []).map((item: any) => item.id === registration.id ? updated : item);
       saveLocalDatabase(localDb);
       return { data: updated, error: null };
     }
