@@ -47,6 +47,7 @@ on:
       - "supabase/migrations/20261124031837_secure_welfare_case_campaign_finance_apis.sql"
       - "supabase/migrations/20261124032240_scope_transfer_manager_reads.sql"
       - "supabase/migrations/20261124032413_least_privilege_transfer_directory_rpc.sql"
+      - "supabase/migrations/20261124032502_require_both_scopes_for_managed_transfer_requests.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1282,6 +1283,9 @@ jobs:
 
       - name: Expose least-privilege transfer directory RPC
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032413_least_privilege_transfer_directory_rpc.sql
+
+      - name: Require both branch scopes for managed transfer requests
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032502_require_both_scopes_for_managed_transfer_requests.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
