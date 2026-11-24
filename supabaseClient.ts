@@ -2331,7 +2331,7 @@ export const supabase = {
       const now = new Date().toISOString();
       const reviewerName = `${actor.first_name} ${actor.last_name}`.trim();
       if (action === 'approve') {
-        if (request.status !== 'pending' || ministry.status !== 'active') {
+        if (request.status !== 'pending' || (ministry.status || 'active') !== 'active') {
           return { data: null, error: { code: '22023', message: 'Only pending requests for active ministries can be approved.' } };
         }
         const member = (localDb.profiles || []).find((item: any) =>
