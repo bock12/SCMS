@@ -1,5 +1,5 @@
 -- MEM-INT-004C: branch-scoped welfare case, campaign and finance-link APIs.
-
+;
 CREATE OR REPLACE FUNCTION private.manage_welfare_campaign(p_action text, p_campaign_id uuid DEFAULT NULL::uuid, p_branch_id uuid DEFAULT NULL::uuid, p_campaign_name text DEFAULT NULL::text, p_beneficiary text DEFAULT NULL::text, p_purpose text DEFAULT NULL::text, p_target_amount numeric DEFAULT NULL::numeric, p_expected_contribution numeric DEFAULT 0, p_currency_code character DEFAULT 'SLE'::bpchar, p_deadline date DEFAULT NULL::date, p_status text DEFAULT NULL::text)
  RETURNS welfare_campaigns
  LANGUAGE plpgsql
@@ -69,7 +69,7 @@ BEGIN
 END;
 $function$
 
-
+;
 CREATE OR REPLACE FUNCTION private.manage_welfare_case(p_action text, p_case_id uuid DEFAULT NULL::uuid, p_member_id uuid DEFAULT NULL::uuid, p_case_type text DEFAULT NULL::text, p_reason text DEFAULT NULL::text, p_restricted_description text DEFAULT NULL::text, p_priority text DEFAULT 'normal'::text, p_status text DEFAULT NULL::text, p_assigned_to_profile_id uuid DEFAULT NULL::uuid)
  RETURNS welfare_cases
  LANGUAGE plpgsql
@@ -142,7 +142,7 @@ BEGIN
 END;
 $function$
 
-
+;
 CREATE OR REPLACE FUNCTION private.record_welfare_assistance(p_case_id uuid, p_assistance_type text, p_financial_document_id uuid, p_description text DEFAULT NULL::text)
  RETURNS welfare_assistance
  LANGUAGE plpgsql
@@ -183,7 +183,7 @@ BEGIN
 END;
 $function$
 
-
+;
 CREATE OR REPLACE FUNCTION private.record_welfare_contribution(p_campaign_id uuid, p_financial_document_id uuid, p_contributing_member_id uuid DEFAULT NULL::uuid, p_contribution_date date DEFAULT CURRENT_DATE)
  RETURNS welfare_contributions
  LANGUAGE plpgsql
@@ -234,28 +234,28 @@ BEGIN
 END;
 $function$
 
-
+;
 CREATE OR REPLACE FUNCTION public.manage_welfare_campaign(p_action text, p_campaign_id uuid DEFAULT NULL::uuid, p_branch_id uuid DEFAULT NULL::uuid, p_campaign_name text DEFAULT NULL::text, p_beneficiary text DEFAULT NULL::text, p_purpose text DEFAULT NULL::text, p_target_amount numeric DEFAULT NULL::numeric, p_expected_contribution numeric DEFAULT 0, p_currency_code character DEFAULT 'SLE'::bpchar, p_deadline date DEFAULT NULL::date, p_status text DEFAULT NULL::text)
  RETURNS welfare_campaigns
  LANGUAGE sql
  SET search_path TO ''
 AS $function$ SELECT private.manage_welfare_campaign(p_action,p_campaign_id,p_branch_id,p_campaign_name,p_beneficiary,p_purpose,p_target_amount,p_expected_contribution,p_currency_code,p_deadline,p_status); $function$
 
-
+;
 CREATE OR REPLACE FUNCTION public.manage_welfare_case(p_action text, p_case_id uuid DEFAULT NULL::uuid, p_member_id uuid DEFAULT NULL::uuid, p_case_type text DEFAULT NULL::text, p_reason text DEFAULT NULL::text, p_restricted_description text DEFAULT NULL::text, p_priority text DEFAULT 'normal'::text, p_status text DEFAULT NULL::text, p_assigned_to_profile_id uuid DEFAULT NULL::uuid)
  RETURNS welfare_cases
  LANGUAGE sql
  SET search_path TO ''
 AS $function$ SELECT private.manage_welfare_case(p_action,p_case_id,p_member_id,p_case_type,p_reason,p_restricted_description,p_priority,p_status,p_assigned_to_profile_id); $function$
 
-
+;
 CREATE OR REPLACE FUNCTION public.record_welfare_assistance(p_case_id uuid, p_assistance_type text, p_financial_document_id uuid, p_description text DEFAULT NULL::text)
  RETURNS welfare_assistance
  LANGUAGE sql
  SET search_path TO ''
 AS $function$ SELECT private.record_welfare_assistance(p_case_id,p_assistance_type,p_financial_document_id,p_description); $function$
 
-
+;
 CREATE OR REPLACE FUNCTION public.record_welfare_contribution(p_campaign_id uuid, p_financial_document_id uuid, p_contributing_member_id uuid DEFAULT NULL::uuid, p_contribution_date date DEFAULT CURRENT_DATE)
  RETURNS welfare_contributions
  LANGUAGE sql
