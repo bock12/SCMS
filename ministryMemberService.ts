@@ -228,38 +228,41 @@ export async function getMinistryRoster(ministryId: string): Promise<MinistryRos
 export async function addMinistryMember(
   assignment: Omit<MinistryMember, 'id' | 'joined_at'> & { joined_at?: string }
 ): Promise<MinistryMember> {
-  const { data, error } = await supabase
-    .from('ministry_members')
-    .insert({
-      ...assignment,
-      joined_at: assignment.joined_at || new Date().toISOString()
-    })
-    .select('*')
-    .single();
+  const { data, error } = await supabase.rpc('manage_ministry_member', {
+    p_action: 'add',
+    p_ministry_id: assignment.ministry_id,
+    p_member_id: assignment.member_id,
+    p_role_title: assignment.role_title,
+    p_duty: assignment.duty,
+    p_status: assignment.status,
+    p_joined_at: (assignment.joined_at || new Date().toISOString()).slice(0, 10)
+  });
 
   if (error) throw error;
-  const saved = Array.isArray(data) ? data[0] : data;
-  if (!saved) throw new Error('The ministry appointment was not saved.');
-  return saved as MinistryMember;
+  if (!data) throw new Error('The ministry appointment was not saved.');
+  return data as MinistryMember;
 }
 
 export async function updateMinistryMember(
   assignmentId: string,
   changes: Partial<Pick<MinistryMember, 'role_title' | 'duty' | 'status'>>
 ): Promise<void> {
-  const { error } = await supabase
-    .from('ministry_members')
-    .update(changes)
-    .eq('id', assignmentId);
+  const { error } = await supabase.rpc('manage_ministry_member', {
+    p_action: 'update',
+    p_assignment_id: assignmentId,
+    p_role_title: changes.role_title ?? null,
+    p_duty: changes.duty ?? null,
+    p_status: changes.status ?? null
+  });
 
   if (error) throw error;
 }
 
 export async function removeMinistryMember(assignmentId: string): Promise<void> {
-  const { error } = await supabase
-    .from('ministry_members')
-    .delete()
-    .eq('id', assignmentId);
+  const { error } = await supabase.rpc('manage_ministry_member', {
+    p_action: 'remove',
+    p_assignment_id: assignmentId
+  });
 
   if (error) throw error;
 }
