@@ -2229,6 +2229,108 @@ export const supabase = {
       return true;
     };
 
+    if (functionName === 'manage_welfare_case') {
+      const { p_action, p_case_id, p_member_id, p_case_type, p_reason, p_restricted_description, p_priority, p_status, p_assigned_to_profile_id } = args;
+      const assignments = getActorAssignmentsForPermission('manage_welfare');
+      const canManageWelfareBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return assignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return assignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+      if (p_action === 'create') {
+        const member = (localDb.profiles || []).find((item: any) => item.id === (p_member_id || actor.id) && item.record_status !== 'archived');
+        if (!member) return { data: null, error: { code: '23503', message: 'The selected church member is unavailable.' } };
+        if (member.id !== actor.id && !canManageWelfareBranch(member.branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to submit a welfare case for this member.' } };
+        if (!String(p_case_type || '').trim() || !String(p_reason || '').trim()) return { data: null, error: { code: '22023', message: 'Welfare case type and reason are required.' } };
+        if (!['low', 'normal', 'high', 'urgent'].includes(p_priority || 'normal')) return { data: null, error: { code: '22023', message: 'Invalid welfare case priority.' } };
+        const created = { id: createMockUuid(), member_id: member.id, branch_id: member.branch_id || null, case_type: String(p_case_type).trim(), reason: String(p_reason).trim(), restricted_description: p_restricted_description || null, priority: p_priority || 'normal', status: 'submitted', created_by_profile_id: actor.id, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+        localDb.welfare_cases = [...(localDb.welfare_cases || []), created];
+        saveLocalDatabase(localDb);
+        return { data: created, error: null };
+      }
+      const existing = (localDb.welfare_cases || []).find((item: any) => item.id === p_case_id);
+      if (!existing) return { data: null, error: { code: 'P0002', message: 'The welfare case could not be found.' } };
+      if (!canManageWelfareBranch(existing.branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to manage this welfare case.' } };
+      if (p_status && !['submitted', 'under_review', 'approved', 'rejected', 'completed', 'closed'].includes(p_status)) return { data: null, error: { code: '22023', message: 'Invalid welfare case status.' } };
+      if (p_assigned_to_profile_id) {
+        const assignee = (localDb.profiles || []).find((item: any) => item.id === p_assigned_to_profile_id && item.record_status !== 'archived');
+        if (!assignee || assignee.branch_id !== existing.branch_id) return { data: null, error: { code: '22023', message: 'The assigned welfare officer must be active in the case branch.' } };
+      }
+      const updated = { ...existing, status: p_status || existing.status, priority: p_priority || existing.priority, assigned_to_profile_id: p_assigned_to_profile_id || existing.assigned_to_profile_id, restricted_description: p_restricted_description === null || p_restricted_description === undefined ? existing.restricted_description : (String(p_restricted_description).trim() || null), updated_at: new Date().toISOString() };
+      localDb.welfare_cases = (localDb.welfare_cases || []).map((item: any) => item.id === existing.id ? updated : item);
+      saveLocalDatabase(localDb);
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'manage_welfare_campaign') {
+      const { p_action, p_campaign_id, p_branch_id, p_campaign_name, p_beneficiary, p_purpose, p_target_amount, p_expected_contribution, p_currency_code, p_deadline, p_status } = args;
+      const assignments = getActorAssignmentsForPermission('manage_welfare');
+      const canManageWelfareBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return assignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return assignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+      if (p_action === 'create') {
+        if (!String(p_campaign_name || '').trim() || p_target_amount === null || Number(p_target_amount) < 0 || Number(p_expected_contribution || 0) < 0) return { data: null, error: { code: '22023', message: 'Campaign name and non-negative target/contribution amounts are required.' } };
+        if (!canManageWelfareBranch(p_branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to manage welfare campaigns in this scope.' } };
+        const created = { id: createMockUuid(), branch_id: p_branch_id || null, campaign_name: String(p_campaign_name).trim(), beneficiary: p_beneficiary || null, purpose: p_purpose || null, target_amount: Number(p_target_amount), expected_contribution: Number(p_expected_contribution || 0), currency_code: p_currency_code || 'SLE', deadline: p_deadline || null, status: p_status || 'draft', created_by_profile_id: actor.id, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+        localDb.welfare_campaigns = [...(localDb.welfare_campaigns || []), created];
+        saveLocalDatabase(localDb);
+        return { data: created, error: null };
+      }
+      const existing = (localDb.welfare_campaigns || []).find((item: any) => item.id === p_campaign_id);
+      if (!existing) return { data: null, error: { code: 'P0002', message: 'The welfare campaign could not be found.' } };
+      if (!canManageWelfareBranch(existing.branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to manage this welfare campaign.' } };
+      const updated = { ...existing, campaign_name: p_campaign_name || existing.campaign_name, beneficiary: p_beneficiary === null ? existing.beneficiary : p_beneficiary, purpose: p_purpose === null ? existing.purpose : p_purpose, target_amount: p_target_amount ?? existing.target_amount, expected_contribution: p_expected_contribution ?? existing.expected_contribution, deadline: p_deadline ?? existing.deadline, status: p_status || existing.status, updated_at: new Date().toISOString() };
+      localDb.welfare_campaigns = (localDb.welfare_campaigns || []).map((item: any) => item.id === existing.id ? updated : item);
+      saveLocalDatabase(localDb);
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'record_welfare_contribution') {
+      const { p_campaign_id, p_financial_document_id, p_contributing_member_id, p_contribution_date } = args;
+      const campaign = (localDb.welfare_campaigns || []).find((item: any) => item.id === p_campaign_id && item.status === 'active');
+      const assignments = getActorAssignmentsForPermission('manage_welfare');
+      const branch = (localDb.church_branches || []).find((item: any) => item.id === campaign?.branch_id);
+      const canManage = campaign && assignments.some((item: any) => item.scope_type === 'church' || (item.scope_type === 'branch' && item.branch_id === campaign.branch_id) || (item.scope_type === 'district' && branch?.district_id && item.district_id === branch.district_id));
+      if (!campaign) return { data: null, error: { code: '23503', message: 'The welfare campaign is not active.' } };
+      if (!canManage) return { data: null, error: { code: '42501', message: 'You do not have permission to record welfare contributions for this campaign.' } };
+      const document = (localDb.financial_documents || []).find((item: any) => item.id === p_financial_document_id);
+      if (!document || document.status !== 'posted' || !['receipt', 'adjustment'].includes(document.document_type)) return { data: null, error: { code: '23514', message: 'A posted receipt or adjustment document is required for a welfare contribution.' } };
+      if (document.currency_code !== campaign.currency_code || (campaign.branch_id && document.branch_id !== campaign.branch_id)) return { data: null, error: { code: '23514', message: 'Contribution currency or branch does not match the campaign.' } };
+      const member = p_contributing_member_id ? (localDb.profiles || []).find((item: any) => item.id === p_contributing_member_id) : null;
+      if (p_contributing_member_id && (!member || document.profile_id !== member.id || (campaign.branch_id && member.branch_id !== campaign.branch_id))) return { data: null, error: { code: '23514', message: 'The receipt must identify the same member in the campaign branch.' } };
+      const created = { id: createMockUuid(), campaign_id: p_campaign_id, contributing_member_id: p_contributing_member_id || null, financial_document_id: p_financial_document_id, contribution_date: p_contribution_date || new Date().toISOString().slice(0, 10), created_at: new Date().toISOString() };
+      localDb.welfare_contributions = [...(localDb.welfare_contributions || []), created];
+      saveLocalDatabase(localDb);
+      return { data: created, error: null };
+    }
+
+    if (functionName === 'record_welfare_assistance') {
+      const { p_case_id, p_assistance_type, p_financial_document_id, p_description } = args;
+      const welfareCase = (localDb.welfare_cases || []).find((item: any) => item.id === p_case_id);
+      const assignments = getActorAssignmentsForPermission('manage_welfare');
+      const branch = (localDb.church_branches || []).find((item: any) => item.id === welfareCase?.branch_id);
+      const canManage = welfareCase && assignments.some((item: any) => item.scope_type === 'church' || (item.scope_type === 'branch' && item.branch_id === welfareCase.branch_id) || (item.scope_type === 'district' && branch?.district_id && item.district_id === branch.district_id));
+      if (!welfareCase) return { data: null, error: { code: 'P0002', message: 'The welfare case could not be found.' } };
+      if (!canManage) return { data: null, error: { code: '42501', message: 'You do not have permission to record assistance for this case.' } };
+      if (!['approved', 'completed'].includes(welfareCase.status)) return { data: null, error: { code: '22023', message: 'Only approved welfare cases can receive assistance.' } };
+      const document = (localDb.financial_documents || []).find((item: any) => item.id === p_financial_document_id);
+      if (!document || document.status !== 'posted' || !['payment', 'adjustment'].includes(document.document_type) || (welfareCase.branch_id && document.branch_id !== welfareCase.branch_id)) return { data: null, error: { code: '23514', message: 'A posted payment or adjustment document in the case branch is required.' } };
+      const created = { id: createMockUuid(), case_id: p_case_id, assistance_type: p_assistance_type, financial_document_id: p_financial_document_id, description: p_description || null, approved_by_profile_id: actor.id, provided_at: new Date().toISOString(), created_at: new Date().toISOString() };
+      localDb.welfare_assistance = [...(localDb.welfare_assistance || []), created];
+      saveLocalDatabase(localDb);
+      return { data: created, error: null };
+    }
+
     if (functionName === 'manage_event_registration') {
       const { p_action, p_event_id, p_registration_id, p_member_id, p_member_name, p_email, p_phone } = args;
       const canManageEventScope = (permissionKey: string, branchId: string | null | undefined) => {
