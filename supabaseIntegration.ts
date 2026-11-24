@@ -19,11 +19,12 @@ const integrationMode = import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowe
 // Mock login remains the default until real Supabase Auth is explicitly enabled.
 const authMode = import.meta.env.VITE_SUPABASE_AUTH?.trim().toLowerCase() ?? '';
 export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
-export const supabaseIntegrationEnabled =
-  integrationMode === 'enabled' || integrationMode === 'finance';
+// Keep non-finance modules on the local mock adapter when VITE_SUPABASE_INTEGRATION=finance.
+// Full live integration across non-finance modules only activates when set to "enabled".
+export const supabaseIntegrationEnabled = integrationMode === 'enabled';
 export const supabaseAuthEnabled = authMode === 'enabled';
 
-if (supabaseIntegrationEnabled && !isSupabaseConfigured) {
+if ((supabaseIntegrationEnabled || integrationMode === 'finance') && !isSupabaseConfigured) {
   console.warn(
     'Supabase integration is enabled, but VITE_SUPABASE_URL or a publishable key is missing.'
   );
@@ -44,7 +45,7 @@ export const supabaseDataClient = isSupabaseConfigured
 export function requireSupabaseDataClient() {
   if (!supabaseIntegrationEnabled) {
     throw new Error(
-      'Supabase integration is disabled. Set VITE_SUPABASE_INTEGRATION=finance (or enabled) to enable it.'
+      'Supabase integration is disabled. Set VITE_SUPABASE_INTEGRATION=enabled to enable it.'
     );
   }
   if (!supabaseDataClient) {

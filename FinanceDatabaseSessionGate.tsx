@@ -85,10 +85,42 @@ export const FinanceDatabaseSessionGate: React.FC<Props> = ({ mockProfile, child
     })}</>;
   }
 
+  const hasSupabaseUrl = Boolean(import.meta.env.VITE_SUPABASE_URL?.trim());
+  const hasPublishableKey = Boolean(
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  );
+  const integrationMode = (import.meta.env.VITE_SUPABASE_INTEGRATION || '').trim().toLowerCase();
+
   if (!isFinanceSupabaseConfigured) return (
     <section className="mx-auto max-w-2xl rounded-2xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-950">
       <h2 className="font-black">Finance database connection is not configured</h2>
       <p className="mt-2">Set VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY and VITE_SUPABASE_INTEGRATION=finance in the local or deployment environment, then restart/redeploy SCMS. Never use a service-role or secret key in the browser.</p>
+      <dl className="mt-4 space-y-1.5 rounded-xl border border-amber-200 bg-white/70 p-3 text-xs">
+        <div className="flex items-center justify-between gap-4">
+          <dt className="font-semibold text-amber-900">VITE_SUPABASE_URL</dt>
+          <dd className={hasSupabaseUrl ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+            {hasSupabaseUrl ? 'Configured' : 'Missing'}
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <dt className="font-semibold text-amber-900">VITE_SUPABASE_PUBLISHABLE_KEY</dt>
+          <dd className={hasPublishableKey ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+            {hasPublishableKey ? 'Configured' : 'Missing'}
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <dt className="font-semibold text-amber-900">VITE_SUPABASE_INTEGRATION</dt>
+          <dd className={integrationMode === 'finance' ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+            {integrationMode ? `Current: "${integrationMode}" (requires "finance")` : 'Not set (requires "finance")'}
+          </dd>
+        </div>
+      </dl>
+      {import.meta.env.DEV && (
+        <p className="mt-3 text-xs text-amber-900">
+          For isolated local UI testing without a Supabase database, set <code>VITE_SUPABASE_INTEGRATION=mock</code> in <code>.env.local</code> and restart the dev server.
+        </p>
+      )}
     </section>
   );
   if (loading) return <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-600"><Loader2 className="animate-spin" size={17} /> Checking secure Finance session…</div>;
