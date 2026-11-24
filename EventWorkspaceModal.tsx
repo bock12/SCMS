@@ -18,6 +18,7 @@ import {
   Landmark, Wallet, ArrowDownRight, ArrowUpRight, Receipt, CreditCard, Smartphone, MoreHorizontal, ArrowUpDown
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import { updateEventRegistrationAttendance } from './eventRegistrationService';
 import { getRequisitions, saveRequisitions } from './requisitionService';
 import { getEventBudgetApproval } from './eventBudgetService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
@@ -1199,15 +1200,10 @@ Currency: SLE`;
   // Manual Attendance Check-In Handler (Present / Absent)
   const handleManualCheckIn = async (regId: string, status: 'checked_in' | 'absent') => {
     try {
-      const { error } = await supabase
-        .from('event_registrations')
-        .update({ 
-          status, 
-          checked_in_at: status === 'checked_in' ? new Date().toISOString() : null 
-        })
-        .eq('id', regId);
-
-      if (error) throw error;
+      await updateEventRegistrationAttendance(
+        regId,
+        status === 'checked_in' ? 'check_in' : 'mark_absent'
+      );
       onRefreshData();
     } catch (e: any) {
       console.error("Attendance update error:", e);
@@ -1760,13 +1756,7 @@ Currency: SLE`;
     setScanErrorMessage(null);
 
     try {
-      const nowIso = new Date().toISOString();
-      const { error } = await supabase
-        .from('event_registrations')
-        .update({ status: 'checked_in', checked_in_at: nowIso })
-        .eq('id', regToMark.id);
-
-      if (error) throw error;
+      await updateEventRegistrationAttendance(regToMark.id, 'check_in');
 
       setScanSuccessMessage(`🎉 ${regToMark.member_name} successfully checked into ${event.title}!`);
       onRefreshData();
