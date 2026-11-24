@@ -422,6 +422,18 @@ BEGIN
     RAISE EXCEPTION 'First approval incorrectly completed the two-step workflow';
   END IF;
 
+  -- Reusing the first approver for the second level must be rejected.
+  -- The failed decision runs in a PL/pgSQL exception subtransaction, so the
+  -- pending second step remains available for the distinct approver below.
+  BEGIN
+    PERFORM set_config('request.jwt.claim.sub', v_approver1_auth::text, true);
+    PERFORM public.decide_financial_document_approval(v_step2_id, 'approved', 'Repeated first approver');
+    RAISE EXCEPTION 'FIN_INT_EXPECTED_DISTINCT_APPROVER_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM = 'FIN_INT_EXPECTED_DISTINCT_APPROVER_DENIAL' THEN RAISE; END IF;
+    IF position('different approver' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
+  END;
+
   PERFORM set_config('request.jwt.claim.sub', v_approver2_auth::text, true);
   v_approval_result := public.decide_financial_document_approval(v_step2_id, 'approved', 'Final approval');
 
