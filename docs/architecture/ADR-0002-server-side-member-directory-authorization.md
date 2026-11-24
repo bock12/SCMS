@@ -41,7 +41,7 @@ Additional rules:
 
 ## Implemented database controls (2026-11-24)
 
-Migration `20261124014000_add_secure_member_directory_write_api.sql` adds:
+Migration `20261124014219_add_secure_member_directory_write_api.sql` adds:
 
 - `public.create_member_profile(p_member jsonb)`
 - `public.update_member_profile(p_profile_id uuid, p_member jsonb)`
