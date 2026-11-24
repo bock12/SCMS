@@ -556,6 +556,14 @@ INSERT INTO public.profiles (id, auth_user_id, first_name, last_name, email) VAL
   ('97400000-0000-4000-8000-000000000005',
    '97300000-0000-4000-8000-000000000005', 'Church', 'Approver', 'fin-org-church-approver@example.invalid');
 
+UPDATE public.profiles
+SET portal_access_status = 'active'
+WHERE auth_user_id IN (
+  '97300000-0000-4000-8000-000000000003',
+  '97300000-0000-4000-8000-000000000004',
+  '97300000-0000-4000-8000-000000000005'
+);
+
 INSERT INTO public.profile_role_assignments (
   profile_id, role_id, scope_type, district_id, assigned_at, is_active
 )
