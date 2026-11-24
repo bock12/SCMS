@@ -46,6 +46,24 @@ CREATE INDEX IF NOT EXISTS ix_ministries_leader_id
   ON public.ministries (leader_id)
   WHERE leader_id IS NOT NULL;
 
+-- Managers retain read access to archived ministry definitions and rosters;
+-- ordinary authenticated users continue to see active ministries only.
+DROP POLICY IF EXISTS ministries_scoped_read ON public.ministries;
+CREATE POLICY ministries_scoped_read
+ON public.ministries
+FOR SELECT TO authenticated
+USING (
+  (
+    status = 'active'
+    AND (
+      branch_id IS NULL
+      OR private.can_access_branch(branch_id)
+      OR private.has_permission('view_members', branch_id)
+    )
+  )
+  OR private.has_permission('manage_ministries', branch_id)
+);
+
 CREATE OR REPLACE FUNCTION private.refresh_ministry_member_count()
 RETURNS trigger
 LANGUAGE plpgsql
