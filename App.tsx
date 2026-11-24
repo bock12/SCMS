@@ -1883,7 +1883,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormBranchId(p.branch_id || 'branch-1');
     setFormMembershipStatus(p.membership_status || 'active');
     setFormMembershipDate(p.membership_date || (p.created_at ? p.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)));
-    setFormAssignedDepartment(p.assigned_department || p.department_name || 'Media & IT Ministry');
     setFormIsBaptized(Boolean(p.is_baptized));
     setFormBaptismDate(p.baptism_date || '');
     setFormBaptizedBy(p.baptized_by || 'Rev. Sarah Johnson');
@@ -1896,8 +1895,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   const handleUnifiedSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (supabaseIntegrationEnabled) {
-      setFormError('Member directory is connected in read-only mode while the secure member write API is being completed. No changes have been saved.');
+    if (supabaseIntegrationEnabled && !supabaseAuthEnabled) {
+      setFormError('Live member writes require a real Supabase Auth session. Mock development login cannot authorize database writes. Enable VITE_SUPABASE_AUTH=enabled when ready to test live authentication.');
       return;
     }
     setFormSaving(true);
@@ -2000,10 +1999,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleToggleArchiveMembership = async (person: Profile) => {
-    if (supabaseIntegrationEnabled) {
-      showToast('error', 'Membership changes require the secure member administration API, which is not yet enabled in the live database.');
-      return;
-    }
     const currentMembership = person.membership_status || 'active';
     const nextMembership: MembershipStatus = currentMembership === 'archived' ? 'active' : 'archived';
     try {
@@ -2696,9 +2691,11 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       3. Portal Account (Optional)
                     </h4>
                     <p className="text-[11px] text-indigo-700 mt-0.5">
-                      {formEnablePortal
-                        ? 'Portal login will be linked via an activation invite (no password stored on profile).'
-                        : 'Directory record only—no portal login or auth user will be created.'}
+                      {supabaseIntegrationEnabled
+                        ? 'Live portal invitations are not enabled yet. Create or edit the member without changing portal access.'
+                        : formEnablePortal
+                          ? 'Portal login will be linked via an activation invite (no password stored on profile).'
+                          : 'Directory record only—no portal login or auth user will be created.'}
                     </p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer font-bold text-indigo-950 shrink-0">
@@ -2706,7 +2703,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       type="checkbox" 
                       checked={formEnablePortal} 
                       onChange={e => setFormEnablePortal(e.target.checked)} 
-                      className="w-4 h-4 text-indigo-600 rounded"
+                      disabled={supabaseIntegrationEnabled}
+                      className="w-4 h-4 text-indigo-600 rounded disabled:opacity-50"
                     />
                     <span>Enable Portal Access</span>
                   </label>
@@ -2716,7 +2714,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
                       <label className="font-bold text-slate-600 uppercase block mb-1">Portal Role</label>
-                      <select value={formRole} onChange={e => setFormRole(e.target.value as AppRole)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold">
+                      <select disabled={supabaseIntegrationEnabled} value={formRole} onChange={e => setFormRole(e.target.value as AppRole)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold disabled:opacity-50">
                         <option value="member">Member</option>
                         <option value="worker">Worker</option>
                         <option value="leader">Leader (Dept Lead)</option>
@@ -2729,7 +2727,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                     </div>
                     <div>
                       <label className="font-bold text-slate-600 uppercase block mb-1">Portal Account Status</label>
-                      <select value={formPortalStatus} onChange={e => setFormPortalStatus(e.target.value as PortalAccountStatus)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold">
+                      <select disabled={supabaseIntegrationEnabled} value={formPortalStatus} onChange={e => setFormPortalStatus(e.target.value as PortalAccountStatus)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold disabled:opacity-50">
                         <option value="active">Active</option>
                         <option value="suspended">Suspended</option>
                         <option value="archived">Archived</option>
