@@ -206,7 +206,7 @@ BEGIN
     p_branch_id,
     pg_catalog.btrim(p_name),
     coalesce(p_description, ''),
-    CASE WHEN v_leader.id IS NULL THEN 'TBD' ELSE pg_catalog.concat_ws(' ', v_leader.first_name, v_leader.last_name) END,
+    CASE WHEN p_leader_id IS NULL THEN 'TBD' ELSE pg_catalog.concat_ws(' ', v_leader.first_name, v_leader.last_name) END,
     p_leader_id,
     coalesce(nullif(pg_catalog.btrim(p_meeting_time), ''), 'Weekly Gathering'),
     0,
@@ -302,7 +302,7 @@ BEGIN
   UPDATE public.ministries
   SET name = pg_catalog.btrim(p_name),
       description = coalesce(p_description, ''),
-      leader_name = CASE WHEN v_leader.id IS NULL THEN 'TBD' ELSE pg_catalog.concat_ws(' ', v_leader.first_name, v_leader.last_name) END,
+      leader_name = CASE WHEN p_leader_id IS NULL THEN 'TBD' ELSE pg_catalog.concat_ws(' ', v_leader.first_name, v_leader.last_name) END,
       leader_id = p_leader_id,
       meeting_time = coalesce(nullif(pg_catalog.btrim(p_meeting_time), ''), 'Weekly Gathering'),
       category = coalesce(nullif(pg_catalog.btrim(p_category), ''), 'General'),
