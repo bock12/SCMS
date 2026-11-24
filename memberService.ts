@@ -192,6 +192,7 @@ export interface PortalInvitationInfo {
   setupToken: string;
   setupUrl: string;
   alreadyActivated: boolean;
+  delivery_method?: 'email' | 'mock';
 }
 
 export interface UnifiedMemberRegistrationInput {
@@ -346,7 +347,8 @@ export async function registerUnifiedMember(
           email,
           setupToken: '',
           setupUrl: '',
-          alreadyActivated: false
+          alreadyActivated: false,
+          delivery_method: 'email'
         }
       };
     } catch (inviteError) {
@@ -486,7 +488,9 @@ export async function updateUnifiedMember(
     : supabase;
   const { data: existing, error: lookupError } = await readClient
     .from('profiles')
-    .select('*')
+    .select(liveMemberDirectoryEnabled
+      ? 'id,auth_user_id,branch_id,first_name,last_name,email,phone,gender,avatar_url,portal_access_status,membership_status,membership_date,created_at,is_baptized,baptism_date,baptized_by_profile_id,baptized_by_name_snapshot,date_of_birth,marital_status,marriage_date,record_status'
+      : '*')
     .eq('id', personId)
     .maybeSingle();
   if (lookupError) throw lookupError;
@@ -709,16 +713,20 @@ export async function enablePortalAccess(
   options?: { email?: string; primary_role?: AppRole }
 ): Promise<UnifiedMemberSaveResult> {
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    await invokeLivePortalAction(personId, 'invite', normalizeMemberEmail(options?.email));
+    const current = await getLiveMemberProfile(personId);
+    const email = normalizeMemberEmail(options?.email ?? current.email);
+    if (!email) throw new Error('A valid email address is required to enable portal access.');
+    const invitation = await invokeLivePortalAction(personId, 'invite', email);
     const profile = await getLiveMemberProfile(personId);
     return {
       profile,
       portalInvite: {
-        authUserId: profile.auth_user_id || '',
-        email: profile.email || '',
+        authUserId: invitation.profile?.auth_user_id || profile.auth_user_id || '',
+        email,
         setupToken: '',
         setupUrl: '',
-        alreadyActivated: false
+        alreadyActivated: false,
+        delivery_method: 'email'
       }
     };
   }
