@@ -524,7 +524,7 @@ $revoked$;
 -- The service-only completion RPC must not be callable by an ordinary user.
 RESET ROLE;
 SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_003_actor_auth_id'), true);
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_003_retry_admin_auth_id'), true);
 DO $service_only$
 BEGIN
   BEGIN
