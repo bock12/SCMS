@@ -1,71 +1,94 @@
 # ADR-0002: Server-Side Member Directory Authorization
 
-- **Status:** Accepted design; implementation pending
+- **Status:** Accepted; scoped create/update API implemented and deployed to the SCMS development database
 - **Date:** 2026-11-13
-- **Decision owners:** SCMS project
+- **Implementation checkpoint:** 2026-11-24
 - **Related:** [ADR-0001 — Unified Member Directory](ADR-0001-unified-member-directory.md), [Member Directory RLS Access Matrix](../security/member-directory-rls-access-matrix.md)
 
 ## Context
 
-The canonical member directory is `public.profiles`. Its current public SELECT policy exposes the complete profile row. The application has role names in `profiles.primary_role`, but custom permission definitions and assignments in `roleService.ts` are persisted in browser local storage. Browser-controlled state is not a trustworthy authorization source.
+The canonical member directory is `public.profiles`. A profile is a church person record and may exist without a portal account. Authentication is linked only through nullable `profiles.auth_user_id`.
 
-The application currently models branch membership through `profiles.branch_id` and district membership through `church_branches.district_id`. It does not yet model tenant ownership or a complete, independently managed staff-scope assignment. The existing self-update policy also does not establish column-level protection for role, branch, membership, or auth-link fields.
+Authorization is stored in database-backed `roles`, `permissions`, `role_permissions`, and `profile_role_assignments`. The active role assignment records an explicit `church`, `district`, or `branch` scope. Browser local storage and React state are not authorization sources.
+
+The database provides `private.current_profile_id()`, `private.has_permission()`, and `private.has_district_permission()` helpers. `private.has_permission(permission_key, branch_id)` resolves church-wide, explicit branch, and district assignments against the target branch's district. A member's `profiles.branch_id` is their home branch; staff authority is derived from the separate trusted role-assignment record.
 
 ## Decision
 
-Adopt the following baseline access model for the member directory:
+Use PostgreSQL RLS for row visibility and narrowly scoped, permission-checked RPCs for staff-managed member writes.
 
-| Role | Directory scope | Default directory capability |
+| Role | Directory scope | Default capability |
 |---|---|---|
-| `super_admin` | All records in the authorized organization | Full organization-wide directory administration |
-| `admin` | All records in the church | Church-wide directory administration |
-| `district_admin` | All branches in the district to which the staff member is explicitly assigned | View, create, and edit directory records within that district |
-| `pastor` | The branch or branches to which the pastor is explicitly assigned | View, create, and edit directory records within those branches |
-| `finance_officer` | No general directory scope | No directory-wide access; only purpose-specific minimum member data through an explicitly authorized finance workflow |
-| `leader` | No general directory scope | Own profile only unless a separate, narrowly scoped permission is granted |
-| `worker` | No general directory scope | Own profile only unless a separate, narrowly scoped permission is granted |
+| `super_admin` | Current single church | Church-wide view/create/edit |
+| `admin` | Current single church | Church-wide view/create/edit |
+| `district_admin` | Explicitly assigned district | View/create/edit in branches in that district |
+| `pastor` | Explicitly assigned branch or branches | View/create/edit in assigned branches |
+| `finance_officer` | No general directory scope | Purpose-specific minimum data only |
+| `leader`, `worker` | Own profile by default | No directory-wide access without a separate grant |
 | `member` | Own profile | Own profile only |
+
+The current schema represents one church. Church-wide authority does not imply cross-tenant access in a future multi-tenant model.
 
 Additional rules:
 
-1. Directory deletion is denied by default for all roles. Use a controlled archive/status workflow instead of deleting people.
-2. `super_admin` is organization-wide, but the current schema represents a single church and has no tenant identifier. Until tenant isolation is implemented, `super_admin` and `admin` both operate within the single configured church. Never interpret this decision as permission to cross future tenant boundaries.
-3. The staff member's branch/district assignment must be an explicit, trusted server-side assignment. A user's ability to edit their own `profiles.branch_id` must not grant or change their authorization scope.
-4. `profiles.primary_role`, `profiles.branch_id`, `profiles.auth_user_id`, membership lifecycle fields, and other authorization-controlled fields must not be mutable through ordinary self-service profile updates.
-5. Custom role and permission state in browser local storage is presentation/workflow state only. It must not grant database access.
-6. Any additional access for a finance officer, leader, or worker must be an explicit server-side grant with a defined permission, scope, and purpose.
-7. Staff member directory actions must be authorized by PostgreSQL RLS and/or narrowly scoped server-side functions. Client-side route guards are supplementary only.
+1. Directory deletion is denied by default. Use membership archive/status workflows.
+2. A person's branch cannot be changed through generic profile editing. Use the approved transfer workflow.
+3. `profiles.auth_user_id`, portal lifecycle, role assignments, branch, membership lifecycle and baptism records are server-managed.
+4. Ordinary self-service updates may change basic profile details, but not protected membership, branch, portal or authentication fields.
+5. Portal account provisioning/revocation is a separate trusted Auth workflow. Member creation never creates credentials implicitly.
+6. Role assignment is a separate operation. The member form does not grant a portal role or permissions.
+7. Browser-side permission checks are presentation controls only.
 
-## Scope resolution
+## Implemented database controls (2026-11-24)
 
-The intended default resolution rules are:
+Migration `20261124014000_add_secure_member_directory_write_api.sql` adds:
 
-- `admin`: all branches belonging to the current church.
-- `district_admin`: target profile's branch must belong to the district explicitly assigned to the acting staff profile.
-- `pastor`: target profile's branch must be one of the acting pastor's explicitly assigned branches.
-- `super_admin`: all branches in the current organization; a future multi-tenant implementation must additionally enforce matching organization/tenant identity.
-- All other roles: own profile only unless an explicit server-side grant authorizes a narrower use case.
+- `public.create_member_profile(p_member jsonb)`
+- `public.update_member_profile(p_profile_id uuid, p_member jsonb)`
+- `private.assert_unique_profile_contacts(...)`, using transaction advisory locks to serialize email/phone duplicate checks.
+- `private.guard_profile_direct_updates()` and trigger `guard_profile_direct_updates`, which blocks ordinary `anon`/`authenticated` updates to branch, membership lifecycle/date, baptism, portal-link/status, record status and creation timestamp fields. It also blocks direct login-email changes for linked portal accounts.
+- A `manage_members` permission grant to the `pastor` role, still constrained by the actor's trusted branch assignment.
 
-The current `profiles.branch_id` may be used as the member's home branch, but it must not silently double as a trusted staff-scope assignment until protected against self-service modification and validated as such. District scope must be derived from trusted district assignment, not inferred from a user-editable branch field.
+Both public RPCs:
 
-## Consequences
+- Require a real `auth.uid()` and a linked church profile.
+- Require `manage_members` for the target branch.
+- Validate allowed JSON keys, names, contact formats, dates and membership enums.
+- Reject unsupported/protected fields.
+- Preserve the existing branch on update and reject generic branch transfers.
+- Keep `auth_user_id` and portal lifecycle fields unchanged.
+- Do not assign roles or provision portal accounts.
+- Are `SECURITY DEFINER` with an empty search path, explicit identity/permission checks, and execute granted only to `authenticated` (not `anon` or `PUBLIC`).
 
-### Positive
+The Supabase security advisor reports the expected generic warning that authenticated users can execute SECURITY DEFINER RPCs. This is intentional for these API operations; the functions must retain their explicit authentication, linked-profile, scope and field-allowlist checks. Do not broaden grants or remove these checks.
 
-- Access boundaries are explicit and testable.
-- District and branch staff cannot automatically browse the entire congregation.
-- Finance, ministry, and volunteer roles do not receive broad member-data access merely because of their job title.
-- The design is compatible with a future tenant-aware model without granting cross-tenant access.
+## Current read and write behavior
 
-### Required work before enforcement
+- The live `profiles` RLS SELECT policy is `profiles_scoped_read`: a user can read their own profile or profiles in a branch for which `view_members` is effective.
+- The old anonymous public-read policy is absent.
+- The existing self-update policy is reinforced by the new trigger for protected fields.
+- Live create/edit and membership-status changes use the new RPCs when database integration and real Supabase Auth are enabled.
+- Mock development login is not a Supabase Auth session. The UI/service refuse live writes when `VITE_SUPABASE_AUTH` is not enabled.
+- Live portal invitations, role assignment from the member form, portal suspension/revocation and branch transfers are not implemented by these two RPCs and remain separate workflows.
 
-1. Introduce trusted server-side staff-scope assignments and narrowly scoped permission grants.
-2. Protect role, branch/scope, membership lifecycle, and auth-link fields from ordinary client writes.
-3. Move directory list/create/update operations to a server-authorized path, with minimal field projections.
-4. Replace the broad public profile policy only after all legitimate consumers use the scoped path.
-5. Add database tests for anonymous denial, own-profile access, admin church-wide access, district isolation, pastor branch isolation, unassigned staff denial, cross-tenant denial when tenants exist, and role/scope escalation attempts.
-6. Verify the complete schema baseline and migration history against a disposable Supabase-compatible PostgreSQL database before production rollout.
+## Verification completed
 
-## Deployment safety
+The SQL regression script `supabase/tests/member-directory-write-api.sql` was executed against the connected development database inside a transaction and rolled back. It verified:
 
-This ADR does not itself change RLS policies, grant permissions, or execute a migration. The existing broad SELECT policy remains a known security defect until the implementation sequence is completed. Do not deploy a partial restrictive policy that breaks the directory, and do not leave the public policy in place as a claimed security fix. Production migration remains blocked pending schema/migration-history verification and database-level tests.
+- Authorized create and update through the RPCs.
+- Rejection of protected create fields.
+- Rejection of generic branch reassignment.
+- Database-level duplicate email rejection.
+- Rejection of an unlinked actor.
+- Rejection of direct membership-status updates from an authenticated session.
+
+A post-test query confirmed that no test member remained. Function execute privileges were checked: authenticated can execute the two RPCs; anon and PUBLIC cannot.
+
+## Remaining work
+
+1. Add disposable-database coverage for branch and district isolation using separate staff fixtures.
+2. Complete a minimal-field directory read API/projection and audit every consumer before further tightening profile SELECT access.
+3. Complete the trusted server-side portal invitation, suspension and revocation workflow.
+4. Complete the separate member-transfer workflow and its database authorization tests.
+5. Enable real Supabase Auth only when the project owner is ready; mock login remains the development default.
+6. Run browser acceptance with real Supabase Auth before treating live member administration as production-ready.
