@@ -62,11 +62,11 @@ Both functions revoke execute from PUBLIC and anon. Their SECURITY DEFINER statu
 - Authorized create/update, protected-field rejection, branch-change rejection, duplicate-email rejection, unlinked-actor denial and direct-update trigger behavior passed.
 - No test member records remain.
 - The browser app still requires a real Supabase Auth session. Mock development login cannot authorize live database writes.
-- Portal provisioning, portal lifecycle administration, branch transfer, branch/district isolation fixtures and minimal-field read APIs remain follow-up work.
+- Branch and district isolation are now covered by rollback-only SQL tests using temporary scoped assignments. Portal provisioning, portal lifecycle administration, branch transfer and minimal-field read APIs remain follow-up work.
 
 ## 7. Required follow-up
 
-1. Add disposable-database branch and district isolation tests with separate staff assignments.
+1. **Complete:** disposable-database branch and district isolation tests use separate branch- and district-scoped assignments.
 2. Replace broad profile projections with a minimal scoped read API after auditing every legitimate consumer.
 3. Complete trusted portal provisioning and revocation.
 4. Complete transfer RPC and tests.
