@@ -1809,7 +1809,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const loadDirectory = async () => {
     setLoading(true);
     try {
-      const branchClient: any = supabaseIntegrationEnabled && supabaseDataClient
+      const branchClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
         ? supabaseDataClient
         : supabase;
       const [directoryRows, branchRes] = await Promise.all([
