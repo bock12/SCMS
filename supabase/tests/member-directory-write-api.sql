@@ -200,6 +200,15 @@ BEGIN
   EXCEPTION WHEN SQLSTATE '42501' THEN
     NULL;
   END;
+
+  BEGIN
+    UPDATE public.profiles
+    SET auth_user_id = NULL
+    WHERE id = current_setting('scms.test_actor_profile_id')::uuid;
+    RAISE EXCEPTION 'Expected direct auth-link update to be blocked.';
+  EXCEPTION WHEN SQLSTATE '42501' THEN
+    NULL;
+  END;
 END;
 $guard$;
 
@@ -240,6 +249,14 @@ BEGIN
 
   IF v_created.branch_id <> current_setting('scms.test_scope_branch_a')::uuid THEN
     RAISE EXCEPTION 'Branch-scoped pastor did not create within the assigned branch.';
+  END IF;
+
+  v_created := public.update_member_profile(
+    v_created.id,
+    pg_catalog.jsonb_build_object('first_name', 'Branch Scoped Updated')
+  );
+  IF v_created.first_name <> 'Branch Scoped Updated' THEN
+    RAISE EXCEPTION 'Branch-scoped pastor could not update within the assigned branch.';
   END IF;
 
   BEGIN
@@ -306,6 +323,14 @@ BEGIN
 
   IF v_created.branch_id <> current_setting('scms.test_scope_branch_a')::uuid THEN
     RAISE EXCEPTION 'District-scoped administrator did not create within the assigned district.';
+  END IF;
+
+  v_created := public.update_member_profile(
+    v_created.id,
+    pg_catalog.jsonb_build_object('first_name', 'District Scoped Updated')
+  );
+  IF v_created.first_name <> 'District Scoped Updated' THEN
+    RAISE EXCEPTION 'District-scoped administrator could not update within the assigned district.';
   END IF;
 
   BEGIN
