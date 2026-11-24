@@ -2799,7 +2799,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       {/* Ministries Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredMinistries.map((m) => {
-          const leaderProfile = profiles.find(p => p.id === m.leader_id || `${p.first_name} ${p.last_name}` === m.leader_name);
+          const leaderProfile = profiles.find(p => p.id === m.leader_id);
           const rolesList = m.roles_and_responsibilities || [];
           const isSocial = m.type === 'social_fellowship';
           const deptPendingCount = allJoinRequests.filter(r =>
@@ -3111,15 +3111,9 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                   ))}
                 </select>
 
-                {!newMinistry.leader_id && (
-                  <input 
-                    type="text" 
-                    placeholder="Or enter leader name manually..."
-                    value={newMinistry.leader_name}
-                    onChange={(e) => setNewMinistry({ ...newMinistry, leader_name: e.target.value })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs mt-2 outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                )}
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Leadership appointments must reference a congregation member. You can leave this blank and appoint a leader later.
+                </p>
               </div>
 
               {/* Schedule & Description */}
@@ -3707,7 +3701,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                   </div>
 
                   {(() => {
-                    const lProfile = profiles.find(p => p.id === editingMinistry.leader_id || `${p.first_name} ${p.last_name}` === editingMinistry.leader_name);
+                    const lProfile = profiles.find(p => p.id === editingMinistry.leader_id);
                     return (
                       <div className="p-3 bg-white rounded-xl border border-amber-200 flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full overflow-hidden bg-amber-100 border-2 border-amber-300 shrink-0">
