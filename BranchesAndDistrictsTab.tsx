@@ -91,7 +91,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   const [branchIsMain, setBranchIsMain] = useState(false);
   const [branchModalError, setBranchModalError] = useState<string | null>(null);
 
-  // Assign Branch Leadership Modal State
+  // Independent branch/district leadership appointment modal state
   const [leadershipTarget, setLeadershipTarget] = useState<
     | { scope_type: 'branch'; branch: ChurchBranch }
     | { scope_type: 'district'; district: District }
@@ -1276,7 +1276,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                             </div>
                           </div>
 
-                          {/* Assigned Branch Leadership */}
+                          {/* Branch Leadership Appointments */}
                           <div className="pt-3 border-t border-slate-100 space-y-2">
                             <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                               <ShieldCheck size={13} className="text-indigo-600" />
@@ -1834,7 +1834,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         </div>
       )}
 
-      {/* Assign Branch Leadership Modal */}
+      {/* Branch and District Leadership Appointment Modal */}
       {leadershipTarget && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-[1px] p-0 sm:p-4"
