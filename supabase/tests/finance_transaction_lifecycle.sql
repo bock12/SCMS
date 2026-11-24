@@ -357,6 +357,10 @@ BEGIN
     (v_approver1_profile, v_approver1_auth, v_branch_id, 'Finance', 'Approver One', 'fin-int-approver1@example.invalid'),
     (v_approver2_profile, v_approver2_auth, v_branch_id, 'Finance', 'Approver Two', 'fin-int-approver2@example.invalid');
 
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id IN (v_approver1_auth, v_approver2_auth);
+
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
   )
