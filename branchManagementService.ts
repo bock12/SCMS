@@ -5,11 +5,6 @@ import {
   getLeadershipAppointments,
   type LeadershipAppointment
 } from './leadershipAppointmentService';
-import {
-  getProfileRoleData,
-  type ProfileRoleAssignment,
-  type SystemRole
-} from './profileRoleAssignmentService';
 
 export interface BranchGovernanceScope {
   canCreateDistrict: boolean;
@@ -59,17 +54,14 @@ export function normalizeChurchBranch(row: any): ChurchBranch {
 export async function getBranchGovernanceData(): Promise<{
   districts: District[];
   branches: ChurchBranch[];
-  roles: SystemRole[];
-  assignments: ProfileRoleAssignment[];
   profiles: Profile[];
   branchMemberCounts: Record<string, BranchMemberCountSnapshot>;
   leadershipAppointments: LeadershipAppointment[];
 }> {
   const client = resolveDataClient(supabase);
-  const [districtsResult, branchesResult, roleData, profilesResult, summaryResult, leadershipAppointments] = await Promise.all([
+  const [districtsResult, branchesResult, profilesResult, summaryResult, leadershipAppointments] = await Promise.all([
     client.from('districts').select('*').order('name', { ascending: true }),
     client.from('church_branches').select('*').order('name', { ascending: true }),
-    getProfileRoleData(),
     client.from('profiles').select('*').order('first_name', { ascending: true }),
     client.rpc('get_branch_governance_summaries'),
     getLeadershipAppointments()
@@ -94,8 +86,6 @@ export async function getBranchGovernanceData(): Promise<{
   return {
     districts: (districtsResult.data || []) as District[],
     branches: ((branchesResult.data || []) as any[]).map(normalizeChurchBranch),
-    roles: roleData.roles,
-    assignments: roleData.assignments,
     profiles: (profilesResult.data || []) as Profile[],
     branchMemberCounts,
     leadershipAppointments
