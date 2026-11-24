@@ -45,6 +45,7 @@ on:
       - "supabase/migrations/20261124031237_secure_event_registration_and_attendance_api.sql"
       - "supabase/migrations/20261124031522_scope_event_attendance_sessions_by_branch.sql"
       - "supabase/migrations/20261124031837_secure_welfare_case_campaign_finance_apis.sql"
+      - "supabase/migrations/20261124032240_scope_transfer_manager_reads.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1274,6 +1275,9 @@ jobs:
 
       - name: Apply secure welfare case, campaign and finance-link APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124031837_secure_welfare_case_campaign_finance_apis.sql
+
+      - name: Scope member directory reads for transfer managers
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032240_scope_transfer_manager_reads.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
