@@ -145,7 +145,7 @@ BEGIN
   FROM public.profiles p
   WHERE p.id = p_profile_id
     AND p.record_status = 'active'
-    AND p.membership_status NOT IN ('archived', 'transferred');
+    AND p.membership_status = 'active';
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'The selected member is not an active congregation member.' USING ERRCODE = '23503';
@@ -229,7 +229,7 @@ BEGIN
       ended_by_profile_id = v_actor_profile_id,
       end_reason = NULLIF(btrim(coalesce(p_end_reason, '')), ''),
       effective_to = CASE
-        WHEN effective_to IS NULL OR effective_to > current_date THEN current_date
+        WHEN effective_to IS NULL OR effective_to > GREATEST(current_date, effective_from) THEN GREATEST(current_date, effective_from)
         ELSE effective_to
       END,
       updated_at = now()
