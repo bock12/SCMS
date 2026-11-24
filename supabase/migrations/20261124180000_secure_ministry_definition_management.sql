@@ -49,6 +49,47 @@ CREATE INDEX IF NOT EXISTS ix_ministries_leader_id
   ON public.ministries (leader_id)
   WHERE leader_id IS NOT NULL;
 
+-- Backfill existing canonical ministry leader references into the roster.
+-- This removes the need to infer membership from a leader-name string or browser cache.
+UPDATE public.ministries ministry
+SET leader_id = NULL,
+    leader_name = 'TBD',
+    updated_at = now()
+WHERE ministry.status = 'active'
+  AND ministry.leader_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.profiles member
+    WHERE member.id = ministry.leader_id
+      AND member.record_status = 'active'
+      AND member.membership_status = 'active'
+      AND (ministry.branch_id IS NULL OR member.branch_id = ministry.branch_id)
+  );
+
+INSERT INTO public.ministry_members (
+  ministry_id, member_id, role_title, duty, status, joined_at
+)
+SELECT
+  ministry.id,
+  ministry.leader_id,
+  'Department Leader',
+  'Ministry leadership and team oversight',
+  'active',
+  CURRENT_DATE
+FROM public.ministries ministry
+JOIN public.profiles member
+  ON member.id = ministry.leader_id
+ AND member.record_status = 'active'
+ AND member.membership_status = 'active'
+WHERE ministry.status = 'active'
+  AND ministry.leader_id IS NOT NULL
+  AND (ministry.branch_id IS NULL OR member.branch_id = ministry.branch_id)
+ON CONFLICT (ministry_id, member_id)
+DO UPDATE SET
+  role_title = 'Department Leader',
+  duty = coalesce(public.ministry_members.duty, EXCLUDED.duty),
+  status = 'active';
+
 -- Managers retain read access to archived ministry definitions and rosters;
 -- ordinary authenticated users continue to see active ministries only.
 DROP POLICY IF EXISTS ministries_scoped_read ON public.ministries;
