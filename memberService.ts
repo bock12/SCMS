@@ -116,9 +116,11 @@ export function hasPortalAccess(person: Pick<Profile, 'auth_user_id'> | null | u
 export async function getMembers(): Promise<Profile[]> {
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
     if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+    // Keep the live directory projection to the fields required by the
+    // directory view model. RLS remains the authority for which rows are visible.
     const { data, error } = await supabaseDataClient
       .from('profiles')
-      .select('*')
+      .select('id,auth_user_id,branch_id,first_name,last_name,email,phone,gender,avatar_url,portal_access_status,membership_status,membership_date,created_at,is_baptized,baptism_date,baptized_by_profile_id,baptized_by_name_snapshot,date_of_birth,marital_status,marriage_date,record_status')
       .order('first_name', { ascending: true });
     if (error) throw error;
 
