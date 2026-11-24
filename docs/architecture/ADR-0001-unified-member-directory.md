@@ -89,3 +89,10 @@ The project currently uses mock authentication and a local mock database. Supaba
 - Existing member-related foreign keys and service APIs need a coordinated migration.
 - The mock authentication layer and sign-in profile lookup must resolve profiles through `auth_user_id`.
 - Existing data must be backfilled before the old `members` table can be retired.
+
+
+## Implementation status update (2026-11-24)
+
+The canonical `profiles` directory, optional portal-link model and scoped member write API are now implemented in the repository. The connected SCMS development database has the canonical profile schema and the MEM-INT-002 write migration deployed. The live create/edit API requires real Supabase Auth and a trusted `manage_members` scope; mock login remains the development default and is not accepted as a database identity.
+
+Live member creation/editing does not provision portal accounts. Portal invitations and revocation remain separate trusted server-side work. See ADR-0002 for the authorization and RPC contract.
