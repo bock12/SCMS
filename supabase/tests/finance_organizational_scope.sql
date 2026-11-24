@@ -544,32 +544,40 @@ $finance_org_security$;
 -- journal posting, and cross-scope isolation verification.
 BEGIN;
 INSERT INTO auth.users (id, email) VALUES
-  ('97300000-0000-4000-8000-000000000003', 'fin-org-district-approver@example.invalid'),
+  ('97300000-0000-4000-8000-000000000003', 'fin-org-district-approver-one@example.invalid'),
   ('97300000-0000-4000-8000-000000000004', 'fin-org-church-admin@example.invalid'),
-  ('97300000-0000-4000-8000-000000000005', 'fin-org-church-approver@example.invalid');
+  ('97300000-0000-4000-8000-000000000005', 'fin-org-church-approver@example.invalid'),
+  ('97300000-0000-4000-8000-000000000006', 'fin-org-district-approver-two@example.invalid');
 
 INSERT INTO public.profiles (id, auth_user_id, first_name, last_name, email) VALUES
   ('97400000-0000-4000-8000-000000000003',
-   '97300000-0000-4000-8000-000000000003', 'District', 'Approver', 'fin-org-district-approver@example.invalid'),
+   '97300000-0000-4000-8000-000000000003', 'District', 'Approver One', 'fin-org-district-approver-one@example.invalid'),
   ('97400000-0000-4000-8000-000000000004',
    '97300000-0000-4000-8000-000000000004', 'Church', 'Creator', 'fin-org-church-admin@example.invalid'),
   ('97400000-0000-4000-8000-000000000005',
-   '97300000-0000-4000-8000-000000000005', 'Church', 'Approver', 'fin-org-church-approver@example.invalid');
+   '97300000-0000-4000-8000-000000000005', 'Church', 'Approver', 'fin-org-church-approver@example.invalid'),
+  ('97400000-0000-4000-8000-000000000006',
+   '97300000-0000-4000-8000-000000000006', 'District', 'Approver Two', 'fin-org-district-approver-two@example.invalid');
 
 UPDATE public.profiles
 SET portal_access_status = 'active'
 WHERE auth_user_id IN (
   '97300000-0000-4000-8000-000000000003',
   '97300000-0000-4000-8000-000000000004',
-  '97300000-0000-4000-8000-000000000005'
+  '97300000-0000-4000-8000-000000000005',
+  '97300000-0000-4000-8000-000000000006'
 );
 
 INSERT INTO public.profile_role_assignments (
   profile_id, role_id, scope_type, district_id, assigned_at, is_active
 )
-SELECT '97400000-0000-4000-8000-000000000003', r.id, 'district',
+SELECT p.id, r.id, 'district',
        '97000000-0000-4000-8000-000000000001', now() - interval '1 day', true
-FROM public.roles r
+FROM (VALUES
+  ('97400000-0000-4000-8000-000000000003'::uuid),
+  ('97400000-0000-4000-8000-000000000006'::uuid)
+) AS p(id)
+CROSS JOIN public.roles r
 WHERE r.name IN ('finance_officer', 'admin') AND r.is_active;
 
 INSERT INTO public.profile_role_assignments (
@@ -780,7 +788,7 @@ BEGIN
     IF position('required permission' in lower(SQLERRM)) = 0 THEN RAISE; END IF;
   END;
 
-  -- District A second approver sees and completes Step 1 then Step 2 of the payment, and Step 1 of the receipt
+  -- District approver one completes Step 1; a separate district approver completes Step 2.
   PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000003', true);
   v_docs := public.get_finance_scope_documents('district', '97000000-0000-4000-8000-000000000001');
   SELECT (doc->>'actor_approval_step_id')::uuid INTO v_step1_id
@@ -795,6 +803,7 @@ BEGIN
     RAISE EXCEPTION '2-step district payment completed prematurely after step 1: %', v_approval_res;
   END IF;
 
+  PERFORM set_config('request.jwt.claim.sub', '97300000-0000-4000-8000-000000000006', true);
   v_docs := public.get_finance_scope_documents('district', '97000000-0000-4000-8000-000000000001');
   SELECT (doc->>'actor_approval_step_id')::uuid INTO v_step2_id
   FROM jsonb_array_elements(v_docs->'documents') doc
