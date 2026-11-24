@@ -287,8 +287,9 @@ BEGIN
   WHERE id = current_setting('scms.mem_int_003_member_id')::uuid;
 
   IF v_profile.auth_user_id IS DISTINCT FROM current_setting('scms.mem_int_003_actor_auth_id')::uuid
-    OR v_profile.portal_access_status <> 'active' THEN
-    RAISE EXCEPTION 'Email confirmation did not activate the linked member portal account.';
+    OR v_profile.portal_access_status <> 'active'
+    OR v_profile.membership_status <> 'active' THEN
+    RAISE EXCEPTION 'Email confirmation did not activate portal access independently of membership status.';
   END IF;
 END;
 $confirmed$;
@@ -401,8 +402,13 @@ BEGIN
   WHERE id = current_setting('scms.mem_int_003_member_id')::uuid;
 
   IF v_profile.auth_user_id IS NOT NULL
-    OR v_profile.portal_access_status <> 'not_invited' THEN
-    RAISE EXCEPTION 'Portal revocation did not unlink the Auth identity and reset portal state.';
+    OR v_profile.portal_access_status <> 'not_invited'
+    OR v_profile.membership_status <> 'active'
+    OR NOT EXISTS (
+      SELECT 1 FROM public.profile_role_assignments
+      WHERE profile_id = v_profile.id AND is_active
+    ) THEN
+    RAISE EXCEPTION 'Portal revocation changed membership status or removed role assignments.';
   END IF;
 END;
 $revoked$;
