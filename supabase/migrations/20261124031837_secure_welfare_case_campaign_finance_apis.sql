@@ -261,8 +261,7 @@ CREATE OR REPLACE FUNCTION public.record_welfare_contribution(p_campaign_id uuid
  LANGUAGE sql
  SET search_path TO ''
 AS $function$ SELECT private.record_welfare_contribution(p_campaign_id,p_financial_document_id,p_contributing_member_id,p_contribution_date); $function$
-
-
+;
 
 REVOKE ALL ON FUNCTION private.manage_welfare_case(text,uuid,uuid,text,text,text,text,text,uuid) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION private.manage_welfare_campaign(text,uuid,uuid,text,text,text,numeric,numeric,character,date,text) FROM PUBLIC, anon;
