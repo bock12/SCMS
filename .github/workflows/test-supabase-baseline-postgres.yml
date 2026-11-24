@@ -114,12 +114,12 @@ jobs:
           RETURNS jsonb
           LANGUAGE sql
           STABLE
-          AS $
+          AS $authjwt$
             SELECT jsonb_build_object(
               'role',
               NULLIF(current_setting('request.jwt.claim.role', true), '')
             )
-          $;
+          $authjwt$;
           GRANT USAGE ON SCHEMA auth TO authenticated, service_role;
           GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
           GRANT EXECUTE ON FUNCTION auth.jwt() TO authenticated, service_role;
