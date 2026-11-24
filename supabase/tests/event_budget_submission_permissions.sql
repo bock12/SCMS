@@ -31,6 +31,10 @@ BEGIN
     (v_other_manager_profile, v_other_manager_auth, v_branch_id, 'Other', 'Manager', 'fin-int-002-other-manager@example.invalid'),
     (v_finance_only_profile, v_finance_only_auth, v_branch_id, 'Finance', 'Only', 'fin-int-002-finance-only@example.invalid');
 
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id IN (v_event_manager_auth, v_other_manager_auth, v_finance_only_auth);
+
   INSERT INTO public.roles (id, name, description, is_system, is_active)
   VALUES (v_event_manager_role_id, 'event_manager_test', 'Test-only least-privilege event manager role', false, true);
 
