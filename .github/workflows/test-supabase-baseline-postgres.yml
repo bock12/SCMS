@@ -38,6 +38,7 @@ on:
       - "supabase/migrations/20261124021623_scope_member_directory_and_role_reads.sql"
       - "supabase/migrations/20261124021829_harden_member_portal_revocation_retry.sql"
       - "supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql"
+      - "supabase/migrations/20261124022203_block_suspended_self_profile_reads.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
@@ -1229,6 +1230,9 @@ jobs:
 
       - name: Block suspended portal direct-scope shortcuts
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql
+
+      - name: Block suspended self-profile reads
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124022203_block_suspended_self_profile_reads.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
