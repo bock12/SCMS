@@ -52,7 +52,7 @@ import {
   archiveMinistryDefinition
 } from './ministryDefinitionService';
 import {
-  getAllJoinRequests,
+  fetchAllJoinRequests,
   approveMinistryJoinRequest,
   declineMinistryJoinRequest,
   reopenMinistryJoinRequest,
@@ -2223,7 +2223,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const [rosterBusy, setRosterBusy] = useState(false);
 
   // Join requests review state
-  const [allJoinRequests, setAllJoinRequests] = useState<MinistryJoinRequest[]>(() => getAllJoinRequests());
+  const [allJoinRequests, setAllJoinRequests] = useState<MinistryJoinRequest[]>([]);
   const [adminJoinTab, setAdminJoinTab] = useState<'pending' | 'history'>('pending');
   const [adminReviewingReq, setAdminReviewingReq] = useState<{
     mode: 'approve' | 'decline';
@@ -2234,6 +2234,12 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const [adminReviewStatus, setAdminReviewStatus] = useState<'active' | 'in_training' | 'on_leave'>('active');
   const [adminReviewNote, setAdminReviewNote] = useState('');
   const [adminReviewBusy, setAdminReviewBusy] = useState(false);
+
+  const refreshAllJoinRequests = async () => {
+    const requests = await fetchAllJoinRequests();
+    setAllJoinRequests(requests);
+    return requests;
+  };
 
   const fetchMinistriesAndProfiles = async () => {
     try {
@@ -2253,7 +2259,12 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
 
   useEffect(() => {
     fetchMinistriesAndProfiles();
-    const syncJoinRequests = () => setAllJoinRequests(getAllJoinRequests());
+    const syncJoinRequests = () => {
+      refreshAllJoinRequests().catch(error => {
+        setRosterNotice(error?.message || 'Unable to load ministry join requests.');
+      });
+    };
+    syncJoinRequests();
     window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, syncJoinRequests);
     window.addEventListener('storage', syncJoinRequests);
     return () => {
@@ -2313,8 +2324,8 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     setDeptRoster([]);
     setSelectedRosterMemberId('');
     setAddMemberDutyInput('');
-    setAllJoinRequests(getAllJoinRequests());
     try {
+      await refreshAllJoinRequests();
       setDeptRoster(await loadDeptRoster(m));
     } catch (error: any) {
       console.error('Unable to load department membership roster:', error);
@@ -2325,7 +2336,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const handleAdminReopenJoinRequest = async (req: MinistryJoinRequest) => {
     try {
       await reopenMinistryJoinRequest(req.id, profile || null);
-      setAllJoinRequests(getAllJoinRequests());
+      await refreshAllJoinRequests();
       setAdminJoinTab('pending');
       setRosterSuccessNotice(`Re-opened ${req.applicant_name}'s join request for review.`);
     } catch (error: any) {
@@ -2520,7 +2531,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
           setDeptRoster(reloaded);
           await syncMockMemberCount(editingMinistry, reloaded.length);
         }
-        setAllJoinRequests(getAllJoinRequests());
+        await refreshAllJoinRequests();
         setRosterSuccessNotice(
           `Approved ${adminReviewingReq.req.applicant_name} as ${result.request.assigned_role_title} and notified the applicant.`
         );
@@ -2530,7 +2541,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
           reviewerProfile: profile || null,
           reviewNote: adminReviewNote
         });
-        setAllJoinRequests(getAllJoinRequests());
+        await refreshAllJoinRequests();
         setRosterSuccessNotice(
           `Updated join request for ${adminReviewingReq.req.applicant_name} and sent notification.`
         );
