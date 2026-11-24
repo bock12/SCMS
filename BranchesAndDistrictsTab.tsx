@@ -366,12 +366,21 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   };
 
   const openAssignLeadership = (branch: ChurchBranch) => {
-    setLeadershipTargetBranch(branch);
-    const branchMember = profiles.find(p => p.branch_id === branch.id) || profiles[0];
+    setLeadershipTarget({ scope_type: 'branch', branch });
+    const branchMember = profiles.find(p => p.branch_id === branch.id && p.membership_status === 'active');
     setLeaderProfileId(branchMember?.id || '');
-    const defaultPastorRole =
-      assignableLeadershipRoles.find(r => r.name === 'pastor') || assignableLeadershipRoles[0];
-    setLeaderRoleId(defaultPastorRole?.id || '');
+    setLeaderTitle('Pastor');
+    setLeaderResponsibilities('');
+    setLeaderModalError(null);
+  };
+
+  const openAssignDistrictLeadership = (district: District) => {
+    setLeadershipTarget({ scope_type: 'district', district });
+    const districtBranchIds = new Set(branches.filter(branch => branch.district_id === district.id).map(branch => branch.id));
+    const districtMember = profiles.find(p => p.branch_id && districtBranchIds.has(p.branch_id) && p.membership_status === 'active');
+    setLeaderProfileId(districtMember?.id || '');
+    setLeaderTitle('District Overseer');
+    setLeaderResponsibilities('');
     setLeaderModalError(null);
   };
 
@@ -469,48 +478,45 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
     }
   };
 
-  const handleAssignBranchLeader = async (event: React.FormEvent) => {
+  const handleCreateLeadershipAppointment = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!leadershipTargetBranch || !leaderProfileId || !leaderRoleId) return;
+    if (!leadershipTarget || !leaderProfileId || !leaderTitle.trim().trim()) return;
     setSaving(true);
     setLeaderModalError(null);
     setNotice(null);
     try {
-      await assignProfileRole({
+      const appointment = await createLeadershipAppointment({
         profile_id: leaderProfileId,
-        role_id: leaderRoleId,
-        scope_type: 'branch',
-        branch_id: leadershipTargetBranch.id,
-        district_id: null
+        scope_type: leadershipTarget.scope_type,
+        branch_id: leadershipTarget.scope_type === 'branch' ? leadershipTarget.branch.id : null,
+        district_id: leadershipTarget.scope_type === 'district' ? leadershipTarget.district.id : null,
+        title: leaderTitle,
+        responsibilities: leaderResponsibilities
       });
       const member = profileById.get(leaderProfileId);
-      const role = roleById.get(leaderRoleId);
-      const branchLabel = leadershipTargetBranch.name;
-      setLeadershipTargetBranch(null);
+      setLeadershipTarget(null);
       setNotice(
-        `Assigned ${member ? `${member.first_name} ${member.last_name}` : 'member'} as ${
-          role ? formatRoleName(role.name) : 'leader'
-        } for ${branchLabel}.`
+        `Appointed ${member ? `${member.first_name} ${member.last_name}` : 'member'} as ${appointment.title}.`
       );
       await loadData(true);
     } catch (cause) {
-      setLeaderModalError(cause instanceof Error ? cause.message : 'Unable to assign branch leadership.');
+      setLeaderModalError(cause instanceof Error ? cause.message : 'Unable to create leadership appointment.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleRemoveBranchAssignment = async (assignment: ProfileRoleAssignment) => {
+  const handleEndLeadershipAppointment = async (appointment: LeadershipAppointment) => {
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
-      await deleteProfileRoleAssignment(assignment.id);
-      setConfirmRemoveAssignmentId(null);
-      setNotice('Branch leadership assignment removed.');
+      await endLeadershipAppointment(appointment.id);
+      setConfirmEndAppointmentId(null);
+      setNotice('Leadership appointment ended. Its history has been retained.');
       await loadData(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to remove assignment.');
+      setError(cause instanceof Error ? cause.message : 'Unable to end leadership appointment.');
     } finally {
       setSaving(false);
     }
@@ -1272,7 +1278,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                     canAssignLeadership &&
                                     role &&
                                     canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name);
-                                  const isConfirming = confirmRemoveAssignmentId === assignment.id;
+                                  const isConfirming = confirmEndAppointmentId === assignment.id;
 
                                   return (
                                     <div
@@ -1294,7 +1300,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                             <button
                                               type="button"
                                               disabled={saving}
-                                              onClick={() => void handleRemoveBranchAssignment(assignment)}
+                                              onClick={() => void handleEndLeadershipAppointment(assignment)}
                                               className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] cursor-pointer"
                                             >
                                               Confirm
@@ -1302,7 +1308,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                             <button
                                               type="button"
                                               disabled={saving}
-                                              onClick={() => setConfirmRemoveAssignmentId(null)}
+                                              onClick={() => setConfirmEndAppointmentId(null)}
                                               className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 font-semibold text-[11px] cursor-pointer"
                                             >
                                               Cancel
@@ -1312,7 +1318,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                           <button
                                             type="button"
                                             disabled={saving}
-                                            onClick={() => setConfirmRemoveAssignmentId(assignment.id)}
+                                            onClick={() => setConfirmEndAppointmentId(assignment.id)}
                                             aria-label={`Remove ${member ? member.first_name : 'leader'} from ${branch.name}`}
                                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
                                           >
@@ -1437,7 +1443,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                 canAssignLeadership &&
                                 role &&
                                 canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name);
-                              const isConfirming = confirmRemoveAssignmentId === assignment.id;
+                              const isConfirming = confirmEndAppointmentId === assignment.id;
 
                               return (
                                 <div
@@ -1458,7 +1464,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                         <button
                                           type="button"
                                           disabled={saving}
-                                          onClick={() => void handleRemoveBranchAssignment(assignment)}
+                                          onClick={() => void handleEndLeadershipAppointment(assignment)}
                                           className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] cursor-pointer"
                                         >
                                           Confirm
@@ -1466,7 +1472,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                         <button
                                           type="button"
                                           disabled={saving}
-                                          onClick={() => setConfirmRemoveAssignmentId(null)}
+                                          onClick={() => setConfirmEndAppointmentId(null)}
                                           className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 font-semibold text-[11px] cursor-pointer"
                                         >
                                           Cancel
@@ -1476,7 +1482,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                       <button
                                         type="button"
                                         disabled={saving}
-                                        onClick={() => setConfirmRemoveAssignmentId(assignment.id)}
+                                        onClick={() => setConfirmEndAppointmentId(assignment.id)}
                                         aria-label={`Remove ${member ? member.first_name : 'leader'} from ${branch.name}`}
                                         className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
                                       >
@@ -1819,16 +1825,16 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
       )}
 
       {/* Assign Branch Leadership Modal */}
-      {leadershipTargetBranch && (
+      {leadershipTarget && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-[1px] p-0 sm:p-4"
-          onClick={() => { if (!saving) setLeadershipTargetBranch(null); }}
+          onClick={() => { if (!saving) setLeadershipTarget(null); }}
         >
           <form
             role="dialog"
             aria-modal="true"
             aria-labelledby="assign-branch-leader-title"
-            onSubmit={handleAssignBranchLeader}
+            onSubmit={handleCreateLeadershipAppointment}
             onClick={e => e.stopPropagation()}
             className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl border border-slate-200 shadow-2xl overflow-hidden"
           >
@@ -1838,13 +1844,13 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                   Assign Branch Leadership
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Branch scope: <strong className="text-slate-800">{leadershipTargetBranch.name}</strong>
+                  Branch scope: <strong className="text-slate-800">{leadershipTarget.scope_type === 'branch' ? leadershipTarget.branch.name : leadershipTarget.district.name}</strong>
                 </p>
               </div>
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => setLeadershipTargetBranch(null)}
+                onClick={() => setLeadershipTarget(null)}
                 className="p-2 text-slate-400 hover:text-slate-700 rounded-xl cursor-pointer"
                 aria-label="Close modal"
               >
@@ -1880,12 +1886,12 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                 Leadership Role
                 <select
                   required
-                  value={leaderRoleId}
+                  value={leaderTitle}
                   onChange={e => setLeaderRoleId(e.target.value)}
                   className="mt-1 w-full min-h-[44px] px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium"
                 >
                   <option value="">Select role</option>
-                  {assignableLeadershipRoles.map(role => (
+                  {[] .map(role => (
                     <option key={role.id} value={role.id}>
                       {formatRoleName(role.name)}
                     </option>
@@ -1904,14 +1910,14 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => setLeadershipTargetBranch(null)}
+                onClick={() => setLeadershipTarget(null)}
                 className="min-h-[44px] px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-bold cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={saving || !leaderProfileId || !leaderRoleId}
+                disabled={saving || !leaderProfileId || !leaderTitle.trim()}
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-extrabold cursor-pointer disabled:opacity-50"
               >
                 {saving ? 'Assigning…' : 'Assign Branch Leader'}
