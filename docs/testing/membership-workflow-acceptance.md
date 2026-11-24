@@ -133,4 +133,4 @@ The script requires a test database containing an active church-wide `manage_mem
 
 ## Live browser limitation
 
-The app's mock development login does not create a Supabase Auth session. Live member writes remain unavailable unless real Supabase Auth is explicitly enabled and a real authorized user is signed in. Live portal invitation/provisioning is not yet implemented; the Portal Access control is disabled while database integration is enabled.
+The app's mock development login does not create a Supabase Auth session. Until real Supabase Auth is explicitly enabled, the Member Directory deliberately stays on the mock data store. Live member reads/writes require a real authorized user. Live portal invitation/provisioning is not yet implemented; the Portal Access control is disabled while database integration is enabled.
