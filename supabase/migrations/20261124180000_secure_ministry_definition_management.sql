@@ -87,8 +87,16 @@ WHERE ministry.status = 'active'
 ON CONFLICT (ministry_id, member_id)
 DO UPDATE SET
   role_title = 'Department Leader',
-  duty = coalesce(public.ministry_members.duty, EXCLUDED.duty),
+  duty = coalesce(ministry_members.duty, EXCLUDED.duty),
   status = 'active';
+
+UPDATE public.ministries ministry
+SET member_count = (
+  SELECT count(*)::integer
+  FROM public.ministry_members assignment
+  WHERE assignment.ministry_id = ministry.id
+    AND assignment.status IN ('active', 'on_leave', 'in_training')
+);
 
 -- Managers retain read access to archived ministry definitions and rosters;
 -- ordinary authenticated users continue to see active ministries only.
