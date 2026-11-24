@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { supabase } from './supabaseClient';
 import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
+import { MemberTransfersAdminTab } from './MemberTransfersAdminTab';
 import { registerEventMember, registerEventGuest, cancelEventRegistration } from './eventRegistrationService';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
@@ -151,6 +152,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
     { id: 'resources', label: 'Church Resources', icon: FileText, shortLabel: 'Resources', permission: 'manage_resources' },
     { id: 'surveys', label: 'Post-Event Surveys', icon: ClipboardList, shortLabel: 'Surveys', permission: 'manage_surveys' },
     { id: 'users', label: 'Congregation Roster', icon: Users, shortLabel: 'Roster', permission: 'manage_members' },
+    { id: 'transfers', label: 'Member Transfers', icon: ArrowRightLeft, shortLabel: 'Transfers', permission: 'manage_member_transfers' },
     { id: 'roles', label: 'Roles & Governance', icon: ShieldCheck, shortLabel: 'Roles', permission: 'manage_roles' },
     { id: 'ministries', label: 'Ministries & Teams', icon: Building2, shortLabel: 'Ministries', permission: 'manage_ministries' },
     { id: 'financials', label: 'Tithes & Giving', icon: DollarSign, shortLabel: 'Giving', permission: 'manage_finances' },
@@ -226,6 +228,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
             can('manage_surveys')
               ? <EventSurveysAdminTab profile={profile} />
               : <PermissionRestrictedCard requiredPermission="manage_events" profile={profile} resolution={resolution} />
+          )}
+          {currentTab === 'transfers' && (
+            can('manage_member_transfers')
+              ? <MemberTransfersAdminTab profile={profile} />
+              : <PermissionRestrictedCard requiredPermission="manage_member_transfers" profile={profile} resolution={resolution} />
           )}
           {currentTab === 'users' && (
             can('manage_members') 
