@@ -22,6 +22,7 @@ export interface Profile {
   status?: PortalAccountStatus;
   portal_access_status?: PortalAccessLifecycle;
   membership_status?: MembershipStatus;
+  record_status?: 'active' | 'archived';
   membership_date?: string;
   /** @deprecated Ministry/department membership belongs in ministry_members. */
   department_name?: string;
