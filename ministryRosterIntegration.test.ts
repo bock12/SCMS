@@ -45,7 +45,8 @@ const {
   removeMinistryMember,
   ensureMinistryLeaderInRoster,
   isMemberEligibleForRoster,
-  isMemberCompatibleWithMinistryBranch
+  isMemberCompatibleWithMinistryBranch,
+  resolveMemberMinistryStatus
 } = await import('./ministryMemberService');
 const {
   submitMinistryJoinRequest,
