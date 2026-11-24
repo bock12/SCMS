@@ -154,9 +154,11 @@ SELECT public.complete_member_portal_action(
 
 -- The invitation is pending until Supabase Auth confirms the email. The
 -- auth.users trigger then activates the linked portal account automatically.
+RESET ROLE;
 UPDATE auth.users
 SET email_confirmed_at = now()
 WHERE id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
+SET LOCAL ROLE service_role;
 
 DO $confirmed$
 DECLARE
