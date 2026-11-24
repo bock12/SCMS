@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { supabase } from './supabaseClient';
 import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
+import { registerEventMember, registerEventGuest, cancelEventRegistration } from './eventRegistrationService';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
@@ -7717,39 +7718,34 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
       }
     }
 
-    if (!memberName || !memberEmail) return;
-
-    const newReg = {
-      event_id: showRosterModal.id,
-      user_id: manualMemberId || undefined,
-      member_name: memberName,
-      email: memberEmail,
-      phone: memberPhone,
-      status: 'confirmed' as const,
-      registered_at: new Date().toISOString()
-    };
-
-    await supabase.from('event_registrations').insert(newReg);
-
-    const newCount = (showRosterModal.registered_count || 0) + 1;
-    await supabase.from('events').update({ registered_count: newCount }).eq('id', showRosterModal.id);
+    if (manualMemberId) {
+      await registerEventMember({
+        eventId: showRosterModal.id,
+        memberId: manualMemberId,
+        email: memberEmail || null,
+        phone: memberPhone || null
+      });
+    } else {
+      if (!memberName) return;
+      await registerEventGuest({
+        eventId: showRosterModal.id,
+        name: memberName,
+        email: memberEmail || null,
+        phone: memberPhone || null
+      });
+    }
 
     setManualMemberId('');
     setManualName('');
     setManualEmail('');
     setManualPhone('');
-    fetchEventsData();
+    await fetchEventsData();
   };
 
   const handleRemoveRegistration = async (regId: string) => {
     if (!confirm("Remove this attendee from the registration roster?")) return;
-    await supabase.from('event_registrations').delete().eq('id', regId);
-
-    if (showRosterModal) {
-      const newCount = Math.max(0, (showRosterModal.registered_count || 1) - 1);
-      await supabase.from('events').update({ registered_count: newCount }).eq('id', showRosterModal.id);
-    }
-    fetchEventsData();
+    await cancelEventRegistration(regId);
+    await fetchEventsData();
   };
 
   const exportRosterCSV = (evt: ChurchEvent) => {
