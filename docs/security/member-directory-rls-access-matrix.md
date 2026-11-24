@@ -61,7 +61,7 @@ Both functions revoke execute from PUBLIC and anon. Their SECURITY DEFINER statu
 - SQL regression checks were run inside a transaction and rolled back.
 - Authorized create/update, protected-field rejection, branch-change rejection, duplicate-email rejection, unlinked-actor denial and direct-update trigger behavior passed.
 - No test member records remain.
-- The browser app still requires a real Supabase Auth session. Mock development login cannot authorize live database writes.
+- The browser app requires a real Supabase Auth session for live database reads/writes. While mock development login remains active, the Member Directory uses the local mock data store.
 - Branch and district isolation are now covered by rollback-only SQL tests using temporary scoped assignments. Portal provisioning, portal lifecycle administration, branch transfer and minimal-field read APIs remain follow-up work.
 
 ## 7. Required follow-up
