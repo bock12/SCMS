@@ -2259,7 +2259,7 @@ export const supabase = {
 
     if (functionName === 'submit_ministry_join_request') {
       const ministry = (localDb.ministries || []).find((item: any) =>
-        item.id === args.p_ministry_id && item.status === 'active'
+        item.id === args.p_ministry_id && (item.status || 'active') === 'active'
       );
       if (!actor || actor.record_status === 'archived' || actor.membership_status !== 'active' || (actor.portal_access_status && actor.portal_access_status !== 'active')) {
         return { data: null, error: { code: '42501', message: 'Only active church members with active portal access can submit ministry requests.' } };
