@@ -160,7 +160,7 @@ export async function getMembers(): Promise<Profile[]> {
       .select('profile_id,roles(name)')
       .in('profile_id', profiles.map(person => person.id))
       .eq('is_active', true);
-    if (roleError) console.warn('Unable to load member role assignments:', roleError);
+    if (roleError) throw roleError;
 
     const roleByProfile = new Map<string, AppRole>();
     for (const item of roleRows || []) {
