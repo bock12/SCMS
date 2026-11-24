@@ -50,7 +50,27 @@ async function getLiveMemberProfile(profileId: string): Promise<Profile> {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Member directory record not found after the portal access operation.');
-  return toDirectoryProfile(data);
+
+  const roleReadTime = new Date().toISOString();
+  const { data: roleRows, error: roleError } = await client
+    .from('profile_role_assignments')
+    .select('profile_id,roles(name)')
+    .eq('profile_id', profileId)
+    .eq('is_active', true)
+    .lte('assigned_at', roleReadTime)
+    .or(`expires_at.is.null,expires_at.gt.${roleReadTime}`)
+    .order('assigned_at', { ascending: false });
+  if (roleError) throw roleError;
+
+  const firstRole = roleRows?.[0] as any;
+  const roleName = Array.isArray(firstRole?.roles)
+    ? firstRole.roles[0]?.name
+    : firstRole?.roles?.name;
+
+  return {
+    ...toDirectoryProfile(data),
+    primary_role: (roleName || 'member') as AppRole
+  };
 }
 
 function mergePortalActionResult(
@@ -529,7 +549,9 @@ export async function updateUnifiedMember(
   if (lookupError) throw lookupError;
   if (!existing) throw new Error('Member directory record not found.');
 
-  const current = toDirectoryProfile(existing);
+  const current = liveMemberDirectoryEnabled
+    ? await getLiveMemberProfile(personId)
+    : toDirectoryProfile(existing);
   const email = input.email !== undefined ? normalizeMemberEmail(input.email) : (current.email || '');
   const phone = input.phone !== undefined ? input.phone.trim() : (current.phone || '');
 
@@ -609,7 +631,10 @@ export async function updateUnifiedMember(
     }
 
     try {
-      const savedProfile = unwrapRpcProfile(data);
+      const savedProfile = {
+        ...unwrapRpcProfile(data),
+        primary_role: current.primary_role || 'member'
+      };
       if (!portalAction) return { profile: savedProfile };
       const portalResult = await invokeLivePortalAction(
         personId,
