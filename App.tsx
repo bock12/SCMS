@@ -1784,7 +1784,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [formBranchId, setFormBranchId] = useState('branch-1');
   const [formMembershipStatus, setFormMembershipStatus] = useState<MembershipStatus>('active');
   const [formMembershipDate, setFormMembershipDate] = useState(new Date().toISOString().slice(0, 10));
-  const [formAssignedDepartment, setFormAssignedDepartment] = useState('Media & IT Ministry');
   const [formIsBaptized, setFormIsBaptized] = useState(false);
   const [formBaptismDate, setFormBaptismDate] = useState('');
   const [formBaptizedBy, setFormBaptizedBy] = useState('');
@@ -1858,7 +1857,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormBranchId(profile?.branch_id || branches[0]?.id || 'branch-1');
     setFormMembershipStatus('active');
     setFormMembershipDate(new Date().toISOString().slice(0, 10));
-    setFormAssignedDepartment('Media & IT Ministry');
     setFormIsBaptized(false);
     setFormBaptismDate('');
     setFormBaptizedBy('Rev. Sarah Johnson');
@@ -1917,7 +1915,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           email: formEmail,
           phone: formPhone,
           avatar_url: formAvatar || undefined,
-          assigned_department: formAssignedDepartment,
           is_baptized: formIsBaptized,
           baptism_date: formIsBaptized ? formBaptismDate : undefined,
           baptized_by: formIsBaptized ? formBaptizedBy : undefined,
@@ -1950,7 +1947,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
           avatar_url: formAvatar || editingPerson.avatar_url,
           membership_status: formMembershipStatus,
           membership_date: formMembershipDate,
-          assigned_department: formAssignedDepartment,
           is_baptized: formIsBaptized,
           baptism_date: formIsBaptized ? formBaptismDate : undefined,
           baptized_by: formIsBaptized ? formBaptizedBy : undefined,
@@ -2664,22 +2660,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="font-bold text-slate-600 uppercase block mb-1">Assigned Department</label>
-                  <select
-                    value={formAssignedDepartment}
-                    onChange={e => setFormAssignedDepartment(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold cursor-pointer"
-                  >
-                    <option value="Media & IT Ministry">Media & IT Ministry</option>
-                    <option value="Voices of Grace Choir">Voices of Grace Choir</option>
-                    <option value="Kingdom Youth Ministry">Kingdom Youth Ministry</option>
-                    <option value="Children Ministry">Children Ministry</option>
-                    <option value="Outreach & Evangelism">Outreach & Evangelism</option>
-                    <option value="Ushers & Hospitality">Ushers & Hospitality</option>
-                    <option value="Intercessory Prayer Team">Intercessory Prayer Team</option>
-                  </select>
-                </div>
+                <p className="text-[11px] text-slate-500">
+                  Ministry and department appointments are managed separately in the Ministries workspace.
+                </p>
 
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-amber-900 pt-1">
                   <input 
