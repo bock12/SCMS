@@ -1012,9 +1012,19 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
                 )}
 
                 {hasLogin ? (
-                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-extrabold rounded-lg border border-emerald-200 flex items-center gap-1">
-                    <Key size={11} className="text-emerald-600" />
-                    Portal Active
+                  <span className={`px-2.5 py-1 text-[10px] font-extrabold rounded-lg border flex items-center gap-1 ${
+                    user.portal_access_status === 'suspended'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : user.portal_access_status === 'invited'
+                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  }`}>
+                    <Key size={11} />
+                    {user.portal_access_status === 'suspended'
+                      ? 'Portal Suspended'
+                      : user.portal_access_status === 'invited'
+                        ? 'Invitation Pending'
+                        : 'Portal Active'}
                   </span>
                 ) : (
                   <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-lg">
