@@ -2629,7 +2629,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="font-bold text-slate-600 uppercase block mb-1">Branch *</label>
-                    <select value={formBranchId} onChange={e => setFormBranchId(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold">
+                    <select disabled={memberModalMode === 'edit'} value={formBranchId} onChange={e => setFormBranchId(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold disabled:opacity-50">
                       {(branches.length > 0 ? branches : [{ id: 'branch-1', name: 'Grace Cathedral (Main Campus)' } as ChurchBranch]).map(branch => (
                         <option key={branch.id} value={branch.id}>{branch.name}</option>
                       ))}
@@ -2641,7 +2641,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       <option value="active">Active</option>
                       <option value="inactive">Inactive</option>
                       <option value="suspended">Suspended</option>
-                      <option value="transferred">Transferred</option>
+                      <option value="transferred" disabled={memberModalMode === 'add' || editingPerson?.membership_status !== 'transferred'}>Transferred (use Transfer workflow)</option>
                       <option value="archived">Archived</option>
                     </select>
                   </div>
