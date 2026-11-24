@@ -2237,6 +2237,179 @@ export const supabase = {
       return true;
     };
 
+    const canManageMinistryBranch = (branchId: string | null) => {
+      const assignments = getActorAssignmentsForPermission('manage_ministries');
+      if (!branchId) return assignments.some((item: any) => item.scope_type === 'church');
+      const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+      return assignments.some((item: any) =>
+        item.scope_type === 'church' ||
+        (item.scope_type === 'branch' && item.branch_id === branchId) ||
+        (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+      );
+    };
+
+    const normalizeMinistryDefinition = (row: any) => ({
+      ...row,
+      leader_name: row.leader_name || 'TBD',
+      leader_id: row.leader_id || null,
+      member_count: Number(row.member_count || 0),
+      type: row.type || (row.entity_type === 'fellowship' ? 'social_fellowship' : 'service_department'),
+      roles_and_responsibilities: Array.isArray(row.roles_and_responsibilities) ? row.roles_and_responsibilities : []
+    });
+
+    if (functionName === 'create_ministry') {
+      const {
+        p_branch_id = null, p_name, p_description = '', p_category = 'General',
+        p_meeting_time = 'Weekly Gathering', p_type = 'service_department',
+        p_roles_and_responsibilities = [], p_leader_id = null
+      } = args;
+      const name = String(p_name || '').trim();
+      const branch = p_branch_id
+        ? (localDb.church_branches || []).find((item: any) => item.id === p_branch_id && (item.status || 'active') === 'active')
+        : null;
+      if (p_branch_id && !branch) return { data: null, error: { code: '23503', message: 'The selected branch is unavailable or inactive.' } };
+      if (!canManageMinistryBranch(p_branch_id)) return { data: null, error: { code: '42501', message: 'You do not have permission to create ministries in this scope.' } };
+      if (name.length < 2 || name.length > 120 || !['social_fellowship', 'service_department'].includes(p_type)) {
+        return { data: null, error: { code: '22023', message: 'Provide a valid ministry name and type.' } };
+      }
+      const entityType = p_type === 'social_fellowship' ? 'fellowship' : 'department';
+      const duplicate = (localDb.ministries || []).some((item: any) =>
+        item.status === 'active' &&
+        item.branch_id === p_branch_id &&
+        item.entity_type === entityType &&
+        String(item.name).toLowerCase() === name.toLowerCase()
+      );
+      if (duplicate) return { data: null, error: { code: '23505', message: 'An active ministry with this name already exists in the selected scope.' } };
+      const leader = p_leader_id
+        ? (localDb.profiles || []).find((item: any) =>
+            item.id === p_leader_id &&
+            item.record_status !== 'archived' &&
+            item.membership_status === 'active' &&
+            (!p_branch_id || item.branch_id === p_branch_id)
+          )
+        : null;
+      if (p_leader_id && !leader) return { data: null, error: { code: '23514', message: 'The selected leader must be an active member of the ministry branch.' } };
+      const created = normalizeMinistryDefinition({
+        id: createMockUuid(),
+        branch_id: p_branch_id,
+        name,
+        description: p_description || '',
+        leader_name: leader ? `${leader.first_name} ${leader.last_name}`.trim() : 'TBD',
+        leader_id: p_leader_id,
+        meeting_time: p_meeting_time || 'Weekly Gathering',
+        member_count: 0,
+        category: p_category || 'General',
+        entity_type: entityType,
+        type: p_type,
+        roles_and_responsibilities: Array.isArray(p_roles_and_responsibilities) ? p_roles_and_responsibilities : [],
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+      localDb.ministries = [...(localDb.ministries || []), created];
+      if (leader) {
+        const roster = {
+          id: createMockUuid(),
+          ministry_id: created.id,
+          member_id: leader.id,
+          role_title: 'Department Leader',
+          duty: 'Ministry leadership and team oversight',
+          status: 'active',
+          joined_at: new Date().toISOString().slice(0, 10),
+          created_by_profile_id: actor.id,
+          created_at: new Date().toISOString()
+        };
+        localDb.ministry_members = [...(localDb.ministry_members || []), roster];
+        created.member_count = 1;
+      }
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_definitions_updated'));
+      return { data: created, error: null };
+    }
+
+    if (functionName === 'update_ministry') {
+      const existing = (localDb.ministries || []).find((item: any) => item.id === args.p_ministry_id && item.status === 'active');
+      if (!existing) return { data: null, error: { code: '23503', message: 'The selected ministry is unavailable or inactive.' } };
+      if (!canManageMinistryBranch(existing.branch_id ?? null)) return { data: null, error: { code: '42501', message: 'You do not have permission to update this ministry.' } };
+      const name = String(args.p_name || '').trim();
+      const type = args.p_type || 'service_department';
+      if (name.length < 2 || name.length > 120 || !['social_fellowship', 'service_department'].includes(type)) {
+        return { data: null, error: { code: '22023', message: 'Provide a valid ministry name and type.' } };
+      }
+      const leader = args.p_leader_id
+        ? (localDb.profiles || []).find((item: any) =>
+            item.id === args.p_leader_id &&
+            item.record_status !== 'archived' &&
+            item.membership_status === 'active' &&
+            (!existing.branch_id || item.branch_id === existing.branch_id)
+          )
+        : null;
+      if (args.p_leader_id && !leader) return { data: null, error: { code: '23514', message: 'The selected leader must be an active member of the ministry branch.' } };
+      const oldLeaderId = existing.leader_id || null;
+      const updated = normalizeMinistryDefinition({
+        ...existing,
+        name,
+        description: args.p_description || '',
+        category: args.p_category || 'General',
+        meeting_time: args.p_meeting_time || 'Weekly Gathering',
+        type,
+        entity_type: type === 'social_fellowship' ? 'fellowship' : 'department',
+        roles_and_responsibilities: Array.isArray(args.p_roles_and_responsibilities) ? args.p_roles_and_responsibilities : [],
+        leader_id: args.p_leader_id || null,
+        leader_name: leader ? `${leader.first_name} ${leader.last_name}`.trim() : 'TBD',
+        updated_at: new Date().toISOString()
+      });
+      if (oldLeaderId && oldLeaderId !== updated.leader_id) {
+        localDb.ministry_members = (localDb.ministry_members || []).map((item: any) =>
+          item.ministry_id === existing.id && item.member_id === oldLeaderId && item.role_title === 'Department Leader' && item.status !== 'inactive'
+            ? { ...item, role_title: 'Team Member' }
+            : item
+        );
+      }
+      if (leader) {
+        const current = (localDb.ministry_members || []).find((item: any) =>
+          item.ministry_id === existing.id && item.member_id === leader.id
+        );
+        if (current) {
+          localDb.ministry_members = (localDb.ministry_members || []).map((item: any) =>
+            item.id === current.id
+              ? { ...item, role_title: 'Department Leader', status: 'active', duty: item.duty || 'Ministry leadership and team oversight' }
+              : item
+          );
+        } else {
+          localDb.ministry_members = [...(localDb.ministry_members || []), {
+            id: createMockUuid(),
+            ministry_id: existing.id,
+            member_id: leader.id,
+            role_title: 'Department Leader',
+            duty: 'Ministry leadership and team oversight',
+            status: 'active',
+            joined_at: new Date().toISOString().slice(0, 10),
+            created_by_profile_id: actor.id,
+            created_at: new Date().toISOString()
+          }];
+        }
+      }
+      updated.member_count = (localDb.ministry_members || []).filter((item: any) =>
+        item.ministry_id === existing.id && ['active', 'on_leave', 'in_training'].includes(item.status)
+      ).length;
+      localDb.ministries = (localDb.ministries || []).map((item: any) => item.id === existing.id ? updated : item);
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_definitions_updated'));
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'archive_ministry') {
+      const existing = (localDb.ministries || []).find((item: any) => item.id === args.p_ministry_id);
+      if (!existing) return { data: null, error: { code: '23503', message: 'The selected ministry does not exist.' } };
+      if (!canManageMinistryBranch(existing.branch_id ?? null)) return { data: null, error: { code: '42501', message: 'You do not have permission to archive this ministry.' } };
+      const updated = { ...existing, status: 'archived', updated_at: new Date().toISOString() };
+      localDb.ministries = (localDb.ministries || []).map((item: any) => item.id === existing.id ? updated : item);
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_definitions_updated'));
+      return { data: updated, error: null };
+    }
+
     if (functionName === 'manage_welfare_case') {
       const { p_action, p_case_id, p_member_id, p_case_type, p_reason, p_restricted_description, p_priority, p_status, p_assigned_to_profile_id } = args;
       const assignments = getActorAssignmentsForPermission('manage_welfare');
