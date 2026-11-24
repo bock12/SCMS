@@ -450,7 +450,49 @@ SELECT public.complete_member_portal_action(
 RESET ROLE;
 DELETE FROM auth.users
 WHERE id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
+
+-- The Auth FK has cleared the suspended member link. A different active
+-- branch manager can authorize the retry and finalize not_invited state.
+DO $retry_admin_fixture$
+DECLARE
+  v_admin_auth_id uuid := gen_random_uuid();
+  v_admin_email text := 'mem-int-003-retry-admin-' || replace(gen_random_uuid()::text, '-', '') || '@example.invalid';
+BEGIN
+  INSERT INTO auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+  VALUES (v_admin_auth_id, v_admin_email, now(), '{}'::jsonb);
+
+  UPDATE public.profiles
+  SET auth_user_id = v_admin_auth_id,
+      email = v_admin_email,
+      portal_access_status = 'active'
+  WHERE id = current_setting('scms.mem_int_003_actor_profile_id')::uuid;
+
+  PERFORM set_config('scms.mem_int_003_retry_admin_auth_id', v_admin_auth_id::text, true);
+END;
+$retry_admin_fixture$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_003_retry_admin_auth_id'), true);
+DO $retry_revoke_authorization$
+DECLARE
+  v_decision jsonb;
+BEGIN
+  v_decision := public.authorize_member_portal_action(
+    current_setting('scms.mem_int_003_member_id')::uuid,
+    'revoke',
+    NULL
+  );
+  IF COALESCE((v_decision->>'already_done')::boolean, true)
+    OR v_decision->>'actor_profile_id' <> current_setting('scms.mem_int_003_actor_profile_id')
+    OR v_decision->>'auth_user_id' IS NOT NULL THEN
+    RAISE EXCEPTION 'A manager could not authorize retry for a suspended profile whose Auth link was already deleted.';
+  END IF;
+END;
+$retry_revoke_authorization$;
+
+RESET ROLE;
 SET LOCAL ROLE service_role;
+SELECT set_config('request.jwt.claim.role', 'service_role', true);
 SELECT public.complete_member_portal_action(
   current_setting('scms.mem_int_003_actor_profile_id')::uuid,
   current_setting('scms.mem_int_003_member_id')::uuid,
