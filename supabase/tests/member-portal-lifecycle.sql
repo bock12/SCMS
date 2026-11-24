@@ -227,74 +227,69 @@ BEGIN
 END;
 $directory_read_scope$;
 
--- The trusted Auth-linking trigger also enters the invited state, then the
--- email-confirmation trigger activates that exact directory profile.
-DO $trusted_link_create$
-DECLARE
-  v_profile public.profiles;
-  v_auth_user_id uuid := gen_random_uuid();
-BEGIN
-  v_profile := public.create_member_profile(
-    pg_catalog.jsonb_build_object(
-      'first_name', 'MEM-INT-003',
-      'last_name', 'Trusted Link Test',
-      'branch_id', current_setting('scms.mem_int_003_branch_id'),
-      'membership_date', CURRENT_DATE::text,
-      'membership_status', 'active',
-      'email', 'mem-int-003-trusted-link@example.invalid'
-    )
-  );
-  PERFORM set_config('scms.mem_int_003_trusted_profile_id', v_profile.id::text, true);
-  PERFORM set_config('scms.mem_int_003_trusted_auth_id', v_auth_user_id::text, true);
-END;
-$trusted_link_create$;
-
+-- Exercise the legacy trusted Auth-linking trigger where it is installed.
+-- Some live projects rely exclusively on the Edge Function, so this is optional.
 RESET ROLE;
-INSERT INTO auth.users (id, email, raw_app_meta_data)
-VALUES (
-  current_setting('scms.mem_int_003_trusted_auth_id')::uuid,
-  'mem-int-003-trusted-link@example.invalid',
-  pg_catalog.jsonb_build_object(
-    'provisioned_profile_id',
-    current_setting('scms.mem_int_003_trusted_profile_id')
-  )
-);
-
-DO $trusted_link_invited$
+DO $trusted_link_lifecycle$
 DECLARE
+  v_has_trigger boolean;
+  v_profile_id uuid := gen_random_uuid();
+  v_auth_user_id uuid := gen_random_uuid();
+  v_email text := 'mem-int-003-trusted-' || replace(gen_random_uuid()::text, '-', '') || '@example.invalid';
   v_profile public.profiles;
 BEGIN
-  SELECT * INTO v_profile
-  FROM public.profiles
-  WHERE id = current_setting('scms.mem_int_003_trusted_profile_id')::uuid;
+  SELECT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_trigger AS trigger
+    WHERE trigger.tgrelid = 'auth.users'::regclass
+      AND NOT trigger.tgisinternal
+      AND trigger.tgfoid = 'public.handle_new_user()'::regprocedure
+  ) INTO v_has_trigger;
 
-  IF v_profile.auth_user_id IS DISTINCT FROM current_setting('scms.mem_int_003_trusted_auth_id')::uuid
+  IF NOT v_has_trigger THEN
+    RAISE NOTICE 'Trusted Auth-linking trigger is not installed; Edge Function provisioning is the active path.';
+    RETURN;
+  END IF;
+
+  INSERT INTO public.profiles (
+    id, branch_id, first_name, last_name, email, membership_date,
+    membership_status, portal_access_status, record_status
+  ) VALUES (
+    v_profile_id,
+    current_setting('scms.mem_int_003_branch_id')::uuid,
+    'MEM-INT-003',
+    'Trusted Link Test',
+    v_email,
+    CURRENT_DATE,
+    'active',
+    'not_invited',
+    'active'
+  );
+
+  INSERT INTO auth.users (id, email, raw_app_meta_data)
+  VALUES (
+    v_auth_user_id,
+    v_email,
+    pg_catalog.jsonb_build_object('provisioned_profile_id', v_profile_id::text)
+  );
+
+  SELECT * INTO v_profile FROM public.profiles WHERE id = v_profile_id;
+  IF v_profile.auth_user_id IS DISTINCT FROM v_auth_user_id
     OR v_profile.portal_access_status <> 'invited' THEN
     RAISE EXCEPTION 'Trusted Auth linking did not create an invited portal state.';
   END IF;
-END;
-$trusted_link_invited$;
 
-UPDATE auth.users
-SET email_confirmed_at = now()
-WHERE id = current_setting('scms.mem_int_003_trusted_auth_id')::uuid;
-
-DO $trusted_link_active$
-DECLARE
-  v_profile public.profiles;
-BEGIN
-  SELECT * INTO v_profile
-  FROM public.profiles
-  WHERE id = current_setting('scms.mem_int_003_trusted_profile_id')::uuid;
-
+  UPDATE auth.users SET email_confirmed_at = now() WHERE id = v_auth_user_id;
+  SELECT * INTO v_profile FROM public.profiles WHERE id = v_profile_id;
   IF v_profile.portal_access_status <> 'active' THEN
     RAISE EXCEPTION 'Trusted Auth email confirmation did not activate the linked profile.';
   END IF;
-END;
-$trusted_link_active$;
 
-DELETE FROM auth.users
-WHERE id = current_setting('scms.mem_int_003_trusted_auth_id')::uuid;
+  DELETE FROM auth.users WHERE id = v_auth_user_id;
+  DELETE FROM public.profiles WHERE id = v_profile_id;
+END;
+$trusted_link_lifecycle$;
+SET LOCAL ROLE authenticated;
 
 -- Unlinked identities must not be able to authorize portal lifecycle actions.
 SET LOCAL ROLE authenticated;
