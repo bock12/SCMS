@@ -54,6 +54,7 @@ on:
       - "supabase/migrations/20261124143000_harden_role_assignment_reactivation.sql"
       - "supabase/migrations/20261124150000_preserve_cell_membership_transfer_history.sql"
       - "supabase/migrations/20261124160000_add_scoped_leadership_appointments.sql"
+      - "supabase/migrations/20261124170000_reconcile_leadership_appointments_on_transfer.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1312,6 +1313,9 @@ jobs:
 
       - name: Add scoped leadership appointments independent of RBAC
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124160000_add_scoped_leadership_appointments.sql
+
+      - name: Reconcile leadership appointments after member transfers
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124170000_reconcile_leadership_appointments_on_transfer.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
