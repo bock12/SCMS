@@ -780,6 +780,8 @@ BEGIN
     current_date
   );
 
+  PERFORM set_config('scms.mem4a_directory_only_branch_appointment_id', v_branch_appointment.id::text, true);
+
   IF v_branch_appointment.status <> 'active'
     OR v_branch_appointment.scope_type <> 'branch'
     OR v_branch_appointment.profile_id <> v_standalone_member THEN
@@ -805,6 +807,8 @@ BEGIN
     OR v_district_appointment.district_id <> v_dist_a THEN
     RAISE EXCEPTION 'District leadership appointment was not created correctly.';
   END IF;
+
+  PERFORM set_config('scms.mem4a_transfer_district_appointment_id_g', v_district_appointment.id::text, true);
 
   v_branch_appointment := public.end_leadership_appointment(
     v_branch_appointment.id,
@@ -859,7 +863,22 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_dist_admin_auth_id'), true);
 
 DO $district_leadership_scope$
+DECLARE
+  v_own_appointment_count bigint;
+  v_out_of_scope_appointment_count bigint;
 BEGIN
+  SELECT count(*) INTO v_own_appointment_count
+  FROM public.leadership_appointments
+  WHERE id = current_setting('scms.mem4a_transfer_district_appointment_id_g')::uuid;
+
+  SELECT count(*) INTO v_out_of_scope_appointment_count
+  FROM public.leadership_appointments
+  WHERE id = current_setting('scms.mem4a_directory_only_branch_appointment_id')::uuid;
+
+  IF v_own_appointment_count <> 1 OR v_out_of_scope_appointment_count <> 0 THEN
+    RAISE EXCEPTION 'Leadership appointment RLS did not enforce the district administrator read scope.';
+  END IF;
+
   BEGIN
     PERFORM public.create_leadership_appointment(
       current_setting('scms.mem4a_beta_member_id')::uuid,
@@ -877,5 +896,47 @@ BEGIN
   END;
 END;
 $district_leadership_scope$;
+
+-- Cross-district transfer ends the member's district appointment while retaining history.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_admin_auth_id'), true);
+
+DO $cross_district_leadership_transfer$
+DECLARE
+  v_member uuid := current_setting('scms.mem4a_beta_member_id')::uuid;
+  v_source_branch uuid := current_setting('scms.mem4a_branch_b1')::uuid;
+  v_target_branch uuid := current_setting('scms.mem4a_branch_a1')::uuid;
+  v_source_district uuid := current_setting('scms.mem4a_dist_b')::uuid;
+  v_appointment public.leadership_appointments;
+  v_transfer public.member_transfers;
+  v_status text;
+BEGIN
+  v_appointment := public.create_leadership_appointment(
+    v_member, 'district', NULL, v_source_district,
+    'District Care Coordinator', NULL, current_date
+  );
+
+  v_transfer := public.manage_member_transfer(
+    'request', NULL, v_member, v_target_branch, 'Cross-district leadership transfer test'
+  );
+  v_transfer := public.manage_member_transfer('approve', v_transfer.id, NULL, NULL, NULL);
+
+  SELECT status INTO v_status
+  FROM public.leadership_appointments
+  WHERE id = v_appointment.id;
+
+  IF v_transfer.status <> 'approved'
+    OR v_status IS DISTINCT FROM 'ended'
+    OR NOT EXISTS (
+      SELECT 1 FROM public.leadership_appointments
+      WHERE id = v_appointment.id
+        AND ended_at IS NOT NULL
+        AND ended_by_profile_id = private.current_profile_id()
+    ) THEN
+    RAISE EXCEPTION 'Cross-district transfer did not end and retain the district leadership appointment.';
+  END IF;
+END;
+$cross_district_leadership_transfer$;
 
 ROLLBACK;
