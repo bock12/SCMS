@@ -151,6 +151,7 @@ BEGIN
   PERFORM set_config('scms.mem_int_004_unauth_auth_id', v_unauth_auth_id::text, true);
   PERFORM set_config('scms.mem_int_004_branch1_mgr_auth_id', v_branch1_mgr_auth_id::text, true);
   PERFORM set_config('scms.mem_int_004_branch1_mgr_profile_id', v_branch1_mgr_profile_id::text, true);
+  PERFORM set_config('scms.mem_int_004_unauth_profile_id', v_unauth_profile_id::text, true);
   PERFORM set_config('scms.mem_int_004_member_id', v_member_id::text, true);
   PERFORM set_config('scms.mem_int_004_suspended_member_id', v_suspended_member_id::text, true);
   PERFORM set_config('scms.mem_int_004_archived_member_id', v_archived_member_id::text, true);
