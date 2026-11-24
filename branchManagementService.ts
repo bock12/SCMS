@@ -2,6 +2,10 @@ import { supabase } from './supabaseClient';
 import { resolveDataClient } from './supabaseIntegration';
 import type { ChurchBranch, District, Profile } from './types';
 import {
+  getLeadershipAppointments,
+  type LeadershipAppointment
+} from './leadershipAppointmentService';
+import {
   getProfileRoleData,
   type ProfileRoleAssignment,
   type SystemRole
@@ -59,14 +63,16 @@ export async function getBranchGovernanceData(): Promise<{
   assignments: ProfileRoleAssignment[];
   profiles: Profile[];
   branchMemberCounts: Record<string, BranchMemberCountSnapshot>;
+  leadershipAppointments: LeadershipAppointment[];
 }> {
   const client = resolveDataClient(supabase);
-  const [districtsResult, branchesResult, roleData, profilesResult, summaryResult] = await Promise.all([
+  const [districtsResult, branchesResult, roleData, profilesResult, summaryResult, leadershipAppointments] = await Promise.all([
     client.from('districts').select('*').order('name', { ascending: true }),
     client.from('church_branches').select('*').order('name', { ascending: true }),
     getProfileRoleData(),
     client.from('profiles').select('*').order('first_name', { ascending: true }),
-    client.rpc('get_branch_governance_summaries')
+    client.rpc('get_branch_governance_summaries'),
+    getLeadershipAppointments()
   ]);
 
   if (districtsResult.error) throw new Error(districtsResult.error.message || 'Unable to load districts.');
@@ -91,7 +97,8 @@ export async function getBranchGovernanceData(): Promise<{
     roles: roleData.roles,
     assignments: roleData.assignments,
     profiles: (profilesResult.data || []) as Profile[],
-    branchMemberCounts
+    branchMemberCounts,
+    leadershipAppointments
   };
 }
 
@@ -317,43 +324,32 @@ export async function resolveActorBranchGovernanceScope(
   };
 }
 
+const isCurrentLeadershipAppointment = (appointment: LeadershipAppointment, today: string) =>
+  appointment.status === 'active' &&
+  appointment.effective_from <= today &&
+  (!appointment.effective_to || appointment.effective_to >= today);
+
 export function buildDistrictPortalSummaries(params: {
   districts: District[];
   branches: ChurchBranch[];
   profiles: Profile[];
-  assignments: ProfileRoleAssignment[];
-  roles: SystemRole[];
+  leadershipAppointments: LeadershipAppointment[];
   branchMemberCounts?: Record<string, BranchMemberCountSnapshot>;
-  nowMs?: number;
+  today?: string;
 }): DistrictPortalSummary[] {
   const {
     districts,
     branches,
     profiles,
-    assignments,
-    roles,
+    leadershipAppointments,
     branchMemberCounts,
-    nowMs = Date.now()
+    today = new Date().toISOString().slice(0, 10)
   } = params;
 
-  const roleById = new Map<string, SystemRole>();
-  roles.forEach(role => roleById.set(role.id, role));
-
-  const profileById = new Map<string, Profile>();
-  profiles.forEach(p => profileById.set(p.id, p));
-
-  const activeAssignments = assignments.filter(a => {
-    if (!a.is_active) return false;
-    const role = roleById.get(a.role_id);
-    if (role && !role.is_active) return false;
-    const assignedAt = Date.parse(a.assigned_at);
-    if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
-    if (a.expires_at) {
-      const expiresAt = Date.parse(a.expires_at);
-      if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
-    }
-    return true;
-  });
+  const profileById = new Map<string, Profile>(profiles.map(profile => [profile.id, profile]));
+  const activeAppointments = leadershipAppointments.filter(appointment =>
+    isCurrentLeadershipAppointment(appointment, today)
+  );
 
   const memberCountByBranch = new Map<string, { total: number; active: number }>();
   if (branchMemberCounts && Object.keys(branchMemberCounts).length > 0) {
@@ -362,42 +358,36 @@ export function buildDistrictPortalSummaries(params: {
     });
   } else {
     profiles.forEach(member => {
-      if (!member.branch_id) return;
-      if (member.membership_status === 'archived') return;
+      if (!member.branch_id || member.membership_status === 'archived') return;
       const current = memberCountByBranch.get(member.branch_id) || { total: 0, active: 0 };
       current.total += 1;
-      if (!member.membership_status || member.membership_status === 'active') {
-        current.active += 1;
-      }
+      if (!member.membership_status || member.membership_status === 'active') current.active += 1;
       memberCountByBranch.set(member.branch_id, current);
     });
   }
 
-  const branchAssignmentsMap = new Map<string, ProfileRoleAssignment[]>();
-  const districtOverseersMap = new Map<string, ProfileRoleAssignment[]>();
-
-  activeAssignments.forEach(a => {
-    if (a.scope_type === 'branch' && a.branch_id) {
-      const list = branchAssignmentsMap.get(a.branch_id) || [];
-      list.push(a);
-      branchAssignmentsMap.set(a.branch_id, list);
-    } else if (a.scope_type === 'district' && a.district_id) {
-      const list = districtOverseersMap.get(a.district_id) || [];
-      list.push(a);
-      districtOverseersMap.set(a.district_id, list);
+  const branchAppointments = new Map<string, LeadershipAppointment[]>();
+  const districtAppointments = new Map<string, LeadershipAppointment[]>();
+  activeAppointments.forEach(appointment => {
+    if (appointment.scope_type === 'branch' && appointment.branch_id) {
+      const list = branchAppointments.get(appointment.branch_id) || [];
+      list.push(appointment);
+      branchAppointments.set(appointment.branch_id, list);
+    } else if (appointment.scope_type === 'district' && appointment.district_id) {
+      const list = districtAppointments.get(appointment.district_id) || [];
+      list.push(appointment);
+      districtAppointments.set(appointment.district_id, list);
     }
   });
 
   return districts.map(district => {
     const districtBranches = branches
-      .filter(b => b.district_id === district.id)
+      .filter(branch => branch.district_id === district.id)
       .sort((a, b) => {
         const hqDiff = Number(Boolean(b.is_main_branch)) - Number(Boolean(a.is_main_branch));
-        if (hqDiff !== 0) return hqDiff;
-        return a.name.localeCompare(b.name);
+        return hqDiff || a.name.localeCompare(b.name);
       });
-
-    const hqBranch = districtBranches.find(b => b.is_main_branch) || null;
+    const hqBranch = districtBranches.find(branch => branch.is_main_branch) || null;
     let totalMembers = 0;
     let activeMembers = 0;
     let totalBranchLeaders = 0;
@@ -405,27 +395,24 @@ export function buildDistrictPortalSummaries(params: {
 
     const branchSummaries: DistrictBranchMemberSummary[] = districtBranches.map(branch => {
       const counts = memberCountByBranch.get(branch.id) || { total: 0, active: 0 };
-      const branchLeaders = branchAssignmentsMap.get(branch.id) || [];
-      const hasPastor = branchLeaders.some(l => roleById.get(l.role_id)?.name === 'pastor');
-
+      const leaders = branchAppointments.get(branch.id) || [];
+      const hasPastor = leaders.some(leader => leader.title.toLowerCase().includes('pastor'));
       totalMembers += counts.total;
       activeMembers += counts.active;
-      totalBranchLeaders += branchLeaders.length;
+      totalBranchLeaders += leaders.length;
       if (hasPastor) branchesWithPastor += 1;
-
       return {
         branch,
         memberCount: counts.total,
         activeMemberCount: counts.active,
-        leaderCount: branchLeaders.length,
+        leaderCount: leaders.length,
         hasPastor
       };
     });
 
-    const overseers = districtOverseersMap.get(district.id) || [];
-    const overseerNames = overseers.map(o => {
-      const person = profileById.get(o.profile_id);
-      return person ? `${person.first_name} ${person.last_name}` : o.profile_id;
+    const overseerNames = (districtAppointments.get(district.id) || []).map(appointment => {
+      const member = profileById.get(appointment.profile_id);
+      return member ? `${member.first_name} ${member.last_name} (${appointment.title})` : appointment.title;
     });
 
     return {
@@ -445,25 +432,23 @@ export function buildDistrictPortalSummaries(params: {
 export function buildStandaloneBranchSummaries(params: {
   branches: ChurchBranch[];
   profiles: Profile[];
-  assignments: ProfileRoleAssignment[];
-  roles: SystemRole[];
+  leadershipAppointments: LeadershipAppointment[];
   branchMemberCounts?: Record<string, BranchMemberCountSnapshot>;
-  nowMs?: number;
+  today?: string;
 }): DistrictBranchMemberSummary[] {
-  const { branches, profiles, assignments, roles, branchMemberCounts, nowMs = Date.now() } = params;
-  const roleById = new Map<string, SystemRole>(roles.map(role => [role.id, role]));
-  const activeBranchAssignments = assignments.filter(a => {
-    if (!a.is_active || a.scope_type !== 'branch' || !a.branch_id) return false;
-    const role = roleById.get(a.role_id);
-    if (role && !role.is_active) return false;
-    const assignedAt = Date.parse(a.assigned_at);
-    if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
-    if (a.expires_at) {
-      const expiresAt = Date.parse(a.expires_at);
-      if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
-    }
-    return true;
-  });
+  const {
+    branches,
+    profiles,
+    leadershipAppointments,
+    branchMemberCounts,
+    today = new Date().toISOString().slice(0, 10)
+  } = params;
+
+  const activeAppointments = leadershipAppointments.filter(appointment =>
+    appointment.scope_type === 'branch' &&
+    appointment.branch_id &&
+    isCurrentLeadershipAppointment(appointment, today)
+  );
 
   const countByBranch = new Map<string, { total: number; active: number }>();
   if (branchMemberCounts && Object.keys(branchMemberCounts).length > 0) {
@@ -481,22 +466,20 @@ export function buildStandaloneBranchSummaries(params: {
   }
 
   return branches
-    .filter(b => !b.district_id)
+    .filter(branch => !branch.district_id)
     .sort((a, b) => {
       const mainDiff = Number(Boolean(b.is_main_branch)) - Number(Boolean(a.is_main_branch));
-      if (mainDiff !== 0) return mainDiff;
-      return a.name.localeCompare(b.name);
+      return mainDiff || a.name.localeCompare(b.name);
     })
     .map(branch => {
       const counts = countByBranch.get(branch.id) || { total: 0, active: 0 };
-      const leaders = activeBranchAssignments.filter(a => a.branch_id === branch.id);
-      const hasPastor = leaders.some(l => roleById.get(l.role_id)?.name === 'pastor');
+      const leaders = activeAppointments.filter(appointment => appointment.branch_id === branch.id);
       return {
         branch,
         memberCount: counts.total,
         activeMemberCount: counts.active,
         leaderCount: leaders.length,
-        hasPastor
+        hasPastor: leaders.some(leader => leader.title.toLowerCase().includes('pastor'))
       };
     });
 }
