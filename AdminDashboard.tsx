@@ -2391,7 +2391,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       });
       const reloaded = await loadDeptRoster(editingMinistry);
       setDeptRoster(reloaded);
-      await syncMockMemberCount(editingMinistry, reloaded.length);
+      await syncMockMemberCount(editingMinistry, reloaded.filter(item => ['active', 'on_leave', 'in_training'].includes(item.status)).length);
       window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
       setSelectedRosterMemberId('');
       setAddMemberDutyInput('');
@@ -2444,7 +2444,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       await removeMinistryMember(mem.membership_assignment_id);
       const reloaded = await loadDeptRoster(editingMinistry);
       setDeptRoster(reloaded);
-      await syncMockMemberCount(editingMinistry, reloaded.length);
+      await syncMockMemberCount(editingMinistry, reloaded.filter(item => ['active', 'on_leave', 'in_training'].includes(item.status)).length);
       window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
       setRosterSuccessNotice(`Removed ${mem.name} from the ${editingMinistry.name} roster.`);
     } catch (error: any) {
@@ -2529,7 +2529,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
         if (editingMinistry) {
           const reloaded = await loadDeptRoster(editingMinistry);
           setDeptRoster(reloaded);
-          await syncMockMemberCount(editingMinistry, reloaded.length);
+          await syncMockMemberCount(editingMinistry, reloaded.filter(item => ['active', 'on_leave', 'in_training'].includes(item.status)).length);
         }
         await refreshAllJoinRequests();
         setRosterSuccessNotice(
