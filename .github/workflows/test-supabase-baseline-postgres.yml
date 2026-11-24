@@ -33,6 +33,7 @@ on:
       - "supabase/migrations/20261122000200_add_scoped_finance_configuration_read_api.sql"
       - "supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql"
       - "supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql"
+      - "supabase/migrations/20261124100331_require_distinct_finance_approval_levels.sql"
       - "supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql"
       - "supabase/migrations/20261124021521_complete_secure_member_portal_lifecycle.sql"
       - "supabase/migrations/20261124021623_scope_member_directory_and_role_reads.sql"
@@ -1242,6 +1243,9 @@ jobs:
 
       - name: Apply final scope-aware finance transaction and journal APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql
+
+      - name: Require distinct approvers across finance approval levels
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124100331_require_distinct_finance_approval_levels.sql
 
       - name: Apply secure member directory write APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql
