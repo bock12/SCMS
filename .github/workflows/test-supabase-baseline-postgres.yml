@@ -39,6 +39,7 @@ on:
       - "supabase/migrations/20261124021829_harden_member_portal_revocation_retry.sql"
       - "supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql"
       - "supabase/migrations/20261124022203_block_suspended_self_profile_reads.sql"
+      - "supabase/migrations/20261124022800_sync_trusted_auth_link_portal_state.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
@@ -359,6 +360,13 @@ jobs:
             ('93000000-0000-4000-8000-000000000001', '92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000001', 'Scope', 'Actor'),
             ('93000000-0000-4000-8000-000000000002', '92000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000002', 'Scope', 'Target A'),
             ('93000000-0000-4000-8000-000000000003', '92000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000003', 'Scope', 'Target B');
+
+          UPDATE public.profiles SET portal_access_status = 'active'
+          WHERE auth_user_id IN (
+            '92000000-0000-4000-8000-000000000001',
+            '92000000-0000-4000-8000-000000000002',
+            '92000000-0000-4000-8000-000000000003'
+          );
 
           INSERT INTO public.profile_role_assignments (
             profile_id, role_id, scope_type, branch_id, district_id,
@@ -700,6 +708,12 @@ jobs:
             ('20000000-0000-4000-8000-000000000002',
              '30000000-0000-4000-8000-000000000002',
              '10000000-0000-4000-8000-000000000002', 'Test', 'Member B');
+
+          UPDATE public.profiles SET portal_access_status = 'active'
+          WHERE auth_user_id IN (
+            '30000000-0000-4000-8000-000000000001',
+            '30000000-0000-4000-8000-000000000002'
+          );
           SQL
 
           visible_rows="$(psql -v ON_ERROR_STOP=1 -Atq -c "
@@ -1233,6 +1247,9 @@ jobs:
 
       - name: Block suspended self-profile reads
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124022203_block_suspended_self_profile_reads.sql
+
+      - name: Synchronize trusted Auth links with portal lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124022800_sync_trusted_auth_link_portal_state.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
