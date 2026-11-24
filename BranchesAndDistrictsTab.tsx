@@ -33,19 +33,10 @@ import {
   type BranchMemberCountSnapshot
 } from './branchManagementService';
 import {
-  assignProfileRole,
-  deleteProfileRoleAssignment,
-  type ProfileRoleAssignment,
-  type SystemRole
-} from './profileRoleAssignmentService';
-import { canManageTargetRoleByScope } from './permissionResolutionService';
-
-const formatRoleName = (name: string): string =>
-  name
-    .split('_')
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  createLeadershipAppointment,
+  endLeadershipAppointment,
+  type LeadershipAppointment
+} from './leadershipAppointmentService';
 
 export interface BranchesAndDistrictsTabProps {
   profile: Profile | null;
@@ -54,8 +45,7 @@ export interface BranchesAndDistrictsTabProps {
 export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = ({ profile }) => {
   const [districts, setDistricts] = useState<District[]>([]);
   const [branches, setBranches] = useState<ChurchBranch[]>([]);
-  const [roles, setRoles] = useState<SystemRole[]>([]);
-  const [assignments, setAssignments] = useState<ProfileRoleAssignment[]>([]);
+  const [leadershipAppointments, setLeadershipAppointments] = useState<LeadershipAppointment[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [branchMemberCounts, setBranchMemberCounts] = useState<Record<string, BranchMemberCountSnapshot>>({});
   const [scope, setScope] = useState<BranchGovernanceScope>({
@@ -76,7 +66,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   const [portalView, setPortalView] = useState<'portal' | 'hierarchy'>('portal');
   const [searchQuery, setSearchQuery] = useState('');
   const [districtFilter, setDistrictFilter] = useState<string>('all');
-  const [confirmRemoveAssignmentId, setConfirmRemoveAssignmentId] = useState<string | null>(null);
+  const [confirmEndAppointmentId, setConfirmEndAppointmentId] = useState<string | null>(null);
   const [confirmDeleteDistrictId, setConfirmDeleteDistrictId] = useState<string | null>(null);
   const workspaceBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,9 +92,14 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   const [branchModalError, setBranchModalError] = useState<string | null>(null);
 
   // Assign Branch Leadership Modal State
-  const [leadershipTargetBranch, setLeadershipTargetBranch] = useState<ChurchBranch | null>(null);
+  const [leadershipTarget, setLeadershipTarget] = useState<
+    | { scope_type: 'branch'; branch: ChurchBranch }
+    | { scope_type: 'district'; district: District }
+    | null
+  >(null);
   const [leaderProfileId, setLeaderProfileId] = useState('');
-  const [leaderRoleId, setLeaderRoleId] = useState('');
+  const [leaderTitle, setLeaderTitle] = useState('Pastor');
+  const [leaderResponsibilities, setLeaderResponsibilities] = useState('');
   const [leaderModalError, setLeaderModalError] = useState<string | null>(null);
 
   const loadData = useCallback(async (isBackgroundRefresh = false) => {
@@ -123,8 +118,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
       );
       setDistricts(data.districts);
       setBranches(data.branches);
-      setRoles(data.roles);
-      setAssignments(data.assignments);
+      setLeadershipAppointments(data.leadershipAppointments);
       setProfiles(data.profiles);
       setBranchMemberCounts(data.branchMemberCounts || {});
       setScope(resolvedScope);
@@ -149,10 +143,12 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
     };
     window.addEventListener('church_branches_updated', handleSync);
     window.addEventListener('profile_role_assignments_updated', handleSync);
+    window.addEventListener('leadership_appointments_updated', handleSync);
     window.addEventListener('role_permissions_updated', handleSync);
     return () => {
       window.removeEventListener('church_branches_updated', handleSync);
       window.removeEventListener('profile_role_assignments_updated', handleSync);
+      window.removeEventListener('leadership_appointments_updated', handleSync);
       window.removeEventListener('role_permissions_updated', handleSync);
     };
   }, [loadData]);
@@ -163,58 +159,36 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
     return map;
   }, [profiles]);
 
-  const roleById = useMemo(() => {
-    const map = new Map<string, SystemRole>();
-    roles.forEach(r => map.set(r.id, r));
-    return map;
-  }, [roles]);
-
-  const assignableLeadershipRoles = useMemo(() => {
-    const order = ['pastor', 'finance_officer', 'leader', 'worker', 'district_admin', 'admin', 'super_admin', 'member'];
-    return [...roles]
-      .filter(role => canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name))
-      .sort((a, b) => {
-        const idxA = order.indexOf(a.name);
-        const idxB = order.indexOf(b.name);
-        return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
-      });
-  }, [roles, scope.hasChurchRoleAccess]);
-
-  const activeAssignments = useMemo(() => {
-    const nowMs = Date.now();
-    return assignments.filter(a => {
-      if (!a.is_active) return false;
-      const assignedAt = Date.parse(a.assigned_at);
-      if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
-      if (a.expires_at) {
-        const expiresAt = Date.parse(a.expires_at);
-        if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
-      }
-      return true;
-    });
-  }, [assignments]);
+  const activeAppointments = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return leadershipAppointments.filter(appointment =>
+      appointment.status === 'active' &&
+      appointment.effective_from <= today &&
+      (!appointment.effective_to || appointment.effective_to >= today)
+    );
+  }, [leadershipAppointments]);
 
   const branchLeadershipMap = useMemo(() => {
-    const map = new Map<string, ProfileRoleAssignment[]>();
-    activeAssignments.forEach(a => {
-      if (a.scope_type !== 'branch' || !a.branch_id) return;
-      const list = map.get(a.branch_id) || [];
-      list.push(a);
-      map.set(a.branch_id, list);
+    const map = new Map<string, LeadershipAppointment[]>();
+    activeAppointments.forEach(appointment => {
+      if (appointment.scope_type !== 'branch' || !appointment.branch_id) return;
+      const list = map.get(appointment.branch_id) || [];
+      list.push(appointment);
+      map.set(appointment.branch_id, list);
     });
     return map;
-  }, [activeAssignments]);
+  }, [activeAppointments]);
 
   const districtOverseersMap = useMemo(() => {
-    const map = new Map<string, ProfileRoleAssignment[]>();
-    activeAssignments.forEach(a => {
-      if (a.scope_type !== 'district' || !a.district_id) return;
-      const list = map.get(a.district_id) || [];
-      list.push(a);
-      map.set(a.district_id, list);
+    const map = new Map<string, LeadershipAppointment[]>();
+    activeAppointments.forEach(appointment => {
+      if (appointment.scope_type !== 'district' || !appointment.district_id) return;
+      const list = map.get(appointment.district_id) || [];
+      list.push(appointment);
+      map.set(appointment.district_id, list);
     });
     return map;
-  }, [activeAssignments]);
+  }, [activeAppointments]);
 
   const manageableDistricts = useMemo(() => {
     const allowed = new Set(scope.manageableDistrictIds);
@@ -235,11 +209,10 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         districts,
         branches,
         profiles,
-        assignments,
-        roles,
+        leadershipAppointments,
         branchMemberCounts
       }),
-    [assignments, branchMemberCounts, branches, districts, profiles, roles]
+    [branchMemberCounts, branches, districts, leadershipAppointments, profiles]
   );
 
   const standaloneBranchSummaries = useMemo(
@@ -247,11 +220,10 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
       buildStandaloneBranchSummaries({
         branches,
         profiles,
-        assignments,
-        roles,
+        leadershipAppointments,
         branchMemberCounts
       }),
-    [assignments, branchMemberCounts, branches, profiles, roles]
+    [branchMemberCounts, branches, leadershipAppointments, profiles]
   );
 
   const filteredDistrictPortalSummaries = useMemo(() => {
@@ -300,25 +272,29 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
 
   const stats = useMemo(() => {
     const branchIdsWithPastor = new Set(
-      activeAssignments
-        .filter(a => a.scope_type === 'branch' && a.branch_id && roleById.get(a.role_id)?.name === 'pastor')
-        .map(a => a.branch_id as string)
+      activeAppointments
+        .filter(appointment =>
+          appointment.scope_type === 'branch' &&
+          appointment.branch_id &&
+          appointment.title.toLowerCase().includes('pastor')
+        )
+        .map(appointment => appointment.branch_id as string)
     );
-    const totalBranchLeaders = activeAssignments.filter(a => a.scope_type === 'branch' && a.branch_id).length;
-    const districtMembers = districtPortalSummaries.reduce((sum, s) => sum + s.totalMembers, 0);
-    const standaloneMembers = standaloneBranchSummaries.reduce((sum, s) => sum + s.memberCount, 0);
-    const totalBranchMembers = districtMembers + standaloneMembers;
-    const designatedHqCount = districtPortalSummaries.filter(s => Boolean(s.hqBranch)).length;
+    const totalBranchLeaders = activeAppointments.filter(
+      appointment => appointment.scope_type === 'branch' && appointment.branch_id
+    ).length;
+    const districtMembers = districtPortalSummaries.reduce((sum, summary) => sum + summary.totalMembers, 0);
+    const standaloneMembers = standaloneBranchSummaries.reduce((sum, summary) => sum + summary.memberCount, 0);
     return {
       districtCount: districts.length,
       branchCount: branches.length,
       standaloneCount: standaloneBranchSummaries.length,
       branchesWithPastor: branchIdsWithPastor.size,
       totalBranchLeaders,
-      totalBranchMembers,
-      designatedHqCount
+      totalBranchMembers: districtMembers + standaloneMembers,
+      designatedHqCount: districtPortalSummaries.filter(summary => Boolean(summary.hqBranch)).length
     };
-  }, [activeAssignments, branches.length, districtPortalSummaries, districts.length, roleById, standaloneBranchSummaries]);
+  }, [activeAppointments, branches.length, districtPortalSummaries, districts.length, standaloneBranchSummaries]);
 
   const openDistrictHierarchy = (districtId: string) => {
     setDistrictFilter(districtId);
