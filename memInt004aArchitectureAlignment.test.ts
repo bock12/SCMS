@@ -326,7 +326,7 @@ describe('MEM-INT-004A branch, district & congregation membership alignment', ()
   test('Scenario E & F: approved transfer atomically moves branch, deactivates source-branch ministry rosters while preserving history and church-wide teams', async () => {
     await signInAsChurchAdmin();
 
-    // Seed a branch-1 ministry, a church-wide (branch_id: null) ministry, and cell membership for mem-11 or new member
+    // Seed branch-scoped and church-wide ministry participation plus a branch-1 cell assignment.
     const { profile: mover } = await registerUnifiedMember({
       first_name: 'Daniel',
       last_name: 'Relocating',
@@ -374,6 +374,22 @@ describe('MEM-INT-004A branch, district & congregation membership alignment', ()
       status: 'active'
     });
 
+    await supabase.from('cells').insert({
+      id: 'cell-branch1-transfer-history',
+      branch_id: 'branch-1',
+      name: 'Branch 1 Transfer History Cell',
+      leader_id: mover.id,
+      status: 'active'
+    });
+    await supabase.from('cell_members').insert({
+      id: 'cell-member-branch1-transfer-history',
+      cell_id: 'cell-branch1-transfer-history',
+      member_id: mover.id,
+      branch_id: 'branch-1',
+      role: 'leader',
+      status: 'active'
+    });
+
     const transfer = await requestMemberTransfer({
       memberId: mover.id,
       toBranchId: 'branch-2',
@@ -403,5 +419,17 @@ describe('MEM-INT-004A branch, district & congregation membership alignment', ()
     const churchAssignment = churchRoster.find(r => r.member_id === mover.id);
     expect(churchAssignment).toBeDefined();
     expect(churchAssignment?.status).toBe('active');
+
+    const historicalCellMembership = await supabase.from('cell_members')
+      .select('*')
+      .eq('id', 'cell-member-branch1-transfer-history')
+      .single();
+    expect(historicalCellMembership.data?.status).toBe('transferred');
+
+    const sourceCell = await supabase.from('cells')
+      .select('leader_id')
+      .eq('id', 'cell-branch1-transfer-history')
+      .single();
+    expect(sourceCell.data?.leader_id).toBeNull();
   });
 });
