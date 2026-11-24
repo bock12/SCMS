@@ -144,11 +144,16 @@ export interface Member {
 export interface MemberTransfer {
   id: string;
   member_id: string;
-  from_branch_id: string;
+  from_branch_id: string | null;
   to_branch_id: string;
-  status: 'pending' | 'approved' | 'rejected';
-  request_date: string;
-  notes?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  requested_at: string;
+  requested_by_profile_id?: string | null;
+  approved_by_profile_id?: string | null;
+  approved_at?: string | null;
+  notes?: string | null;
+  /** Legacy display alias retained for older UI consumers during migration. */
+  request_date?: string;
   // Joins
   member?: { first_name: string; last_name: string };
   from_branch?: { name: string };
