@@ -2071,9 +2071,15 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
               <Key size={24} />
             </div>
             <div>
-              <h3 className="text-lg font-black text-slate-900">Portal Access Provisioned</h3>
+              <h3 className="text-lg font-black text-slate-900">
+                {portalInviteModal.invite.delivery_method === 'email' ? 'Invitation Email Sent' : 'Portal Access Provisioned'}
+              </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Share this one-time activation link with <strong className="text-slate-800">{portalInviteModal.name}</strong> so they can set their own password.
+                {portalInviteModal.invite.delivery_method === 'email' ? (
+                  <>Supabase Auth sent an invitation email to <strong className="text-slate-800">{portalInviteModal.name}</strong>. They can use the email link to set their password.</>
+                ) : (
+                  <>Share this one-time activation link with <strong className="text-slate-800">{portalInviteModal.name}</strong> so they can set their own password.</>
+                )}
               </p>
             </div>
 
@@ -2082,26 +2088,34 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
                 <span className="text-slate-400 font-bold block">Portal Email:</span>
                 <span className="font-mono text-slate-800 font-bold break-all">{portalInviteModal.invite.email}</span>
               </div>
-              <div>
-                <span className="text-slate-400 font-bold block">Activation Link:</span>
-                <span className="font-mono text-indigo-600 font-bold text-[11px] break-all">{portalInviteModal.invite.setupUrl}</span>
-              </div>
+              {portalInviteModal.invite.delivery_method === 'email' ? (
+                <p className="text-emerald-700 font-semibold">
+                  The invitation was sent by email. Ask the member to check their inbox and spam folder.
+                </p>
+              ) : (
+                <div>
+                  <span className="text-slate-400 font-bold block">Activation Link:</span>
+                  <span className="font-mono text-indigo-600 font-bold text-[11px] break-all">{portalInviteModal.invite.setupUrl}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  const fullUrl = `${window.location.origin}${portalInviteModal.invite.setupUrl}`;
-                  navigator.clipboard?.writeText(fullUrl);
-                  setCopiedInvite(true);
-                  setTimeout(() => setCopiedInvite(false), 2000);
-                }}
-                className="flex-1 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Copy size={14} />
-                <span>{copiedInvite ? 'Copied Activation Link!' : 'Copy Activation Link'}</span>
-              </button>
+              {portalInviteModal.invite.delivery_method !== 'email' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fullUrl = `${window.location.origin}${portalInviteModal.invite.setupUrl}`;
+                    navigator.clipboard?.writeText(fullUrl);
+                    setCopiedInvite(true);
+                    setTimeout(() => setCopiedInvite(false), 2000);
+                  }}
+                  className="flex-1 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Copy size={14} />
+                  <span>{copiedInvite ? 'Copied Activation Link!' : 'Copy Activation Link'}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => { setPortalInviteModal(null); setCopiedInvite(false); }}
