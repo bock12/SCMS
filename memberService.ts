@@ -155,11 +155,15 @@ export async function getMembers(): Promise<Profile[]> {
 
     const profiles = (data || []).map(row => toDirectoryProfile(row));
     if (profiles.length === 0) return [];
+    const roleReadTime = new Date().toISOString();
     const { data: roleRows, error: roleError } = await supabaseDataClient
       .from('profile_role_assignments')
       .select('profile_id,roles(name)')
       .in('profile_id', profiles.map(person => person.id))
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .lte('assigned_at', roleReadTime)
+      .or(`expires_at.is.null,expires_at.gt.${roleReadTime}`)
+      .order('assigned_at', { ascending: false });
     if (roleError) throw roleError;
 
     const roleByProfile = new Map<string, AppRole>();
