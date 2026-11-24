@@ -28,7 +28,9 @@ import {
   updateChurchBranch,
   resolveActorBranchGovernanceScope,
   buildDistrictPortalSummaries,
-  type BranchGovernanceScope
+  buildStandaloneBranchSummaries,
+  type BranchGovernanceScope,
+  type BranchMemberCountSnapshot
 } from './branchManagementService';
 import {
   assignProfileRole,
@@ -55,6 +57,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   const [roles, setRoles] = useState<SystemRole[]>([]);
   const [assignments, setAssignments] = useState<ProfileRoleAssignment[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [branchMemberCounts, setBranchMemberCounts] = useState<Record<string, BranchMemberCountSnapshot>>({});
   const [scope, setScope] = useState<BranchGovernanceScope>({
     canCreateDistrict: false,
     hasChurchBranchAccess: false,
@@ -123,6 +126,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
       setRoles(data.roles);
       setAssignments(data.assignments);
       setProfiles(data.profiles);
+      setBranchMemberCounts(data.branchMemberCounts || {});
       setScope(resolvedScope);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load districts and branches.');
@@ -218,6 +222,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
   }, [districts, scope]);
 
   const visibleDistricts = useMemo(() => {
+    if (districtFilter === 'unassigned') return [];
     if (districtFilter !== 'all') {
       return districts.filter(d => d.id === districtFilter);
     }
@@ -231,12 +236,26 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         branches,
         profiles,
         assignments,
-        roles
+        roles,
+        branchMemberCounts
       }),
-    [assignments, branches, districts, profiles, roles]
+    [assignments, branchMemberCounts, branches, districts, profiles, roles]
+  );
+
+  const standaloneBranchSummaries = useMemo(
+    () =>
+      buildStandaloneBranchSummaries({
+        branches,
+        profiles,
+        assignments,
+        roles,
+        branchMemberCounts
+      }),
+    [assignments, branchMemberCounts, branches, profiles, roles]
   );
 
   const filteredDistrictPortalSummaries = useMemo(() => {
+    if (districtFilter === 'unassigned') return [];
     const query = searchQuery.trim().toLowerCase();
     return districtPortalSummaries.filter(summary => {
       if (districtFilter !== 'all' && summary.district.id !== districtFilter) return false;
@@ -251,11 +270,33 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         bs =>
           bs.branch.name.toLowerCase().includes(query) ||
           bs.branch.city.toLowerCase().includes(query) ||
-          bs.branch.state.toLowerCase().includes(query)
+          (bs.branch.state || bs.branch.state_or_region || '').toLowerCase().includes(query)
       );
       return inDistrict || inOverseers || inBranches;
     });
   }, [districtFilter, districtPortalSummaries, searchQuery]);
+
+  const filteredStandaloneBranchSummaries = useMemo(() => {
+    if (districtFilter !== 'all' && districtFilter !== 'unassigned') return [];
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return standaloneBranchSummaries;
+    return standaloneBranchSummaries.filter(bs => {
+      const leaders = branchLeadershipMap.get(bs.branch.id) || [];
+      const leaderMatch = leaders.some(l => {
+        const member = profileById.get(l.profile_id);
+        const fullName = member ? `${member.first_name} ${member.last_name}`.toLowerCase() : '';
+        return fullName.includes(query);
+      });
+      return (
+        bs.branch.name.toLowerCase().includes(query) ||
+        bs.branch.city.toLowerCase().includes(query) ||
+        (bs.branch.state || bs.branch.state_or_region || '').toLowerCase().includes(query) ||
+        bs.branch.address.toLowerCase().includes(query) ||
+        'standalone'.includes(query) ||
+        leaderMatch
+      );
+    });
+  }, [branchLeadershipMap, districtFilter, profileById, searchQuery, standaloneBranchSummaries]);
 
   const stats = useMemo(() => {
     const branchIdsWithPastor = new Set(
@@ -264,17 +305,20 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         .map(a => a.branch_id as string)
     );
     const totalBranchLeaders = activeAssignments.filter(a => a.scope_type === 'branch' && a.branch_id).length;
-    const totalBranchMembers = districtPortalSummaries.reduce((sum, s) => sum + s.totalMembers, 0);
+    const districtMembers = districtPortalSummaries.reduce((sum, s) => sum + s.totalMembers, 0);
+    const standaloneMembers = standaloneBranchSummaries.reduce((sum, s) => sum + s.memberCount, 0);
+    const totalBranchMembers = districtMembers + standaloneMembers;
     const designatedHqCount = districtPortalSummaries.filter(s => Boolean(s.hqBranch)).length;
     return {
       districtCount: districts.length,
       branchCount: branches.length,
+      standaloneCount: standaloneBranchSummaries.length,
       branchesWithPastor: branchIdsWithPastor.size,
       totalBranchLeaders,
       totalBranchMembers,
       designatedHqCount
     };
-  }, [activeAssignments, branches.length, districtPortalSummaries, districts.length, roleById]);
+  }, [activeAssignments, branches.length, districtPortalSummaries, districts.length, roleById, standaloneBranchSummaries]);
 
   const openDistrictHierarchy = (districtId: string) => {
     setDistrictFilter(districtId);
@@ -314,13 +358,15 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
     setShowDistrictModal(true);
   };
 
-  const openCreateBranch = (presetDistrictId?: string) => {
+  const openCreateBranch = (presetDistrictId?: string | null) => {
     setEditingBranch(null);
     const defaultDist =
-      presetDistrictId ||
-      manageableDistricts[0]?.id ||
-      districts[0]?.id ||
-      '';
+      presetDistrictId === null
+        ? ''
+        : presetDistrictId ||
+          manageableDistricts[0]?.id ||
+          districts[0]?.id ||
+          '';
     setBranchDistrictId(defaultDist);
     setBranchName('');
     setBranchAddress('');
@@ -333,11 +379,11 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
 
   const openEditBranch = (branch: ChurchBranch) => {
     setEditingBranch(branch);
-    setBranchDistrictId(branch.district_id);
+    setBranchDistrictId(branch.district_id || '');
     setBranchName(branch.name);
     setBranchAddress(branch.address);
     setBranchCity(branch.city);
-    setBranchState(branch.state);
+    setBranchState(branch.state || branch.state_or_region || '');
     setBranchIsMain(branch.is_main_branch);
     setBranchModalError(null);
     setShowBranchModal(true);
@@ -413,11 +459,12 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
     setSaving(true);
     setBranchModalError(null);
     setNotice(null);
+    const normalizedDistrictId = branchDistrictId.trim() || null;
     try {
       if (editingBranch) {
         const updated = await updateChurchBranch({
           id: editingBranch.id,
-          district_id: branchDistrictId,
+          district_id: normalizedDistrictId,
           name: branchName,
           address: branchAddress,
           city: branchCity,
@@ -428,7 +475,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
         setNotice(`Updated branch "${updated.name}".`);
       } else {
         const created = await createChurchBranch({
-          district_id: branchDistrictId,
+          district_id: normalizedDistrictId,
           name: branchName,
           address: branchAddress,
           city: branchCity,
@@ -535,7 +582,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
             </button>
           )}
 
-          {manageableDistricts.length > 0 && (
+          {(scope.hasChurchBranchAccess || manageableDistricts.length > 0) && (
             <button
               type="button"
               onClick={() => openCreateBranch()}
@@ -560,7 +607,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
           <div className="text-xs font-bold text-slate-500">Church Branches</div>
           <div className="text-2xl font-black text-slate-900 mt-1 tabular-nums">{stats.branchCount}</div>
           <div className="text-xs text-slate-500 mt-0.5 tabular-nums">
-            {stats.branchesWithPastor} / {stats.branchCount} with Pastor
+            {stats.branchesWithPastor} w/ Pastor{stats.standaloneCount > 0 ? ` · ${stats.standaloneCount} standalone` : ''}
           </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -568,7 +615,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
           <div className="text-2xl font-black text-emerald-700 mt-1 tabular-nums">
             {stats.totalBranchMembers}
           </div>
-          <div className="text-xs text-slate-500 mt-0.5">Active district congregation</div>
+          <div className="text-xs text-slate-500 mt-0.5">Active congregation</div>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-4">
           <div className="text-xs font-bold text-slate-500">Branch Leadership</div>
@@ -646,10 +693,13 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               onChange={e => setDistrictFilter(e.target.value)}
               className="w-full sm:w-56 min-h-[44px] px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-800"
             >
-              <option value="all">All Districts ({districts.length})</option>
+              <option value="all">All Scopes ({districts.length})</option>
               {districts.map(d => (
                 <option key={d.id} value={d.id}>{d.name}</option>
               ))}
+              {standaloneBranchSummaries.length > 0 && (
+                <option value="unassigned">Standalone / No District ({standaloneBranchSummaries.length})</option>
+              )}
             </select>
           </div>
         </div>
@@ -678,21 +728,30 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
             </button>
           </div>
 
-          {filteredDistrictPortalSummaries.length === 0 ? (
+          {filteredDistrictPortalSummaries.length === 0 && filteredStandaloneBranchSummaries.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-3">
               <p className="text-sm font-semibold text-slate-700">
-                {districts.length === 0
-                  ? 'No districts have been established yet.'
-                  : 'No districts match your current search or filter.'}
+                {districts.length === 0 && standaloneBranchSummaries.length === 0
+                  ? 'No districts or branches have been established yet.'
+                  : 'No districts or standalone branches match your current search or filter.'}
               </p>
-              {districts.length === 0 && scope.canCreateDistrict ? (
-                <button
-                  type="button"
-                  onClick={openCreateDistrict}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus size={14} /> Create First District
-                </button>
+              {districts.length === 0 && standaloneBranchSummaries.length === 0 && scope.canCreateDistrict ? (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openCreateDistrict}
+                    className="min-h-[40px] px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus size={14} /> Create First District
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCreateBranch(null)}
+                    className="min-h-[40px] px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus size={14} /> Create Standalone Branch
+                  </button>
+                </div>
               ) : (
                 <button
                   type="button"
@@ -958,6 +1017,60 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               })}
             </div>
           )}
+
+          {filteredStandaloneBranchSummaries.length > 0 && (
+            <article className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-extrabold text-slate-900">
+                    Standalone Branches (No District)
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Church-wide campuses operating directly under church administration without a district grouping.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openDistrictHierarchy('unassigned')}
+                  className="self-start sm:self-auto min-h-[38px] px-3.5 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <span>Manage Standalone Hierarchy</span>
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+              <ul className="divide-y divide-slate-100 border-t border-slate-100">
+                {filteredStandaloneBranchSummaries.map(bs => {
+                  const stateLabel = bs.branch.state || bs.branch.state_or_region || '';
+                  return (
+                    <li key={bs.branch.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {bs.branch.is_main_branch ? (
+                          <Crown size={14} className="text-amber-600 shrink-0" aria-label="Church Main Branch" />
+                        ) : (
+                          <MapPin size={14} className="text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-bold text-slate-900 truncate">{bs.branch.name}</span>
+                        {bs.branch.is_main_branch && (
+                          <span className="text-[11px] font-bold text-amber-700 shrink-0">Church Main</span>
+                        )}
+                        <span className="text-slate-400 hidden sm:inline truncate">
+                          · {bs.branch.city}{stateLabel ? `, ${stateLabel}` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 tabular-nums">
+                        <span className="text-slate-500 whitespace-nowrap">
+                          {bs.leaderCount} {bs.leaderCount === 1 ? 'leader' : 'leaders'}
+                        </span>
+                        <span className="font-bold text-slate-700 whitespace-nowrap w-20 text-right">
+                          {bs.memberCount} {bs.memberCount === 1 ? 'member' : 'members'}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </article>
+          )}
         </div>
       )}
 
@@ -971,7 +1084,9 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                 <span>
                   Managing hierarchy for{' '}
                   <strong className="text-slate-900">
-                    {districts.find(d => d.id === districtFilter)?.name || 'selected district'}
+                    {districtFilter === 'unassigned'
+                      ? 'Standalone Branches (No District)'
+                      : districts.find(d => d.id === districtFilter)?.name || 'selected district'}
                   </strong>
                 </span>
               </div>
@@ -981,7 +1096,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                   onClick={() => setDistrictFilter('all')}
                   className="text-xs font-bold text-slate-600 hover:text-slate-900 whitespace-nowrap cursor-pointer"
                 >
-                  Show All Districts
+                  Show All Scopes
                 </button>
                 <button
                   type="button"
@@ -1014,7 +1129,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
             return (
               b.name.toLowerCase().includes(query) ||
               b.city.toLowerCase().includes(query) ||
-              b.state.toLowerCase().includes(query) ||
+              (b.state || b.state_or_region || '').toLowerCase().includes(query) ||
               b.address.toLowerCase().includes(query) ||
               leaderMatch
             );
@@ -1267,6 +1382,166 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
             </section>
           );
         })}
+
+        {(districtFilter === 'all' || districtFilter === 'unassigned') && filteredStandaloneBranchSummaries.length > 0 && (
+          <section className="space-y-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-2.5 border-b border-slate-200">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-extrabold text-slate-900">Standalone Branches (No District)</h3>
+                  <span className="text-xs font-semibold text-slate-500 tabular-nums">
+                    · Church-Wide Administration · {filteredStandaloneBranchSummaries.length}{' '}
+                    {filteredStandaloneBranchSummaries.length === 1 ? 'branch' : 'branches'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Branches operating independently without district membership. Church-wide admins may designate one standalone Church Main Branch or attach a branch to a district later.
+                </p>
+              </div>
+              {scope.hasChurchBranchAccess && (
+                <button
+                  type="button"
+                  onClick={() => openCreateBranch(null)}
+                  className="self-start lg:self-auto min-h-[40px] px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  <Plus size={14} /> Add Standalone Branch
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredStandaloneBranchSummaries.map(({ branch, memberCount }) => {
+                const leaders = branchLeadershipMap.get(branch.id) || [];
+                const canEditBranch = scope.manageableBranchIds.includes(branch.id);
+                const canAssignLeadership = scope.assignableBranchIds.includes(branch.id);
+                const stateLabel = branch.state || branch.state_or_region || '';
+
+                return (
+                  <article
+                    key={branch.id}
+                    className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4 min-w-0"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-extrabold text-slate-900 text-base">{branch.name}</h4>
+                            {branch.is_main_branch && (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700">
+                                <Crown size={12} /> Church Main Branch
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+                            <MapPin size={13} className="shrink-0 text-slate-400" />
+                            <span>
+                              {branch.address}, {branch.city}
+                              {stateLabel ? `, ${stateLabel}` : ''} · {memberCount}{' '}
+                              {memberCount === 1 ? 'member' : 'members'}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-slate-100 space-y-2">
+                        <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <ShieldCheck size={13} className="text-indigo-600" />
+                          <span>Branch Leadership ({leaders.length})</span>
+                        </div>
+                        {leaders.length === 0 ? (
+                          <p className="text-xs text-slate-400">
+                            No branch-scoped pastor or leaders assigned yet.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {leaders.map(assignment => {
+                              const member = profileById.get(assignment.profile_id);
+                              const role = roleById.get(assignment.role_id);
+                              const canManageThisRole =
+                                canAssignLeadership &&
+                                role &&
+                                canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name);
+                              const isConfirming = confirmRemoveAssignmentId === assignment.id;
+
+                              return (
+                                <div
+                                  key={assignment.id}
+                                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200/80 text-xs"
+                                >
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-slate-900 block truncate">
+                                      {member ? `${member.first_name} ${member.last_name}` : assignment.profile_id}
+                                    </span>
+                                    <span className="text-slate-500 font-semibold">
+                                      {role ? formatRoleName(role.name) : 'Assigned Leader'}
+                                    </span>
+                                  </div>
+                                  {canManageThisRole && (
+                                    isConfirming ? (
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        <button
+                                          type="button"
+                                          disabled={saving}
+                                          onClick={() => void handleRemoveBranchAssignment(assignment)}
+                                          className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] cursor-pointer"
+                                        >
+                                          Confirm
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={saving}
+                                          onClick={() => setConfirmRemoveAssignmentId(null)}
+                                          className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 font-semibold text-[11px] cursor-pointer"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={saving}
+                                        onClick={() => setConfirmRemoveAssignmentId(assignment.id)}
+                                        aria-label={`Remove ${member ? member.first_name : 'leader'} from ${branch.name}`}
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    )
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                      {canEditBranch && (
+                        <button
+                          type="button"
+                          onClick={() => openEditBranch(branch)}
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                        >
+                          <Edit3 size={14} /> Edit Branch
+                        </button>
+                      )}
+                      {canAssignLeadership && (
+                        <button
+                          type="button"
+                          onClick={() => openAssignLeadership(branch)}
+                          className="ml-auto min-h-[44px] px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                        >
+                          <UserPlus size={14} /> Assign Leadership
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
           </div>
         </div>
       )}
@@ -1438,14 +1713,24 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               )}
 
               <label className="block text-sm font-bold text-slate-700">
-                District
+                District {scope.hasChurchBranchAccess && <span className="text-xs font-normal text-slate-400">(optional)</span>}
                 <select
-                  required
+                  required={!scope.hasChurchBranchAccess}
                   value={branchDistrictId}
-                  onChange={e => setBranchDistrictId(e.target.value)}
+                  onChange={e => {
+                    const nextDistrictId = e.target.value;
+                    if (nextDistrictId !== branchDistrictId) {
+                      setBranchIsMain(false);
+                    }
+                    setBranchDistrictId(nextDistrictId);
+                  }}
                   className="mt-1 w-full min-h-[44px] px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium"
                 >
-                  <option value="">Select district</option>
+                  {scope.hasChurchBranchAccess ? (
+                    <option value="">No District (Standalone / Church-Wide)</option>
+                  ) : (
+                    <option value="">Select district</option>
+                  )}
                   {manageableDistricts.map(d => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
@@ -1502,12 +1787,14 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               </div>
 
               {scope.hasChurchBranchAccess && (() => {
+                const normalizedTargetDistrict = branchDistrictId.trim() || null;
                 const otherHqBranch = branches.find(
                   b =>
-                    b.district_id === branchDistrictId &&
+                    (b.district_id || null) === normalizedTargetDistrict &&
                     b.is_main_branch &&
                     b.id !== editingBranch?.id
                 );
+                const isStandaloneScope = normalizedTargetDistrict === null;
                 return (
                   <div className="space-y-1.5 pt-1">
                     <label className="flex items-center gap-2.5 text-sm font-bold text-slate-700 cursor-pointer">
@@ -1517,11 +1804,16 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                         onChange={e => setBranchIsMain(e.target.checked)}
                         className="w-4 h-4 accent-indigo-600 rounded"
                       />
-                      <span>Designate as District HQ Branch</span>
+                      <span>
+                        {isStandaloneScope
+                          ? 'Designate as Church Main Branch (Standalone)'
+                          : 'Designate as District HQ Branch'}
+                      </span>
                     </label>
                     {branchIsMain && otherHqBranch && (
                       <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                        Selecting this transfers District HQ status from <strong>{otherHqBranch.name}</strong> (only one HQ branch per district).
+                        Selecting this transfers {isStandaloneScope ? 'Church Main Branch' : 'District HQ'} status from{' '}
+                        <strong>{otherHqBranch.name}</strong> (only one {isStandaloneScope ? 'Church Main Branch' : 'HQ branch per district'}).
                       </p>
                     )}
                   </div>

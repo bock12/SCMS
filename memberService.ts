@@ -413,11 +413,14 @@ export async function registerUnifiedMember(
 
   const { data: branch, error: branchError } = await supabase
     .from('church_branches')
-    .select('id')
+    .select('id,status')
     .eq('id', branchId)
     .maybeSingle();
   if (branchError) throw branchError;
   if (!branch) throw new Error('The selected branch does not exist.');
+  if ((branch as any).status && (branch as any).status !== 'active') {
+    throw new Error('The selected branch is inactive and cannot accept new members.');
+  }
 
   await assertUniqueContactDetails(email, phone);
 

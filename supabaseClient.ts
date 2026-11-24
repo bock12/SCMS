@@ -289,6 +289,7 @@ const initialTransfers: MemberTransfer[] = [
     from_branch_id: 'branch-1',
     to_branch_id: 'branch-3',
     status: 'pending',
+    requested_at: new Date(Date.now() - 3 * 86400000).toISOString(),
     request_date: new Date(Date.now() - 3 * 86400000).toISOString(),
     notes: 'Relocating to California for employment. Requesting membership transfer.'
   },
@@ -298,6 +299,7 @@ const initialTransfers: MemberTransfer[] = [
     from_branch_id: 'branch-1',
     to_branch_id: 'branch-2',
     status: 'approved',
+    requested_at: new Date(Date.now() - 60 * 86400000).toISOString(),
     request_date: new Date(Date.now() - 60 * 86400000).toISOString(),
     notes: 'Transferred to lead worship ministry at Living Waters.'
   }
@@ -2468,6 +2470,89 @@ export const supabase = {
       return { data: null, error: { code: '22023', message: 'Unsupported attendance operation.' } };
     }
 
+    if (functionName === 'get_member_transfer_directory') {
+      const transferAssignments = getActorAssignmentsForPermission('manage_member_transfers');
+      const canManageTransferBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return transferAssignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return transferAssignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+      const districtNameById = new Map<string, string>(
+        (localDb.districts || []).map((d: any) => [d.id, d.name])
+      );
+      const members = (localDb.profiles || [])
+        .filter((item: any) =>
+          item.record_status !== 'archived' &&
+          (item.membership_status || 'active') === 'active' &&
+          Boolean(item.branch_id) &&
+          canManageTransferBranch(item.branch_id)
+        )
+        .map((item: any) => ({
+          id: item.id,
+          first_name: item.first_name,
+          last_name: item.last_name,
+          branch_id: item.branch_id,
+          membership_status: item.membership_status || 'active'
+        }))
+        .sort((a: any, b: any) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`));
+      const branches = (localDb.church_branches || [])
+        .filter((item: any) =>
+          (item.status || 'active') === 'active' &&
+          canManageTransferBranch(item.id)
+        )
+        .map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          district_id: item.district_id ?? null,
+          district_name: item.district_id ? (districtNameById.get(item.district_id) ?? null) : null,
+          status: item.status || 'active'
+        }))
+        .sort((a: any, b: any) => a.name.localeCompare(b.name));
+      return { data: { members, branches }, error: null };
+    }
+
+    if (functionName === 'get_branch_governance_summaries') {
+      const { p_district_id = null } = args;
+      const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
+      const allActorAssignments = (localDb.profile_role_assignments || []).filter((item: any) =>
+        item.profile_id === actor.id &&
+        item.is_active &&
+        new Date(item.assigned_at || 0).getTime() <= Date.now() &&
+        (!item.expires_at || new Date(item.expires_at).getTime() > Date.now()) &&
+        (localDb.roles || []).some((role: any) => role.id === item.role_id && role.is_active)
+      );
+      const canSeeBranch = (branch: any) =>
+        hasChurchBranchPerm ||
+        actorCanManageScopeWith(actorBranchAssignments, 'branch', branch.id, branch.district_id ?? null) ||
+        allActorAssignments.some((a: any) =>
+          a.scope_type === 'church' ||
+          (a.scope_type === 'branch' && a.branch_id === branch.id) ||
+          (a.scope_type === 'district' && Boolean(branch.district_id) && a.district_id === branch.district_id)
+        );
+      const rows = (localDb.church_branches || [])
+        .filter((b: any) => (!p_district_id || b.district_id === p_district_id) && canSeeBranch(b))
+        .map((b: any) => {
+          const branchMembers = (localDb.profiles || []).filter(
+            (p: any) => p.branch_id === b.id && p.record_status !== 'archived' && p.membership_status !== 'archived'
+          );
+          const activeMembers = branchMembers.filter(
+            (p: any) => !p.membership_status || p.membership_status === 'active'
+          );
+          return {
+            branch_id: b.id,
+            district_id: b.district_id ?? null,
+            total_members: branchMembers.length,
+            active_members: activeMembers.length
+          };
+        })
+        .sort((a: any, b: any) => String(a.branch_id).localeCompare(String(b.branch_id)));
+      return { data: rows, error: null };
+    }
+
     if (functionName === 'manage_member_transfer') {
       const { p_action, p_transfer_id, p_member_id, p_to_branch_id, p_notes } = args;
       if (!['request', 'approve', 'reject', 'cancel'].includes(p_action)) {
@@ -2488,13 +2573,18 @@ export const supabase = {
       if (p_action === 'request') {
         if (!p_to_branch_id) return { data: null, error: { code: '22023', message: 'A destination branch is required.' } };
         const member = (localDb.profiles || []).find((item: any) => item.id === (p_member_id || actor.id));
-        const targetBranch = (localDb.church_branches || []).find((item: any) => item.id === p_to_branch_id && item.status !== 'archived');
+        const targetBranch = (localDb.church_branches || []).find(
+          (item: any) => item.id === p_to_branch_id && (item.status || 'active') === 'active'
+        );
         if (!member || member.membership_status !== 'active' || member.record_status === 'archived') {
           return { data: null, error: { code: '23503', message: 'The selected active church member could not be found.' } };
         }
         if (!targetBranch) return { data: null, error: { code: '23503', message: 'The destination branch is unavailable.' } };
         if (member.branch_id === p_to_branch_id) return { data: null, error: { code: '22023', message: 'The member is already assigned to the selected branch.' } };
-        if (member.id !== actor.id && !canManageTransferBranch(member.branch_id)) {
+        if (
+          member.id !== actor.id &&
+          (!canManageTransferBranch(member.branch_id) || !canManageTransferBranch(p_to_branch_id))
+        ) {
           return { data: null, error: { code: '42501', message: 'You do not have permission to request a transfer for this member.' } };
         }
         if ((localDb.member_transfers || []).some((item: any) => item.member_id === member.id && item.status === 'pending')) {
@@ -2546,6 +2636,45 @@ export const supabase = {
         approved_at: now
       };
       if (p_action === 'approve') {
+        const activeDest = (localDb.church_branches || []).find(
+          (b: any) => b.id === transfer.to_branch_id && (b.status || 'active') === 'active'
+        );
+        if (!activeDest) {
+          return { data: null, error: { code: '23503', message: 'The destination branch is no longer active.' } };
+        }
+
+        if (transfer.from_branch_id) {
+          const sourceBranchMinistryIds = new Set(
+            (localDb.ministries || [])
+              .filter((m: any) => m.branch_id && m.branch_id === transfer.from_branch_id)
+              .map((m: any) => m.id)
+          );
+          localDb.ministry_members = (localDb.ministry_members || []).map((mm: any) =>
+            mm.member_id === member.id && sourceBranchMinistryIds.has(mm.ministry_id) && mm.status !== 'inactive'
+              ? { ...mm, status: 'inactive' }
+              : mm
+          );
+          localDb.ministries = (localDb.ministries || []).map((m: any) => {
+            if (m.branch_id !== transfer.from_branch_id) return m;
+            const nextCount = (localDb.ministry_members || []).filter(
+              (mm: any) => mm.ministry_id === m.id && mm.status !== 'inactive'
+            ).length;
+            return {
+              ...m,
+              member_count: nextCount,
+              ...(m.leader_id === member.id ? { leader_id: undefined, leader_name: 'TBD' } : {})
+            };
+          });
+          localDb.cells = (localDb.cells || []).map((c: any) =>
+            c.branch_id === transfer.from_branch_id && c.leader_id === member.id
+              ? { ...c, leader_id: null, updated_at: now }
+              : c
+          );
+          localDb.cell_members = (localDb.cell_members || []).filter(
+            (cm: any) => !(cm.member_id === member.id && cm.branch_id === transfer.from_branch_id)
+          );
+        }
+
         localDb.profiles = (localDb.profiles || []).map((item: any) =>
           item.id === member.id ? { ...item, branch_id: transfer.to_branch_id, updated_at: now } : item
         );
@@ -2670,7 +2799,9 @@ export const supabase = {
 
     if (functionName === 'assign_profile_role') {
       const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
-      const targetExists = (localDb.profiles || []).some((item: any) => item.id === p_profile_id);
+      const targetExists = (localDb.profiles || []).some(
+        (item: any) => item.id === p_profile_id && item.record_status !== 'archived'
+      );
       const role = (localDb.roles || []).find((item: any) => item.id === p_role_id && item.is_active);
       const validScope =
         (p_scope_type === 'church' && p_branch_id === null && p_district_id === null) ||
@@ -2678,6 +2809,18 @@ export const supabase = {
         (p_scope_type === 'district' && Boolean(p_district_id) && p_branch_id === null);
       if (!actorCanManageScope(p_scope_type, p_branch_id, p_district_id)) {
         return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
+      }
+      if (
+        p_scope_type === 'branch' &&
+        !(localDb.church_branches || []).some((b: any) => b.id === p_branch_id && (b.status || 'active') === 'active')
+      ) {
+        return { data: null, error: { code: '23503', message: 'The selected branch does not exist or is inactive.' } };
+      }
+      if (
+        p_scope_type === 'district' &&
+        !(localDb.districts || []).some((d: any) => d.id === p_district_id && (d.status || 'active') === 'active')
+      ) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist or is inactive.' } };
       }
       if (!targetExists || !role || !validScope) {
         return { data: null, error: { code: '22023', message: 'The selected member, role, or assignment scope is invalid.' } };
@@ -2831,9 +2974,9 @@ export const supabase = {
       return { data: true, error: null };
     }
 
-    const normalizeSingleHqPerDistrict = (branches: ChurchBranch[], targetDistrictId: string, preferredHqBranchId: string | null) =>
+    const normalizeSingleHqPerDistrict = (branches: ChurchBranch[], targetDistrictId: string | null, preferredHqBranchId: string | null) =>
       branches.map((branch: ChurchBranch) => {
-        if (branch.district_id !== targetDistrictId) return branch;
+        if ((branch.district_id ?? null) !== targetDistrictId) return branch;
         if (!preferredHqBranchId) {
           return branch.is_main_branch ? { ...branch, is_main_branch: false } : branch;
         }
@@ -2938,38 +3081,59 @@ export const supabase = {
 
     if (functionName === 'create_church_branch') {
       const {
-        p_district_id,
+        p_district_id = null,
         p_name = '',
         p_address = '',
         p_city = '',
         p_state = '',
-        p_is_main_branch = false
+        p_is_main_branch = false,
+        p_code = '',
+        p_country = ''
       } = args;
-      if (!(localDb.districts || []).some((d: any) => d.id === p_district_id)) {
-        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
-      }
+      const normalizedDistrictId = p_district_id ? String(p_district_id) : null;
       const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
-      if (!hasChurchBranchPerm && !actorCanManageScopeWith(actorBranchAssignments, 'district', null, p_district_id)) {
-        return { data: null, error: { code: '42501', message: 'You do not have permission to create branches in this district.' } };
+      if (!normalizedDistrictId) {
+        if (!hasChurchBranchPerm) {
+          return { data: null, error: { code: '42501', message: 'Church-wide manage_branches permission is required to create standalone branches without a district.' } };
+        }
+      } else {
+        const district = (localDb.districts || []).find(
+          (d: any) => d.id === normalizedDistrictId && (d.status || 'active') === 'active'
+        );
+        if (!district) {
+          return { data: null, error: { code: '23503', message: 'The selected district does not exist or is inactive.' } };
+        }
+        if (!hasChurchBranchPerm && !actorCanManageScopeWith(actorBranchAssignments, 'district', null, normalizedDistrictId)) {
+          return { data: null, error: { code: '42501', message: 'You do not have permission to create branches in this district.' } };
+        }
       }
       if (Boolean(p_is_main_branch) && !hasChurchBranchPerm) {
-        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may designate the district HQ branch.' } };
+        return { data: null, error: { code: '42501', message: 'Only church-wide administrators may designate a primary headquarters or main branch.' } };
       }
       if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
-        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state are required.' } };
+        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state/region are required.' } };
       }
+      const trimmedState = String(p_state).trim();
+      const trimmedName = String(p_name).trim();
+      const generatedCode =
+        String(p_code || '').trim().toUpperCase() ||
+        `${trimmedName.replace(/[^A-Za-z0-9]+/g, '').slice(0, 4).toUpperCase() || 'BR'}-${createMockUuid().slice(0, 6).toUpperCase()}`;
       const branch: ChurchBranch = {
         id: `branch-${createMockUuid().slice(0, 8)}`,
-        district_id: p_district_id,
-        name: String(p_name).trim(),
+        district_id: normalizedDistrictId,
+        name: trimmedName,
+        code: generatedCode,
         address: String(p_address).trim(),
         city: String(p_city).trim(),
-        state: String(p_state).trim(),
+        state: trimmedState,
+        state_or_region: trimmedState,
+        country: String(p_country || '').trim() || 'Sierra Leone',
+        status: 'active',
         is_main_branch: Boolean(p_is_main_branch)
       };
       let nextBranches = [...(localDb.church_branches || []), branch];
       if (branch.is_main_branch) {
-        nextBranches = normalizeSingleHqPerDistrict(nextBranches, p_district_id, branch.id);
+        nextBranches = normalizeSingleHqPerDistrict(nextBranches, branch.district_id, branch.id);
       }
       localDb.church_branches = nextBranches;
       saveLocalDatabase(localDb);
@@ -2980,46 +3144,55 @@ export const supabase = {
     if (functionName === 'update_church_branch') {
       const {
         p_branch_id,
-        p_district_id,
+        p_district_id = null,
         p_name = '',
         p_address = '',
         p_city = '',
         p_state = '',
         p_is_main_branch = false
       } = args;
+      const normalizedDistrictId = p_district_id ? String(p_district_id) : null;
       const existing = (localDb.church_branches || []).find((b: any) => b.id === p_branch_id);
       if (!existing) {
         return { data: null, error: { code: '23503', message: 'The selected branch does not exist.' } };
       }
-      if (!(localDb.districts || []).some((d: any) => d.id === p_district_id)) {
-        return { data: null, error: { code: '23503', message: 'The selected district does not exist.' } };
+      if (
+        normalizedDistrictId &&
+        !(localDb.districts || []).some((d: any) => d.id === normalizedDistrictId && (d.status || 'active') === 'active')
+      ) {
+        return { data: null, error: { code: '23503', message: 'The selected district does not exist or is inactive.' } };
       }
       const hasChurchBranchPerm = actorBranchAssignments.some((a: any) => a.scope_type === 'church');
       if (!hasChurchBranchPerm) {
+        if (!existing.district_id || !normalizedDistrictId) {
+          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may manage standalone branches or attach/detach districts.' } };
+        }
         const canManageSource = actorCanManageScopeWith(actorBranchAssignments, 'district', null, existing.district_id);
-        const canManageTarget = actorCanManageScopeWith(actorBranchAssignments, 'district', null, p_district_id);
+        const canManageTarget = actorCanManageScopeWith(actorBranchAssignments, 'district', null, normalizedDistrictId);
         if (!canManageSource || !canManageTarget) {
           return { data: null, error: { code: '42501', message: 'You do not have permission to update this branch or move it across districts.' } };
         }
         if (Boolean(p_is_main_branch) !== Boolean(existing.is_main_branch)) {
-          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change district HQ branch designation.' } };
+          return { data: null, error: { code: '42501', message: 'Only church-wide administrators may change district HQ or main branch designation.' } };
         }
       }
       if (!String(p_name).trim() || !String(p_address).trim() || !String(p_city).trim() || !String(p_state).trim()) {
-        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state are required.' } };
+        return { data: null, error: { code: '22023', message: 'Branch name, address, city, and state/region are required.' } };
       }
+      const trimmedState = String(p_state).trim();
       const updated: ChurchBranch = {
         ...existing,
-        district_id: p_district_id,
+        district_id: normalizedDistrictId,
         name: String(p_name).trim(),
         address: String(p_address).trim(),
         city: String(p_city).trim(),
-        state: String(p_state).trim(),
+        state: trimmedState,
+        state_or_region: trimmedState,
         is_main_branch: Boolean(p_is_main_branch)
       };
       let nextBranches = (localDb.church_branches || []).map((b: any) => (b.id === p_branch_id ? updated : b));
       if (updated.is_main_branch) {
-        nextBranches = normalizeSingleHqPerDistrict(nextBranches, p_district_id, updated.id);
+        nextBranches = normalizeSingleHqPerDistrict(nextBranches, updated.district_id, updated.id);
       }
       localDb.church_branches = nextBranches;
       saveLocalDatabase(localDb);

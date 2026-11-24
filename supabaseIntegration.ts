@@ -55,3 +55,9 @@ export function requireSupabaseDataClient() {
   }
   return supabaseDataClient;
 }
+
+export function resolveDataClient<T>(mockClient: T): T {
+  return (supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+    ? supabaseDataClient
+    : mockClient) as T;
+}

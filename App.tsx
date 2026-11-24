@@ -10,8 +10,9 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
-import type { Profile, ChurchBranch, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
+import { resolveDataClient, supabaseAuthEnabled, supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
+import { getMemberTransfers } from './memberTransferService';
+import type { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
 import {
   getActiveConsoleForRoute,
@@ -1759,13 +1760,16 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const canDirectory = (key: string) => hasEffectivePermission(directoryPermissions, key);
   const [members, setMembers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<ChurchBranch[]>([]);
+  const [districts, setDistricts] = useState<District[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>('all');
+  const [branchScopeFilter, setBranchScopeFilter] = useState<string>('all');
   const [membershipStatusFilter, setMembershipStatusFilter] = useState<string>('all');
   const [portalAccessFilter, setPortalAccessFilter] = useState<string>('all');
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [affiliationsByMemberId, setAffiliationsByMemberId] = useState<Record<string, MemberMinistryAffiliation[]>>({});
+  const [viewingPersonTransfers, setViewingPersonTransfers] = useState<MemberTransfer[]>([]);
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Unified Modals State
@@ -1826,12 +1830,11 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const loadDirectory = async () => {
     setLoading(true);
     try {
-      const branchClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
-      const [directoryRows, branchRes, affiliations] = await Promise.all([
+      const branchClient: any = resolveDataClient(supabase);
+      const [directoryRows, branchRes, districtRes, affiliations] = await Promise.all([
         getMembers(),
         branchClient.from('church_branches').select('*').order('name', { ascending: true }),
+        branchClient.from('districts').select('*').order('name', { ascending: true }),
         getMemberMinistryAffiliations().catch(err => {
           console.warn('Unable to load ministry affiliations for directory:', err);
           return {} as Record<string, MemberMinistryAffiliation[]>;
@@ -1840,12 +1843,33 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       setMembers(directoryRows);
       setAffiliationsByMemberId(affiliations);
       if (branchRes.data) setBranches(branchRes.data as ChurchBranch[]);
+      if (districtRes.data) setDistricts(districtRes.data as District[]);
     } catch (error) {
       console.error('Unable to load unified member directory:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!viewingPerson) {
+      setViewingPersonTransfers([]);
+      return;
+    }
+    let cancelled = false;
+    getMemberTransfers()
+      .then(rows => {
+        if (!cancelled) {
+          setViewingPersonTransfers(rows.filter(t => t.member_id === viewingPerson.id));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setViewingPersonTransfers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingPerson]);
 
   const showToast = (type: 'success' | 'error', message: string) => {
     setActionFeedback({ type, message });
@@ -1863,6 +1887,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     }
   };
 
+  const activeBranches = branches.filter(b => (b.status || 'active') === 'active');
+
   const openAddModal = () => {
     setFormError('');
     setEditingPerson(null);
@@ -1876,7 +1902,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     setFormMaritalStatus('Single');
     setFormMarriageDate('');
 
-    setFormBranchId(profile?.branch_id || branches[0]?.id || 'branch-1');
+    setFormBranchId(profile?.branch_id || activeBranches[0]?.id || branches[0]?.id || 'branch-1');
     setFormMembershipStatus('active');
     setFormMembershipDate(new Date().toISOString().slice(0, 10));
     setFormIsBaptized(false);
@@ -2064,7 +2090,18 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     }
   };
 
-  const branchNameById = new Map(branches.map(b => [b.id, b.name]));
+  const branchById = new Map<string, ChurchBranch>(branches.map(b => [b.id, b]));
+  const branchNameById = new Map<string, string>(branches.map(b => [b.id, b.name]));
+  const districtNameById = new Map<string, string>(districts.map(d => [d.id, d.name]));
+  const getBranchDistrictLabel = (branchIdValue?: string | null): string => {
+    if (!branchIdValue) return 'Unassigned Branch';
+    const branch = branchById.get(branchIdValue);
+    if (!branch) return 'Standalone / Church-Wide';
+    return branch.district_id
+      ? branch.district_name || districtNameById.get(branch.district_id) || 'Assigned District'
+      : 'Standalone (No District)';
+  };
+  const hasStandaloneBranches = branches.some(b => !b.district_id);
 
   const filtered = members.filter(p => {
     const mStatus = p.membership_status || 'active';
@@ -2075,6 +2112,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
     const portalEnabled = hasPortalAccess(p);
     if (portalAccessFilter === 'enabled' && !portalEnabled) return false;
     if (portalAccessFilter === 'disabled' && portalEnabled) return false;
+
+    if (branchScopeFilter !== 'all') {
+      const memberBranch = p.branch_id ? branchById.get(p.branch_id) : undefined;
+      if (branchScopeFilter === 'standalone') {
+        if (!memberBranch || memberBranch.district_id) return false;
+      } else if (branchScopeFilter.startsWith('district:')) {
+        const targetDistrictId = branchScopeFilter.slice('district:'.length);
+        if (!memberBranch || memberBranch.district_id !== targetDistrictId) return false;
+      } else if (branchScopeFilter.startsWith('branch:')) {
+        const targetBranchId = branchScopeFilter.slice('branch:'.length);
+        if (p.branch_id !== targetBranchId) return false;
+      }
+    }
 
     const matchesRole = selectedRole === 'all' || p.primary_role === selectedRole;
     const q = search.trim().toLowerCase();
@@ -2178,6 +2228,34 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
             <option value="worker">Volunteers & Workers</option>
             <option value="member">Members</option>
           </select>
+
+          {branches.length > 0 && (
+            <select
+              aria-label="Filter by branch or district"
+              className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+              value={branchScopeFilter}
+              onChange={(e) => setBranchScopeFilter(e.target.value)}
+            >
+              <option value="all">All Branches &amp; Districts</option>
+              {districts.length > 0 && (
+                <optgroup label="Districts (Derived from Branch)">
+                  {districts.map(d => (
+                    <option key={d.id} value={`district:${d.id}`}>{d.name}</option>
+                  ))}
+                  {hasStandaloneBranches && (
+                    <option value="standalone">Standalone (No District)</option>
+                  )}
+                </optgroup>
+              )}
+              <optgroup label="Branches">
+                {branches.map(b => (
+                  <option key={b.id} value={`branch:${b.id}`}>
+                    {b.name}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          )}
 
           {isAdminOrPastor && (
             <button
@@ -2301,7 +2379,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                     </p>
                     <p className="flex items-center gap-2 truncate">
                       <span className="text-slate-400 font-semibold w-14">Branch:</span>
-                      <span className="text-slate-700 truncate">{branchNameById.get(person.branch_id) || 'Main Campus'}</span>
+                      <span className="text-slate-700 truncate">
+                        {branchNameById.get(person.branch_id) || 'Main Campus'} · {getBranchDistrictLabel(person.branch_id)}
+                      </span>
                     </p>
                     {(affiliationsByMemberId[person.id] || []).length > 0 && (
                       <p className="flex items-center gap-2 truncate">
@@ -2438,7 +2518,8 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   </span>
                 </div>
               )}
-              <div className="flex justify-between"><span className="text-slate-400">Church Branch:</span> <span className="font-bold">{branchNameById.get(viewingPerson.branch_id) || 'Grace Cathedral'}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-400 shrink-0">Church Branch:</span> <span className="font-bold text-right">{branchNameById.get(viewingPerson.branch_id) || 'Grace Cathedral'}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-slate-400 shrink-0">District (Derived):</span> <span className="font-bold text-right">{getBranchDistrictLabel(viewingPerson.branch_id)}</span></div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Water Baptism:</span> 
                 <span className="font-bold text-amber-700">
@@ -2485,6 +2566,37 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 </div>
               )}
             </div>
+
+            {viewingPersonTransfers.length > 0 && (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-slate-800 uppercase tracking-wider text-[10px]">
+                    Transfer History
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-500">
+                    {viewingPersonTransfers.length} Record(s)
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-200">
+                  {viewingPersonTransfers.map(transfer => (
+                    <div key={transfer.id} className="py-1.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-800 truncate">
+                          {branchNameById.get(transfer.from_branch_id || '') || 'Prior Branch'} →{' '}
+                          {branchNameById.get(transfer.to_branch_id) || 'Destination Branch'}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          {new Date(transfer.requested_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-extrabold uppercase text-slate-700 whitespace-nowrap">
+                        {transfer.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="pt-2 flex justify-end gap-2">
               {isAdminOrPastor && (
@@ -2682,13 +2794,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <div>
                     <label className="font-bold text-slate-600 uppercase block mb-1">Branch *</label>
                     <select disabled={memberModalMode === 'edit'} value={formBranchId} onChange={e => setFormBranchId(e.target.value)} className="w-full p-2.5 bg-white border border-amber-200 rounded-xl outline-none font-semibold disabled:opacity-50">
-                      {(branches.length > 0 ? branches : [{ id: 'branch-1', name: 'Grace Cathedral (Main Campus)' } as ChurchBranch]).map(branch => (
-                        <option key={branch.id} value={branch.id}>{branch.name}</option>
+                      {((memberModalMode === 'add' ? activeBranches : branches).length > 0
+                        ? (memberModalMode === 'add' ? activeBranches : branches)
+                        : [{ id: 'branch-1', name: 'Grace Cathedral (Main Campus)', district_id: null } as unknown as ChurchBranch]
+                      ).map(branch => (
+                        <option key={branch.id} value={branch.id}>
+                          {branch.name} ({branch.district_id ? districtNameById.get(branch.district_id) || branch.district_name || 'District' : 'Standalone'})
+                        </option>
                       ))}
                     </select>
-                    {memberModalMode === 'edit' && (
-                      <p className="text-[10px] text-slate-500 mt-1">Branch changes are processed through the Member Transfer workflow.</p>
-                    )}
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Derived district: {getBranchDistrictLabel(formBranchId)}
+                      {memberModalMode === 'edit' ? ' · Branch changes use the Member Transfer workflow.' : ''}
+                    </p>
                   </div>
                   <div>
                     <label className="font-bold text-slate-600 uppercase block mb-1">Membership Status</label>

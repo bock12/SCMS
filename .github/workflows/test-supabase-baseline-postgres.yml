@@ -50,10 +50,12 @@ on:
       - "supabase/migrations/20261124032240_scope_transfer_manager_reads.sql"
       - "supabase/migrations/20261124032413_least_privilege_transfer_directory_rpc.sql"
       - "supabase/migrations/20261124032502_require_both_scopes_for_managed_transfer_requests.sql"
+      - "supabase/migrations/20261124130000_align_branch_district_membership_architecture.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
       - "supabase/tests/member_transfer_lifecycle.sql"
+      - "supabase/tests/branch_district_membership_alignment.sql"
       - "supabase/tests/event_registration_attendance_lifecycle.sql"
       - "supabase/tests/welfare_case_campaign_lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
@@ -1296,6 +1298,9 @@ jobs:
       - name: Require both branch scopes for managed transfer requests
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124032502_require_both_scopes_for_managed_transfer_requests.sql
 
+      - name: Align branch, district, and congregation membership architecture
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124130000_align_branch_district_membership_architecture.sql
+
       - name: Prepare authenticated member directory test fixture
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -1342,6 +1347,9 @@ jobs:
 
       - name: Verify atomic member transfer lifecycle
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/member_transfer_lifecycle.sql
+
+      - name: Verify branch, district, and membership architecture alignment
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/branch_district_membership_alignment.sql
 
       - name: Verify event registration and attendance integration
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_registration_attendance_lifecycle.sql

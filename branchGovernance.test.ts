@@ -30,6 +30,7 @@ const {
   updateChurchBranch,
   resolveActorBranchGovernanceScope,
   buildDistrictPortalSummaries,
+  buildStandaloneBranchSummaries,
   getBranchGovernanceData
 } = await import('./branchManagementService');
 
@@ -330,10 +331,10 @@ describe('two-tier branch and leadership governance', () => {
 
     const { data: allBranches } = await supabase.from('church_branches').select('*');
     const dist1Hqs = (allBranches || []).filter(
-      (b: { district_id: string; is_main_branch: boolean }) => b.district_id === 'dist-1' && b.is_main_branch
+      (b: { district_id: string | null; is_main_branch: boolean }) => b.district_id === 'dist-1' && b.is_main_branch
     );
     const dist2Hqs = (allBranches || []).filter(
-      (b: { district_id: string; is_main_branch: boolean }) => b.district_id === 'dist-2' && b.is_main_branch
+      (b: { district_id: string | null; is_main_branch: boolean }) => b.district_id === 'dist-2' && b.is_main_branch
     );
 
     expect(dist1Hqs).toHaveLength(1);
@@ -427,5 +428,51 @@ describe('two-tier branch and leadership governance', () => {
     expect(emptySummary?.totalBranches).toBe(0);
     expect(emptySummary?.totalMembers).toBe(0);
     expect(emptySummary?.hqBranch).toBeNull();
+  });
+
+  test('supports standalone branches without districts, enforces single standalone Church Main Branch, and summarizes branchMemberCounts', async () => {
+    await signInAsChurchAdmin();
+
+    const standaloneMain = await createChurchBranch({
+      district_id: null,
+      name: 'Grace Standalone Main',
+      address: '100 Central Way',
+      city: 'Newark',
+      state: 'NJ',
+      is_main_branch: true
+    });
+    expect(standaloneMain.district_id).toBeNull();
+    expect(standaloneMain.is_main_branch).toBe(true);
+
+    // Creating a second standalone Church Main Branch demotes the first standalone main, without disturbing dist-1 HQ.
+    const secondStandaloneMain = await createChurchBranch({
+      district_id: null,
+      name: 'Grace Standalone North',
+      address: '200 North Ave',
+      city: 'Albany',
+      state: 'NY',
+      is_main_branch: true
+    });
+    expect(secondStandaloneMain.is_main_branch).toBe(true);
+
+    const data = await getBranchGovernanceData();
+    const firstReloaded = data.branches.find(b => b.id === standaloneMain.id);
+    const dist1Hq = data.branches.find(b => b.id === 'branch-1');
+    expect(firstReloaded?.is_main_branch).toBe(false);
+    expect(dist1Hq?.is_main_branch).toBe(true);
+
+    const standaloneSummaries = buildStandaloneBranchSummaries({
+      branches: data.branches,
+      profiles: data.profiles,
+      assignments: data.assignments,
+      roles: data.roles,
+      branchMemberCounts: {
+        ...data.branchMemberCounts,
+        [secondStandaloneMain.id]: { total: 42, active: 39 }
+      }
+    });
+    expect(standaloneSummaries[0]?.branch.id).toBe(secondStandaloneMain.id);
+    expect(standaloneSummaries[0]?.memberCount).toBe(42);
+    expect(standaloneSummaries[0]?.activeMemberCount).toBe(39);
   });
 });

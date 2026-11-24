@@ -1,7 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowRightLeft, Check, Clock, RefreshCw, X } from 'lucide-react';
-import { supabase } from './supabaseClient';
-import { getMemberTransfers, requestMemberTransfer, reviewMemberTransfer, cancelMemberTransfer } from './memberTransferService';
+import {
+  getMemberTransferDirectory,
+  getMemberTransfers,
+  requestMemberTransfer,
+  reviewMemberTransfer,
+  cancelMemberTransfer
+} from './memberTransferService';
 import type { ChurchBranch, MemberTransfer, Profile } from './types';
 
 interface MemberTransfersAdminTabProps {
@@ -32,15 +37,10 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
     setLoading(true);
     setError(null);
     try {
-      const [transferRows, directoryResult] = await Promise.all([
+      const [transferRows, directory] = await Promise.all([
         getMemberTransfers(),
-        supabase.rpc('get_member_transfer_directory')
+        getMemberTransferDirectory()
       ]);
-      if (directoryResult.error) throw directoryResult.error;
-      const directory = (directoryResult.data || {}) as {
-        members?: TransferMemberOption[];
-        branches?: ChurchBranch[];
-      };
       setTransfers(transferRows);
       setMembers(directory.members || []);
       setBranches(directory.branches || []);
@@ -57,7 +57,21 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
     member.id,
     `${member.first_name} ${member.last_name}`.trim()
   ])), [members]);
-  const branchMap = useMemo(() => new Map(branches.map(branch => [branch.id, branch.name])), [branches]);
+
+  const branchById = useMemo(
+    () => new Map(branches.map(branch => [branch.id, branch])),
+    [branches]
+  );
+
+  const formatBranchLabel = useCallback((branchIdValue: string | null | undefined, fallback: string) => {
+    if (!branchIdValue) return fallback;
+    const branch = branchById.get(branchIdValue);
+    if (!branch) return fallback;
+    const districtLabel = branch.district_id
+      ? branch.district_name || 'Assigned District'
+      : 'Standalone (Church-Wide)';
+    return `${branch.name} (${districtLabel})`;
+  }, [branchById]);
 
   const runAction = async (action: () => Promise<unknown>, successMessage: string) => {
     setBusy(true);
@@ -86,6 +100,11 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
     setNotes('');
   };
 
+  const activeBranches = useMemo(
+    () => branches.filter(branch => (branch.status || 'active') === 'active'),
+    [branches]
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -95,7 +114,7 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
             Member Transfers
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            Review branch relocation requests. Approval changes the member's assigned branch and records the transfer together.
+            Review branch relocation requests. Approval atomically updates the member&apos;s branch (and derived district), deactivates source-branch ministry rosters while preserving history and church-wide teams.
           </p>
           <p className="text-[11px] text-slate-400 mt-1">Signed in as {profile.first_name} {profile.last_name}</p>
         </div>
@@ -111,7 +130,7 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
       <form onSubmit={handleRequest} className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">
         <div>
           <h3 className="font-extrabold text-slate-900">Create a transfer request</h3>
-          <p className="text-xs text-slate-500 mt-1">Only members and destination branches visible within your authorized scope are listed.</p>
+          <p className="text-xs text-slate-500 mt-1">Only members and active destination branches visible within your authorized scope are listed.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="text-xs font-bold text-slate-600 space-y-1">
@@ -120,7 +139,9 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
               className="w-full min-h-[42px] rounded-xl border border-slate-200 px-3 bg-white text-sm">
               <option value="">Select member</option>
               {members.filter(member => member.membership_status === 'active' && member.branch_id).map(member => (
-                <option key={member.id} value={member.id}>{member.first_name} {member.last_name}</option>
+                <option key={member.id} value={member.id}>
+                  {member.first_name} {member.last_name} — {formatBranchLabel(member.branch_id, 'Assigned branch')}
+                </option>
               ))}
             </select>
           </label>
@@ -129,8 +150,10 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
             <select value={toBranchId} onChange={event => setToBranchId(event.target.value)} required
               className="w-full min-h-[42px] rounded-xl border border-slate-200 px-3 bg-white text-sm">
               <option value="">Select destination</option>
-              {branches.filter(branch => branch.id !== members.find(member => member.id === memberId)?.branch_id).map(branch => (
-                <option key={branch.id} value={branch.id}>{branch.name}</option>
+              {activeBranches.filter(branch => branch.id !== members.find(member => member.id === memberId)?.branch_id).map(branch => (
+                <option key={branch.id} value={branch.id}>
+                  {formatBranchLabel(branch.id, branch.name)}
+                </option>
               ))}
             </select>
           </label>
@@ -164,9 +187,9 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
                 <div className="min-w-0">
                   <div className="font-bold text-sm text-slate-900">{memberMap.get(transfer.member_id) || 'Church member'}</div>
                   <div className="text-xs text-slate-500 mt-1">
-                    {branchMap.get(transfer.from_branch_id || '') || 'Unassigned branch'}
+                    {formatBranchLabel(transfer.from_branch_id, 'Unassigned branch')}
                     <span className="mx-2">→</span>
-                    {branchMap.get(transfer.to_branch_id) || 'Destination branch'}
+                    {formatBranchLabel(transfer.to_branch_id, 'Destination branch')}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
                     Requested {new Date(transfer.requested_at).toLocaleString()} {transfer.notes ? `· ${transfer.notes}` : ''}

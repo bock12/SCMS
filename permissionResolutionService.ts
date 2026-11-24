@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { resolveDataClient } from './supabaseIntegration';
 
 export const PERMISSION_LABELS: Record<string, string> = {
   view_members: 'View members',
@@ -225,13 +226,14 @@ export async function loadPermissionResolution(
 ): Promise<PermissionResolution> {
   if (!profileId) return { permissions: [], assignmentIds: [] };
 
+  const client = resolveDataClient(supabase);
   const [assignmentsResult, rolesResult, permissionsResult, linksResult, branchesResult] = await Promise.all([
-    supabase.from('profile_role_assignments').select('*').eq('profile_id', profileId).eq('is_active', true),
-    supabase.from('roles').select('id,is_active').eq('is_active', true),
-    supabase.from('permissions').select('id,key'),
-    supabase.from('role_permissions').select('role_id,permission_id'),
+    client.from('profile_role_assignments').select('*').eq('profile_id', profileId).eq('is_active', true),
+    client.from('roles').select('id,is_active').eq('is_active', true),
+    client.from('permissions').select('id,key'),
+    client.from('role_permissions').select('role_id,permission_id'),
     branchId
-      ? supabase.from('church_branches').select('id,district_id').eq('id', branchId)
+      ? client.from('church_branches').select('id,district_id').eq('id', branchId)
       : Promise.resolve({ data: [], error: null })
   ]);
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from './supabaseClient';
+import { resolveDataClient } from './supabaseIntegration';
 import { getMembers } from './memberService';
 import { PERMISSION_LABELS, canManageTargetRoleByScope } from './permissionResolutionService';
 import { resolveActorBranchGovernanceScope, type BranchGovernanceScope } from './branchManagementService';
@@ -136,13 +137,14 @@ export const RolesAndPermissionsTab: React.FC<RolesAndPermissionsTabProps> = ({
     }
     setError(null);
     try {
+      const client = resolveDataClient(supabase);
       const [roleData, memberData, permissionResult, linkResult, branchResult, districtResult] = await Promise.all([
         getProfileRoleData(),
         getMembers(),
-        supabase.from('permissions').select('*').order('module', { ascending: true }),
-        supabase.from('role_permissions').select('*'),
-        supabase.from('church_branches').select('*').order('name', { ascending: true }),
-        supabase.from('districts').select('*').order('name', { ascending: true })
+        client.from('permissions').select('*').order('module', { ascending: true }),
+        client.from('role_permissions').select('*'),
+        client.from('church_branches').select('*').order('name', { ascending: true }),
+        client.from('districts').select('*').order('name', { ascending: true })
       ]);
       if (permissionResult.error) throw new Error(permissionResult.error.message);
       if (linkResult.error) throw new Error(linkResult.error.message);
@@ -978,7 +980,18 @@ export const RolesAndPermissionsTab: React.FC<RolesAndPermissionsTabProps> = ({
                     className="mt-1 w-full min-h-[44px] p-2.5 border border-slate-200 rounded-xl bg-white"
                   >
                     <option value="">Select district</option>
-                    {districts.map(district => (
+                    {(actorScope && !actorScope.hasChurchRoleAccess
+                      ? districts.filter(district =>
+                          assignments.some(
+                            a =>
+                              a.profile_id === profile?.id &&
+                              a.is_active &&
+                              a.scope_type === 'district' &&
+                              a.district_id === district.id
+                          )
+                        )
+                      : districts
+                    ).map(district => (
                       <option key={district.id} value={district.id}>{district.name}</option>
                     ))}
                   </select>

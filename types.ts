@@ -43,17 +43,23 @@ export interface District {
   region: string;
   country: string;
   description?: string;
+  status?: 'active' | 'inactive' | 'archived';
 }
 
 export interface ChurchBranch {
   id: string;
-  district_id: string;
+  district_id: string | null;
   name: string;
+  code?: string;
   address: string;
   city: string;
   state: string;
+  state_or_region?: string;
+  country?: string;
+  status?: 'active' | 'inactive' | 'archived';
   is_main_branch: boolean;
   district?: District;
+  district_name?: string | null;
   latitude?: number;
   longitude?: number;
 }

@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { resolveDataClient } from './supabaseIntegration';
 import type { ChurchBranch, District, Profile } from './types';
 import {
   getProfileRoleData,
@@ -35,30 +36,62 @@ export interface DistrictPortalSummary {
   branchSummaries: DistrictBranchMemberSummary[];
 }
 
+export interface BranchMemberCountSnapshot {
+  total: number;
+  active: number;
+}
+
+export function normalizeChurchBranch(row: any): ChurchBranch {
+  const resolvedState = row.state ?? row.state_or_region ?? '';
+  return {
+    ...row,
+    district_id: row.district_id ?? null,
+    state: resolvedState,
+    state_or_region: row.state_or_region ?? resolvedState,
+    is_main_branch: Boolean(row.is_main_branch)
+  } as ChurchBranch;
+}
+
 export async function getBranchGovernanceData(): Promise<{
   districts: District[];
   branches: ChurchBranch[];
   roles: SystemRole[];
   assignments: ProfileRoleAssignment[];
   profiles: Profile[];
+  branchMemberCounts: Record<string, BranchMemberCountSnapshot>;
 }> {
-  const [districtsResult, branchesResult, roleData, profilesResult] = await Promise.all([
-    supabase.from('districts').select('*').order('name', { ascending: true }),
-    supabase.from('church_branches').select('*').order('name', { ascending: true }),
+  const client = resolveDataClient(supabase);
+  const [districtsResult, branchesResult, roleData, profilesResult, summaryResult] = await Promise.all([
+    client.from('districts').select('*').order('name', { ascending: true }),
+    client.from('church_branches').select('*').order('name', { ascending: true }),
     getProfileRoleData(),
-    supabase.from('profiles').select('*').order('first_name', { ascending: true })
+    client.from('profiles').select('*').order('first_name', { ascending: true }),
+    client.rpc('get_branch_governance_summaries')
   ]);
 
   if (districtsResult.error) throw new Error(districtsResult.error.message || 'Unable to load districts.');
   if (branchesResult.error) throw new Error(branchesResult.error.message || 'Unable to load church branches.');
   if (profilesResult.error) throw new Error(profilesResult.error.message || 'Unable to load member directory.');
 
+  const branchMemberCounts: Record<string, BranchMemberCountSnapshot> = {};
+  if (!summaryResult.error && Array.isArray(summaryResult.data)) {
+    for (const row of summaryResult.data as any[]) {
+      if (row?.branch_id) {
+        branchMemberCounts[row.branch_id] = {
+          total: Number(row.total_members ?? 0),
+          active: Number(row.active_members ?? 0)
+        };
+      }
+    }
+  }
+
   return {
     districts: (districtsResult.data || []) as District[],
-    branches: (branchesResult.data || []) as ChurchBranch[],
+    branches: ((branchesResult.data || []) as any[]).map(normalizeChurchBranch),
     roles: roleData.roles,
     assignments: roleData.assignments,
-    profiles: (profilesResult.data || []) as Profile[]
+    profiles: (profilesResult.data || []) as Profile[],
+    branchMemberCounts
   };
 }
 
@@ -68,7 +101,8 @@ export async function createDistrict(input: {
   country: string;
   description?: string;
 }): Promise<District> {
-  const result = await supabase.rpc('create_district', {
+  const client = resolveDataClient(supabase);
+  const result = await client.rpc('create_district', {
     p_name: input.name,
     p_region: input.region,
     p_country: input.country,
@@ -91,7 +125,8 @@ export async function updateDistrict(input: {
   hq_branch_id?: string | null;
   update_hq?: boolean;
 }): Promise<District> {
-  const result = await supabase.rpc('update_district', {
+  const client = resolveDataClient(supabase);
+  const result = await client.rpc('update_district', {
     p_district_id: input.id,
     p_name: input.name,
     p_region: input.region,
@@ -109,7 +144,8 @@ export async function updateDistrict(input: {
 }
 
 export async function deleteDistrict(districtId: string): Promise<boolean> {
-  const result = await supabase.rpc('delete_district', {
+  const client = resolveDataClient(supabase);
+  const result = await client.rpc('delete_district', {
     p_district_id: districtId
   });
 
@@ -121,15 +157,16 @@ export async function deleteDistrict(districtId: string): Promise<boolean> {
 }
 
 export async function createChurchBranch(input: {
-  district_id: string;
+  district_id: string | null;
   name: string;
   address: string;
   city: string;
   state: string;
   is_main_branch?: boolean;
 }): Promise<ChurchBranch> {
-  const result = await supabase.rpc('create_church_branch', {
-    p_district_id: input.district_id,
+  const client = resolveDataClient(supabase);
+  const result = await client.rpc('create_church_branch', {
+    p_district_id: input.district_id || null,
     p_name: input.name,
     p_address: input.address,
     p_city: input.city,
@@ -141,21 +178,22 @@ export async function createChurchBranch(input: {
     throw new Error(result.error?.message || 'Unable to create church branch.');
   }
 
-  return result.data as ChurchBranch;
+  return normalizeChurchBranch(result.data);
 }
 
 export async function updateChurchBranch(input: {
   id: string;
-  district_id: string;
+  district_id: string | null;
   name: string;
   address: string;
   city: string;
   state: string;
   is_main_branch?: boolean;
 }): Promise<ChurchBranch> {
-  const result = await supabase.rpc('update_church_branch', {
+  const client = resolveDataClient(supabase);
+  const result = await client.rpc('update_church_branch', {
     p_branch_id: input.id,
-    p_district_id: input.district_id,
+    p_district_id: input.district_id || null,
     p_name: input.name,
     p_address: input.address,
     p_city: input.city,
@@ -167,7 +205,7 @@ export async function updateChurchBranch(input: {
     throw new Error(result.error?.message || 'Unable to update church branch.');
   }
 
-  return result.data as ChurchBranch;
+  return normalizeChurchBranch(result.data);
 }
 
 export async function resolveActorBranchGovernanceScope(
@@ -186,11 +224,12 @@ export async function resolveActorBranchGovernanceScope(
     };
   }
 
+  const client = resolveDataClient(supabase);
   const [assignmentsRes, rolesRes, permissionsRes, rolePermRes] = await Promise.all([
-    supabase.from('profile_role_assignments').select('*').eq('profile_id', actorProfileId).eq('is_active', true),
-    supabase.from('roles').select('id,is_active').eq('is_active', true),
-    supabase.from('permissions').select('id,key'),
-    supabase.from('role_permissions').select('role_id,permission_id')
+    client.from('profile_role_assignments').select('*').eq('profile_id', actorProfileId).eq('is_active', true),
+    client.from('roles').select('id,is_active').eq('is_active', true),
+    client.from('permissions').select('id,key'),
+    client.from('role_permissions').select('role_id,permission_id')
   ]);
 
   const nowMs = Date.now();
@@ -244,7 +283,7 @@ export async function resolveActorBranchGovernanceScope(
             .filter(b =>
               branchAssignments.some(
                 a =>
-                  (a.scope_type === 'district' && a.district_id === b.district_id) ||
+                  (a.scope_type === 'district' && Boolean(b.district_id) && a.district_id === b.district_id) ||
                   (a.scope_type === 'branch' && a.branch_id === b.id)
               )
             )
@@ -260,7 +299,7 @@ export async function resolveActorBranchGovernanceScope(
             .filter(b =>
               roleAssignments.some(
                 a =>
-                  (a.scope_type === 'district' && a.district_id === b.district_id) ||
+                  (a.scope_type === 'district' && Boolean(b.district_id) && a.district_id === b.district_id) ||
                   (a.scope_type === 'branch' && a.branch_id === b.id)
               )
             )
@@ -284,9 +323,18 @@ export function buildDistrictPortalSummaries(params: {
   profiles: Profile[];
   assignments: ProfileRoleAssignment[];
   roles: SystemRole[];
+  branchMemberCounts?: Record<string, BranchMemberCountSnapshot>;
   nowMs?: number;
 }): DistrictPortalSummary[] {
-  const { districts, branches, profiles, assignments, roles, nowMs = Date.now() } = params;
+  const {
+    districts,
+    branches,
+    profiles,
+    assignments,
+    roles,
+    branchMemberCounts,
+    nowMs = Date.now()
+  } = params;
 
   const roleById = new Map<string, SystemRole>();
   roles.forEach(role => roleById.set(role.id, role));
@@ -308,16 +356,22 @@ export function buildDistrictPortalSummaries(params: {
   });
 
   const memberCountByBranch = new Map<string, { total: number; active: number }>();
-  profiles.forEach(member => {
-    if (!member.branch_id) return;
-    if (member.membership_status === 'archived') return;
-    const current = memberCountByBranch.get(member.branch_id) || { total: 0, active: 0 };
-    current.total += 1;
-    if (!member.membership_status || member.membership_status === 'active') {
-      current.active += 1;
-    }
-    memberCountByBranch.set(member.branch_id, current);
-  });
+  if (branchMemberCounts && Object.keys(branchMemberCounts).length > 0) {
+    Object.entries(branchMemberCounts).forEach(([branchId, counts]) => {
+      memberCountByBranch.set(branchId, { total: counts.total, active: counts.active });
+    });
+  } else {
+    profiles.forEach(member => {
+      if (!member.branch_id) return;
+      if (member.membership_status === 'archived') return;
+      const current = memberCountByBranch.get(member.branch_id) || { total: 0, active: 0 };
+      current.total += 1;
+      if (!member.membership_status || member.membership_status === 'active') {
+        current.active += 1;
+      }
+      memberCountByBranch.set(member.branch_id, current);
+    });
+  }
 
   const branchAssignmentsMap = new Map<string, ProfileRoleAssignment[]>();
   const districtOverseersMap = new Map<string, ProfileRoleAssignment[]>();
@@ -386,4 +440,63 @@ export function buildDistrictPortalSummaries(params: {
       branchSummaries
     };
   });
+}
+
+export function buildStandaloneBranchSummaries(params: {
+  branches: ChurchBranch[];
+  profiles: Profile[];
+  assignments: ProfileRoleAssignment[];
+  roles: SystemRole[];
+  branchMemberCounts?: Record<string, BranchMemberCountSnapshot>;
+  nowMs?: number;
+}): DistrictBranchMemberSummary[] {
+  const { branches, profiles, assignments, roles, branchMemberCounts, nowMs = Date.now() } = params;
+  const roleById = new Map<string, SystemRole>(roles.map(role => [role.id, role]));
+  const activeBranchAssignments = assignments.filter(a => {
+    if (!a.is_active || a.scope_type !== 'branch' || !a.branch_id) return false;
+    const role = roleById.get(a.role_id);
+    if (role && !role.is_active) return false;
+    const assignedAt = Date.parse(a.assigned_at);
+    if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
+    if (a.expires_at) {
+      const expiresAt = Date.parse(a.expires_at);
+      if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
+    }
+    return true;
+  });
+
+  const countByBranch = new Map<string, { total: number; active: number }>();
+  if (branchMemberCounts && Object.keys(branchMemberCounts).length > 0) {
+    Object.entries(branchMemberCounts).forEach(([branchId, counts]) => {
+      countByBranch.set(branchId, { total: counts.total, active: counts.active });
+    });
+  } else {
+    profiles.forEach(member => {
+      if (!member.branch_id || member.membership_status === 'archived') return;
+      const current = countByBranch.get(member.branch_id) || { total: 0, active: 0 };
+      current.total += 1;
+      if (!member.membership_status || member.membership_status === 'active') current.active += 1;
+      countByBranch.set(member.branch_id, current);
+    });
+  }
+
+  return branches
+    .filter(b => !b.district_id)
+    .sort((a, b) => {
+      const mainDiff = Number(Boolean(b.is_main_branch)) - Number(Boolean(a.is_main_branch));
+      if (mainDiff !== 0) return mainDiff;
+      return a.name.localeCompare(b.name);
+    })
+    .map(branch => {
+      const counts = countByBranch.get(branch.id) || { total: 0, active: 0 };
+      const leaders = activeBranchAssignments.filter(a => a.branch_id === branch.id);
+      const hasPastor = leaders.some(l => roleById.get(l.role_id)?.name === 'pastor');
+      return {
+        branch,
+        memberCount: counts.total,
+        activeMemberCount: counts.active,
+        leaderCount: leaders.length,
+        hasPastor
+      };
+    });
 }
