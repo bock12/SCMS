@@ -49,7 +49,11 @@ const {
 } = await import('./ministryMemberService');
 const {
   submitMinistryJoinRequest,
-  approveMinistryJoinRequest
+  withdrawMinistryJoinRequest,
+  approveMinistryJoinRequest,
+  declineMinistryJoinRequest,
+  reopenMinistryJoinRequest,
+  getJoinRequestsForMember
 } = await import('./ministryJoinRequestService');
 const {
   createMinistryDefinition,
@@ -589,18 +593,41 @@ describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
     expect(applicant).toBeDefined();
 
     const ministries = await getMinistriesList();
-    const targetMinistry = ministries[1] || ministries[0];
+    const targetMinistry = ministries.find(m => !m.branch_id || m.branch_id === applicant.branch_id) || ministries[0];
 
-    const joinReq = await submitMinistryJoinRequest({
+    const firstRequest = await submitMinistryJoinRequest({
       ministry: targetMinistry,
       profile: applicant,
       preferredRoles: ['Hospitality'],
       availability: 'Sundays 8:00 AM',
       note: 'Happy to serve the congregation.'
     });
+    const memberRequests = await getJoinRequestsForMember(applicant.id);
+    expect(memberRequests.some(request => request.id === firstRequest.id && request.status === 'pending')).toBe(true);
+
+    const withdrawn = await withdrawMinistryJoinRequest(firstRequest.id, applicant.id);
+    expect(withdrawn.status).toBe('withdrawn');
+
+    const joinReq = await submitMinistryJoinRequest({
+      ministry: targetMinistry,
+      profile: applicant,
+      preferredRoles: ['Hospitality'],
+      availability: 'Sundays 8:00 AM',
+      note: 'Resubmitting after withdrawing the earlier request.'
+    });
 
     await signInAsChurchSuperAdmin();
     const adminProfile = (await getMembers()).find(m => m.id === 'usr-admin-1')!;
+    const declined = await declineMinistryJoinRequest({
+      requestId: joinReq.id,
+      reviewerProfile: adminProfile,
+      reviewNote: 'Please attend the next ministry orientation.'
+    });
+    expect(declined.status).toBe('declined');
+
+    const reopened = await reopenMinistryJoinRequest(joinReq.id, adminProfile);
+    expect(reopened.status).toBe('pending');
+
     const approved = await approveMinistryJoinRequest({
       requestId: joinReq.id,
       reviewerProfile: adminProfile,
