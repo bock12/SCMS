@@ -81,12 +81,14 @@ The SQL regression script `supabase/tests/member-directory-write-api.sql` was ex
 - Database-level duplicate email rejection.
 - Rejection of an unlinked actor.
 - Rejection of direct membership-status updates from an authenticated session.
+- Branch-scoped pastor create/update succeeds only in the assigned branch.
+- District-scoped administrator create/update succeeds only in branches in the assigned district.
 
 A post-test query confirmed that no test member remained. Function execute privileges were checked: authenticated can execute the two RPCs; anon and PUBLIC cannot.
 
 ## Remaining work
 
-1. Add disposable-database coverage for branch and district isolation using separate staff fixtures.
+1. **Complete:** branch and district isolation are covered by `supabase/tests/member-directory-write-api.sql` and were executed against the development database in a rolled-back transaction.
 2. Complete a minimal-field directory read API/projection and audit every consumer before further tightening profile SELECT access.
 3. Complete the trusted server-side portal invitation, suspension and revocation workflow.
 4. Complete the separate member-transfer workflow and its database authorization tests.
