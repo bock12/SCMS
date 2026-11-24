@@ -43,6 +43,7 @@ on:
       - "supabase/migrations/20261124030633_secure_ministry_roster_mutations.sql"
       - "supabase/migrations/20261124030904_secure_member_transfer_lifecycle.sql"
       - "supabase/migrations/20261124031237_secure_event_registration_and_attendance_api.sql"
+      - "supabase/migrations/20261124031522_scope_event_attendance_sessions_by_branch.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/ministry_roster_lifecycle.sql"
@@ -1265,6 +1266,9 @@ jobs:
 
       - name: Apply secure event registration and attendance APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124031237_secure_event_registration_and_attendance_api.sql
+
+      - name: Scope event attendance sessions by branch
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124031522_scope_event_attendance_sessions_by_branch.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
