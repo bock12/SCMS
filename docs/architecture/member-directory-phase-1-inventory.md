@@ -299,7 +299,7 @@ The existing canonical directory work is a starting implementation, not evidence
 
 The accepted server-side authorization design is now partially implemented in the connected development database.
 
-- Migration `20261124014000_add_secure_member_directory_write_api.sql` adds `create_member_profile(jsonb)` and `update_member_profile(uuid,jsonb)`.
+- Migration `20261124014219_add_secure_member_directory_write_api.sql` adds `create_member_profile(jsonb)` and `update_member_profile(uuid,jsonb)`.
 - Both RPCs require a real Supabase Auth UID, a linked canonical profile and `manage_members` permission covering the target branch through trusted `profile_role_assignments`.
 - The `pastor` role receives `manage_members`; the branch scope still comes from its trusted role assignment.
 - A profile trigger blocks ordinary authenticated direct writes to branch, membership lifecycle/date, baptism, portal-link/status and record-status fields.
