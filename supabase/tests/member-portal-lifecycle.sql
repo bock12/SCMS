@@ -234,11 +234,18 @@ SELECT public.complete_member_portal_action(
   'suspend',
   current_setting('scms.mem_int_003_actor_auth_id')::uuid
 );
+
+-- Deleting the Auth user applies ON DELETE SET NULL to the member link. The
+-- portal record must remain suspended until the service finalizes revocation.
+RESET ROLE;
+DELETE FROM auth.users
+WHERE id = current_setting('scms.mem_int_003_actor_auth_id')::uuid;
+SET LOCAL ROLE service_role;
 SELECT public.complete_member_portal_action(
   current_setting('scms.mem_int_003_actor_profile_id')::uuid,
   current_setting('scms.mem_int_003_member_id')::uuid,
   'revoke',
-  current_setting('scms.mem_int_003_actor_auth_id')::uuid
+  NULL
 );
 
 DO $revoked$
