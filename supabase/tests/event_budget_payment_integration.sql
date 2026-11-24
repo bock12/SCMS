@@ -38,6 +38,10 @@ BEGIN
     (v_submitter_profile, v_submitter_auth, v_branch_id, 'Budget', 'Submitter', 'fin-int-002-submitter@example.invalid'),
     (v_approver_profile, v_approver_auth, v_branch_id, 'Budget', 'Approver', 'fin-int-002-approver@example.invalid');
 
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id IN (v_submitter_auth, v_approver_auth);
+
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
   )
