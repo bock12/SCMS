@@ -56,6 +56,9 @@ BEGIN
 
   INSERT INTO public.profiles (id, auth_user_id, branch_id, first_name, last_name, email)
   VALUES (v_profile_id, v_auth_id, v_branch_id, 'Finance', 'Tester', 'fin-int-001@example.invalid');
+  UPDATE public.profiles
+  SET portal_access_status = 'active'
+  WHERE auth_user_id = v_auth_id;
 
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, assigned_at, is_active
