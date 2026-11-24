@@ -308,4 +308,4 @@ The accepted server-side authorization design is now partially implemented in th
 - The application routes live create/edit and membership-status updates through the RPCs only when `VITE_SUPABASE_AUTH=enabled`. Mock login remains the development default and cannot authorize live writes.
 - `supabase/tests/member-directory-write-api.sql` passed against the development database in a transaction that was rolled back.
 
-This completes the first secure live write path, not the entire Member module. Remaining gates include branch/district isolation tests with separate fixtures, minimal-field scoped reads, trusted portal provisioning, transfer authorization, and real-auth browser acceptance.
+This completes the first secure live write path, not the entire Member module. Remaining gates include minimal-field scoped reads, trusted portal provisioning, transfer authorization, and real-auth browser acceptance. Branch/district isolation tests now run in the PostgreSQL 17 baseline workflow and were also exercised against the connected development database with all test writes rolled back.
