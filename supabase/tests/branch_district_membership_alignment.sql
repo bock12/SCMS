@@ -615,6 +615,30 @@ BEGIN
 END;
 $role_reactivation_guards$;
 
+-- Seed leadership appointments before the member transfer to verify automatic reconciliation.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_admin_auth_id'), true);
+
+DO $seed_transfer_leadership_appointments$
+DECLARE
+  v_member uuid := current_setting('scms.mem4a_transfer_member_id')::uuid;
+  v_branch uuid := current_setting('scms.mem4a_branch_a1')::uuid;
+  v_district uuid := current_setting('scms.mem4a_dist_a')::uuid;
+  v_branch_appointment public.leadership_appointments;
+  v_district_appointment public.leadership_appointments;
+BEGIN
+  v_branch_appointment := public.create_leadership_appointment(
+    v_member, 'branch', v_branch, NULL, 'Branch Pastor', NULL, current_date
+  );
+  v_district_appointment := public.create_leadership_appointment(
+    v_member, 'district', NULL, v_district, 'District Leadership Coordinator', NULL, current_date
+  );
+  PERFORM set_config('scms.mem4a_transfer_branch_appointment_id', v_branch_appointment.id::text, true);
+  PERFORM set_config('scms.mem4a_transfer_district_appointment_id', v_district_appointment.id::text, true);
+END;
+$seed_transfer_leadership_appointments$;
+
 -- Scenario E & F: Atomic transfer approval moves member, clears current cell leadership,
 -- preserves the source cell membership as transferred history, deactivates branch-scoped
 -- ministry membership, and preserves church-wide ministry membership.
@@ -638,6 +662,8 @@ DECLARE
   v_cell_member_status text;
   v_cell_member_role text;
   v_source_branch uuid := current_setting('scms.mem4a_branch_a1')::uuid;
+  v_branch_appointment_status text;
+  v_district_appointment_status text;
   v_role_count bigint;
 BEGIN
   v_transfer := public.manage_member_transfer(
@@ -648,6 +674,21 @@ BEGIN
   SELECT branch_id INTO v_new_branch FROM public.profiles WHERE id = v_transfer_member;
   IF v_transfer.status <> 'approved' OR v_new_branch <> v_branch_a2 THEN
     RAISE EXCEPTION 'Transfer approval did not atomically move member branch_id.';
+  END IF;
+
+  SELECT status INTO v_branch_appointment_status
+  FROM public.leadership_appointments
+  WHERE id = current_setting('scms.mem4a_transfer_branch_appointment_id')::uuid;
+
+  SELECT status INTO v_district_appointment_status
+  FROM public.leadership_appointments
+  WHERE id = current_setting('scms.mem4a_transfer_district_appointment_id')::uuid;
+
+  IF v_branch_appointment_status IS DISTINCT FROM 'ended' THEN
+    RAISE EXCEPTION 'Branch leadership appointment was not ended after member transfer.';
+  END IF;
+  IF v_district_appointment_status IS DISTINCT FROM 'active' THEN
+    RAISE EXCEPTION 'Same-district transfer unexpectedly ended the district leadership appointment.';
   END IF;
 
   SELECT leader_id INTO v_cell_leader FROM public.cells WHERE id = v_cell_a1;
