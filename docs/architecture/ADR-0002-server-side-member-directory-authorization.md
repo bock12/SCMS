@@ -67,8 +67,8 @@ The Supabase security advisor reports the expected generic warning that authenti
 - The live `profiles` RLS SELECT policy is `profiles_scoped_read`: a user can read their own profile or profiles in a branch for which `view_members` is effective.
 - The old anonymous public-read policy is absent.
 - The existing self-update policy is reinforced by the new trigger for protected fields.
-- Live create/edit and membership-status changes use the new RPCs when database integration and real Supabase Auth are enabled.
-- Mock development login is not a Supabase Auth session. The UI/service refuse live writes when `VITE_SUPABASE_AUTH` is not enabled.
+- Live create/edit and membership-status changes use the new RPCs only when both database integration and real Supabase Auth are enabled. While mock authentication remains active, the Member Directory continues to use the mock database and mock workflows.
+- Mock development login is not a Supabase Auth session. The Member Directory stays on mock data until `VITE_SUPABASE_AUTH=enabled`; it never attempts live member writes with a mock identity.
 - Live portal invitations, role assignment from the member form, portal suspension/revocation and branch transfers are not implemented by these two RPCs and remain separate workflows.
 
 ## Verification completed
