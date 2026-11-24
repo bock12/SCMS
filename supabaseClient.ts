@@ -2880,6 +2880,25 @@ export const supabase = {
       if (!actorCanManageScope(assignment.scope_type, assignment.branch_id, assignment.district_id)) {
         return { data: null, error: { code: '42501', message: 'You do not have permission to manage roles for this scope.' } };
       }
+      const profile = (localDb.profiles || []).find((item: any) => item.id === assignment.profile_id);
+      if (!profile || (profile.record_status && profile.record_status !== 'active') || profile.status === 'archived') {
+        return { data: null, error: { code: '23503', message: 'The assigned member profile is no longer active.' } };
+      }
+      if (assignment.scope_type === 'branch') {
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === assignment.branch_id);
+        if (!branch || (branch.status || 'active') !== 'active') {
+          return { data: null, error: { code: '23503', message: 'The assigned branch is no longer active.' } };
+        }
+      }
+      if (assignment.scope_type === 'district') {
+        const district = (localDb.districts || []).find((item: any) => item.id === assignment.district_id);
+        if (!district || (district.status || 'active') !== 'active') {
+          return { data: null, error: { code: '23503', message: 'The assigned district is no longer active.' } };
+        }
+      }
+      if (assignment.expires_at && new Date(assignment.expires_at).getTime() <= Date.now()) {
+        return { data: null, error: { code: '22023', message: 'This role assignment has expired. Create a new assignment with an explicit expiry date.' } };
+      }
       const role = (localDb.roles || []).find((item: any) => item.id === assignment.role_id && item.is_active);
       if (!role) {
         return { data: null, error: { code: '23503', message: 'The assigned role is no longer active.' } };
@@ -2891,7 +2910,6 @@ export const supabase = {
       const updated = {
         ...assignment,
         is_active: true,
-        expires_at: null,
         assigned_at: new Date(assignment.assigned_at || 0).getTime() > Date.now() ? nowIso : assignment.assigned_at,
         assigned_by_profile_id: actor.id
       };
