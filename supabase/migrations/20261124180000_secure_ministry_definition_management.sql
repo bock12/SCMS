@@ -7,6 +7,9 @@ ALTER TABLE public.ministries
   ADD COLUMN IF NOT EXISTS member_count integer NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS type text NOT NULL DEFAULT 'service_department';
 
+REVOKE ALL ON public.ministries FROM anon, authenticated;
+GRANT SELECT ON public.ministries TO authenticated;
+
 DO $ministry_definition_constraints$
 BEGIN
   IF NOT EXISTS (
