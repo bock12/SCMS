@@ -553,7 +553,8 @@ BEGIN
   INSERT INTO public.profile_role_assignments (
     profile_id, role_id, scope_type, branch_id, district_id, is_active, expires_at
   ) VALUES (
-    v_member_profile, v_member_role, 'branch', v_active_branch, NULL, false, now() - interval '1 day'
+    v_member_profile, v_member_role, 'branch', v_active_branch, NULL, false,
+    now() - interval '2 days', now() - interval '1 day'
   ) RETURNING id INTO v_expired_assignment;
 
   UPDATE public.profiles
