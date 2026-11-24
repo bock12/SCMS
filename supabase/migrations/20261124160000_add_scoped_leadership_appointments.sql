@@ -52,6 +52,65 @@ CREATE INDEX ix_leadership_appointments_district_active
 CREATE INDEX ix_leadership_appointments_profile
   ON public.leadership_appointments (profile_id, status);
 
+-- Preserve existing visible leadership designations as appointments.
+-- Existing profile_role_assignments remain untouched because any permissions they
+-- currently grant must be reviewed and removed explicitly, not silently revoked.
+INSERT INTO public.leadership_appointments (
+  profile_id, scope_type, branch_id, district_id, title,
+  appointed_by_profile_id, appointed_at, effective_from
+)
+SELECT
+  assignment.profile_id,
+  assignment.scope_type,
+  assignment.branch_id,
+  assignment.district_id,
+  CASE
+    WHEN assignment.scope_type = 'district' AND role.name = 'district_admin'
+      THEN 'District Overseer'
+    ELSE initcap(replace(role.name, '_', ' '))
+  END,
+  assignment.assigned_by_profile_id,
+  assignment.assigned_at,
+  assignment.assigned_at::date
+FROM public.profile_role_assignments assignment
+JOIN public.roles role
+  ON role.id = assignment.role_id
+ AND role.is_active
+JOIN public.profiles member
+  ON member.id = assignment.profile_id
+ AND member.record_status = 'active'
+ AND member.membership_status = 'active'
+WHERE assignment.is_active
+  AND assignment.assigned_at <= now()
+  AND (assignment.expires_at IS NULL OR assignment.expires_at > now())
+  AND (
+    (
+      assignment.scope_type = 'branch'
+      AND role.name IN ('pastor', 'finance_officer', 'leader', 'worker')
+      AND EXISTS (
+        SELECT 1 FROM public.church_branches branch
+        WHERE branch.id = assignment.branch_id
+          AND branch.status = 'active'
+          AND branch.id = member.branch_id
+      )
+    )
+    OR
+    (
+      assignment.scope_type = 'district'
+      AND role.name = 'district_admin'
+      AND EXISTS (
+        SELECT 1
+        FROM public.districts district
+        JOIN public.church_branches branch ON branch.district_id = district.id
+        WHERE district.id = assignment.district_id
+          AND district.status = 'active'
+          AND branch.id = member.branch_id
+          AND branch.status = 'active'
+      )
+    )
+  )
+ON CONFLICT DO NOTHING;
+
 ALTER TABLE public.leadership_appointments ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.leadership_appointments FROM anon, authenticated;
 GRANT SELECT ON public.leadership_appointments TO authenticated;
