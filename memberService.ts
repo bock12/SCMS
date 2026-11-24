@@ -589,21 +589,20 @@ export async function updateUnifiedMember(
     if (error) throw error;
 
     let portalAction: LivePortalAction | undefined;
-    if (input.enable_portal_access === true) {
-      portalAction = current.auth_user_id
-        ? (current.portal_access_status === 'suspended' ? 'activate' : undefined)
-        : 'invite';
-    } else if (input.enable_portal_access === false && current.auth_user_id) {
+    const portalCurrentlyEnabled = Boolean(current.auth_user_id);
+    if (input.enable_portal_access === true && !portalCurrentlyEnabled) {
+      portalAction = 'invite';
+    } else if (input.enable_portal_access === false && portalCurrentlyEnabled) {
       portalAction = 'revoke';
-    } else if (input.portal_status === 'archived' && current.auth_user_id) {
+    } else if (input.portal_status === 'archived' && portalCurrentlyEnabled) {
       portalAction = 'revoke';
-    } else if (input.portal_status === 'suspended' && current.auth_user_id && current.portal_access_status !== 'suspended') {
+    } else if (input.portal_status === 'suspended' && portalCurrentlyEnabled && current.portal_access_status !== 'suspended') {
       portalAction = 'suspend';
-    } else if (input.portal_status === 'active' && current.auth_user_id && current.portal_access_status === 'suspended') {
+    } else if (input.portal_status === 'active' && portalCurrentlyEnabled && current.portal_access_status === 'suspended') {
       portalAction = 'activate';
-    } else if (input.portal_status === 'active' && !current.auth_user_id) {
+    } else if (input.portal_status === 'active' && !portalCurrentlyEnabled && input.enable_portal_access !== false) {
       throw new Error('Portal access must be enabled before the account can be marked active.');
-    } else if (input.portal_status === 'suspended' && !current.auth_user_id) {
+    } else if (input.portal_status === 'suspended' && !portalCurrentlyEnabled && input.enable_portal_access !== false) {
       throw new Error('This member has no linked portal account to suspend.');
     }
 
