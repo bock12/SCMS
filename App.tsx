@@ -88,7 +88,6 @@ import {
   approveMinistryJoinRequest,
   declineMinistryJoinRequest,
   getJoinRequestsForMember,
-  getJoinRequestsForMinistry,
   leaveMinistryTeam,
   MINISTRY_JOIN_REQUESTS_UPDATED_EVENT,
   reopenMinistryJoinRequest,
@@ -3003,20 +3002,17 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
       const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
         ? supabaseDataClient
         : supabase;
-      const [minList, { data: mmData, error: mmErr }] = await Promise.all([
+      const [minList, { data: mmData, error: mmErr }, joinRequests] = await Promise.all([
         getMinistriesList(),
-        readClient.from('ministry_members').select('*')
+        readClient.from('ministry_members').select('*'),
+        profile?.id ? getJoinRequestsForMember(profile.id) : Promise.resolve([])
       ]);
       if (mmErr) throw mmErr;
       setMinistries(minList);
       if (Array.isArray(mmData)) {
         setAllActiveMemberships((mmData as MinistryMember[]).filter(m => m.status !== 'inactive'));
       }
-      if (profile?.id) {
-        setMyJoinRequests(getJoinRequestsForMember(profile.id));
-      } else {
-        setMyJoinRequests([]);
-      }
+      setMyJoinRequests(joinRequests);
     } catch (err: any) {
       console.error('Failed to load ministries:', err);
       setLoadError(err?.message || 'Unable to load ministries right now.');
@@ -3055,7 +3051,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
         ? supabaseDataClient
         : supabase;
       if (profile?.id) {
-        setMyJoinRequests(getJoinRequestsForMember(profile.id));
+        getJoinRequestsForMember(profile.id).then(setMyJoinRequests).catch(() => {});
         syncFreshProfile(profile.id);
       }
       readClient
@@ -3259,7 +3255,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
         note: interestNote,
         phoneOverride: applicantPhone
       });
-      setMyJoinRequests(getJoinRequestsForMember(effectiveProfile.id));
+      setMyJoinRequests(await getJoinRequestsForMember(effectiveProfile.id));
       setInterestSubmitted(true);
       setPageBanner({
         type: 'success',
@@ -3276,7 +3272,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     if (!profile?.id) return;
     try {
       await withdrawMinistryJoinRequest(req.id, profile.id);
-      setMyJoinRequests(getJoinRequestsForMember(profile.id));
+      setMyJoinRequests(await getJoinRequestsForMember(profile.id));
       setPageBanner({
         type: 'success',
         text: `Withdrew your pending request for ${req.ministry_name}.`
