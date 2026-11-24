@@ -155,6 +155,7 @@ BEGIN
   PERFORM set_config('scms.mem_int_004_suspended_member_id', v_suspended_member_id::text, true);
   PERFORM set_config('scms.mem_int_004_archived_member_id', v_archived_member_id::text, true);
   PERFORM set_config('scms.mem_int_004_branch2_member_id', v_branch2_member_id::text, true);
+  PERFORM set_config('scms.mem_int_004_branch2_id', v_branch_2::text, true);
   PERFORM set_config('scms.mem_int_004_ministry_id', v_ministry_1_id::text, true);
   PERFORM set_config('scms.mem_int_004_ministry_2_id', v_ministry_2_id::text, true);
   PERFORM set_config('scms.mem_int_004_inactive_ministry_id', v_inactive_ministry_id::text, true);
@@ -435,5 +436,187 @@ BEGIN
   END IF;
 END;
 $api_grants$;
+
+
+-- 6. Ministry definitions use scoped RPCs; leadership remains a canonical roster assignment.
+RESET ROLE;
+UPDATE public.profiles
+SET membership_status = 'active'
+WHERE id = current_setting('scms.mem_int_004_member_id')::uuid;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_004_branch1_mgr_auth_id'), true);
+
+DO $ministry_definition_lifecycle$
+DECLARE
+  v_branch_id uuid := current_setting('scms.mem_int_004_branch_id')::uuid;
+  v_branch2_id uuid := current_setting('scms.mem_int_004_branch2_id')::uuid;
+  v_leader_one uuid := current_setting('scms.mem_int_004_unauth_profile_id')::uuid;
+  v_leader_two uuid := current_setting('scms.mem_int_004_member_id')::uuid;
+  v_cross_branch_leader uuid := current_setting('scms.mem_int_004_branch2_member_id')::uuid;
+  v_ministry public.ministries;
+  v_old_leader_role text;
+  v_new_leader_role text;
+  v_roster_count bigint;
+BEGIN
+  v_ministry := public.create_ministry(
+    v_branch_id,
+    'MEM-INT-004B Secure Definition ' || gen_random_uuid()::text,
+    'Created through the scoped ministry API.',
+    'Worship',
+    'Sundays 9 AM',
+    'social_fellowship',
+    '["Coordinator","Volunteer"]'::jsonb,
+    v_leader_one
+  );
+
+  IF v_ministry.entity_type <> 'fellowship'
+    OR v_ministry.type <> 'social_fellowship'
+    OR v_ministry.leader_id <> v_leader_one
+    OR v_ministry.member_count <> 1 THEN
+    RAISE EXCEPTION 'Ministry creation did not persist the definition metadata, canonical leader, or roster count.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ministry_members
+    WHERE ministry_id = v_ministry.id
+      AND member_id = v_leader_one
+      AND role_title = 'Department Leader'
+      AND status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'Creating a ministry with a leader did not create the canonical roster assignment.';
+  END IF;
+
+  PERFORM set_config('scms.mem_int_004_created_ministry_id', v_ministry.id::text, true);
+
+  -- Branch manager cannot create a ministry outside the assigned branch or church-wide.
+  BEGIN
+    PERFORM public.create_ministry(
+      v_branch2_id, 'Out of Scope Ministry', NULL, 'General', NULL,
+      'service_department', '[]'::jsonb, NULL
+    );
+    RAISE EXCEPTION 'Branch manager unexpectedly created a ministry in another branch.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  BEGIN
+    PERFORM public.create_ministry(
+      NULL, 'Out of Scope Churchwide Ministry', NULL, 'General', NULL,
+      'service_department', '[]'::jsonb, NULL
+    );
+    RAISE EXCEPTION 'Branch manager unexpectedly created a church-wide ministry.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  -- A leader from another branch cannot be appointed to this branch ministry.
+  BEGIN
+    PERFORM public.update_ministry(
+      v_ministry.id, v_ministry.name, v_ministry.description, v_ministry.category,
+      v_ministry.meeting_time, v_ministry.type, v_ministry.roles_and_responsibilities,
+      v_cross_branch_leader
+    );
+    RAISE EXCEPTION 'Cross-branch ministry leader assignment was unexpectedly allowed.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+
+  -- Changing the leader demotes the previous leader and adds the new canonical profile.
+  v_ministry := public.update_ministry(
+    v_ministry.id, v_ministry.name, v_ministry.description, v_ministry.category,
+    v_ministry.meeting_time, 'service_department', v_ministry.roles_and_responsibilities,
+    v_leader_two
+  );
+
+  SELECT role_title INTO v_old_leader_role
+  FROM public.ministry_members
+  WHERE ministry_id = v_ministry.id AND member_id = v_leader_one;
+
+  SELECT role_title INTO v_new_leader_role
+  FROM public.ministry_members
+  WHERE ministry_id = v_ministry.id AND member_id = v_leader_two;
+
+  SELECT count(*) INTO v_roster_count
+  FROM public.ministry_members
+  WHERE ministry_id = v_ministry.id
+    AND status IN ('active', 'on_leave', 'in_training');
+
+  IF v_ministry.entity_type <> 'department'
+    OR v_ministry.type <> 'service_department'
+    OR v_ministry.leader_id <> v_leader_two
+    OR v_old_leader_role <> 'Team Member'
+    OR v_new_leader_role <> 'Department Leader'
+    OR v_ministry.member_count <> 2
+    OR v_roster_count <> 2 THEN
+    RAISE EXCEPTION 'Ministry leader change did not reconcile the canonical roster or member count.';
+  END IF;
+
+  -- Archive preserves roster history and blocks further edits.
+  v_ministry := public.archive_ministry(v_ministry.id);
+  IF v_ministry.status <> 'archived'
+    OR (SELECT count(*) FROM public.ministry_members WHERE ministry_id = v_ministry.id) <> 2 THEN
+    RAISE EXCEPTION 'Archiving a ministry deleted its roster history.';
+  END IF;
+
+  BEGIN
+    PERFORM public.update_ministry(
+      v_ministry.id, v_ministry.name, v_ministry.description, v_ministry.category,
+      v_ministry.meeting_time, v_ministry.type, v_ministry.roles_and_responsibilities,
+      v_ministry.leader_id
+    );
+    RAISE EXCEPTION 'An archived ministry was unexpectedly editable.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+  END;
+
+  -- Direct DML remains unavailable to authenticated clients.
+  BEGIN
+    INSERT INTO public.ministries (name, entity_type, status)
+    VALUES ('Direct DML Bypass', 'department', 'active');
+    RAISE EXCEPTION 'Direct ministry INSERT unexpectedly succeeded.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
+  IF has_table_privilege('authenticated', 'public.ministries', 'INSERT')
+    OR has_table_privilege('authenticated', 'public.ministries', 'UPDATE')
+    OR has_table_privilege('authenticated', 'public.ministries', 'DELETE') THEN
+    RAISE EXCEPTION 'Authenticated users retain direct ministry definition write privileges.';
+  END IF;
+END;
+$ministry_definition_lifecycle$;
+
+-- Church-wide ministry creation remains available only to a church-scoped manager.
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem_int_004_actor_auth_id'), true);
+
+DO $churchwide_ministry_definition$
+DECLARE
+  v_ministry public.ministries;
+BEGIN
+  v_ministry := public.create_ministry(
+    NULL,
+    'MEM-INT-004B Churchwide ' || gen_random_uuid()::text,
+    'Church-wide ministry created by an authorized church manager.',
+    'Outreach',
+    'Monthly',
+    'service_department',
+    '["Coordinator"]'::jsonb,
+    NULL
+  );
+
+  IF v_ministry.branch_id IS NOT NULL
+    OR v_ministry.entity_type <> 'department'
+    OR v_ministry.type <> 'service_department'
+    OR v_ministry.member_count <> 0 THEN
+    RAISE EXCEPTION 'Church-wide ministry definition was not persisted correctly.';
+  END IF;
+
+  PERFORM public.archive_ministry(v_ministry.id);
+END;
+$churchwide_ministry_definition$;
+
 
 ROLLBACK;
