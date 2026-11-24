@@ -34,10 +34,10 @@ on:
       - "supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql"
       - "supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql"
       - "supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql"
-      - "supabase/migrations/20261124030000_complete_secure_member_portal_lifecycle.sql"
-      - "supabase/migrations/20261124030100_scope_member_directory_and_role_reads.sql"
-      - "supabase/migrations/20261124030300_harden_member_portal_revocation_retry.sql"
-      - "supabase/migrations/20261124030400_block_suspended_portal_direct_scope_policies.sql"
+      - "supabase/migrations/20261124021521_complete_secure_member_portal_lifecycle.sql"
+      - "supabase/migrations/20261124021623_scope_member_directory_and_role_reads.sql"
+      - "supabase/migrations/20261124021829_harden_member_portal_revocation_retry.sql"
+      - "supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql"
       - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/member-portal-lifecycle.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
@@ -1219,16 +1219,16 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql
 
       - name: Apply secure member portal lifecycle APIs
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030000_complete_secure_member_portal_lifecycle.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124021521_complete_secure_member_portal_lifecycle.sql
 
       - name: Apply scoped member directory and role reads
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030100_scope_member_directory_and_role_reads.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124021623_scope_member_directory_and_role_reads.sql
 
       - name: Harden member portal revocation retries
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030300_harden_member_portal_revocation_retry.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124021829_harden_member_portal_revocation_retry.sql
 
       - name: Block suspended portal direct-scope shortcuts
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124030400_block_suspended_portal_direct_scope_policies.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124021958_block_suspended_portal_direct_scope_policies.sql
 
       - name: Prepare authenticated member directory test fixture
         run: |
