@@ -51,6 +51,18 @@ The live project currently contains one profile and zero rows in the reviewed de
 | Welfare campaigns | Campaign reads are active-status and branch scoped; no campaign write policy was found. | Move campaign creation and lifecycle changes from local state to authorized persistence, scoped to the campaign branch. |
 | Member contributions | `welfare_contributions` links optional contributing profile and required `financial_documents.id`; deployed policy is read-only. `welfareContributionService.ts` currently reads/writes department-keyed `localStorage` and separately syncs a local department ledger. | Replace local persistence with a secure contribution workflow that creates/links a finance document and contribution row atomically; retain mock behavior when mock auth is active; do not create a second independent money ledger. |
 
+## MEM-INT-004A implementation progress (2026-11-24)
+
+The first server-side increment is now applied to the development database and committed to the fresh-install baseline:
+
+- Ministry roster mutations now use `public.manage_ministry_member`, an authenticated invoker wrapper around a private `SECURITY DEFINER` implementation. The private function requires an active linked portal profile, `manage_ministries` permission for the ministry branch, a live ministry and active directory record, and matching member/ministry branch when the ministry is branch-bound. Add, update and remove execute atomically in one database call. Direct table write policies remain absent.
+- `ministryMemberService.ts` now routes add/update/remove through that RPC. The mock client implements equivalent permission and branch checks, preserving mock-auth development.
+- Member transfers now use `public.manage_member_transfer`, also an authenticated invoker wrapper around a private authorization-checked implementation. Requests can be made by the member or a source-branch transfer manager; review requires `manage_member_transfers` in both source and destination branches. Approval updates the member's branch and transfer record in one transaction. Rejection and requester/manager cancellation are supported. A member cannot have more than one pending transfer (enforced by a locked member row during request creation).
+- `memberTransferService.ts` exposes read, request, approve/reject and cancel operations; the mock client implements the same lifecycle. `MemberTransfer` now matches the database status and timestamp fields while retaining the legacy optional `request_date` alias.
+- Regression scripts `supabase/tests/ministry_roster_lifecycle.sql` and `supabase/tests/member_transfer_lifecycle.sql` are included in PostgreSQL fresh-install CI.
+
+**Still outstanding in 004A:** application UI wiring for transfer requests/review, ministry join-request approval integration (the current live schema does not contain `ministry_join_requests`), and end-to-end browser acceptance. The development database lifecycle scripts passed transactionally and rolled back all fixtures; CI validation is running.
+
 ## Recommended implementation sequence
 
 1. **MEM-INT-004A — Ministry roster and transfer lifecycle**
