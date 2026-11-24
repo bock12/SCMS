@@ -32,6 +32,9 @@ on:
       - "supabase/migrations/20261122000100_add_district_scoped_finance_ownership.sql"
       - "supabase/migrations/20261122000200_add_scoped_finance_configuration_read_api.sql"
       - "supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql"
+      - "supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql"
+      - "supabase/migrations/20261124014000_add_secure_member_directory_write_api.sql"
+      - "supabase/tests/member-directory-write-api.sql"
       - "supabase/tests/department_requisition_payment_integration.sql"
       - "supabase/tests/department_requisition_approval_lifecycle.sql"
       - "supabase/tests/event_budget_submission_permissions.sql"
@@ -1191,6 +1194,49 @@ jobs:
 
       - name: Apply private finance document attachment storage and policies
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261123000100_add_private_finance_document_attachments.sql
+
+      - name: Apply final scope-aware finance transaction and journal APIs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql
+
+      - name: Apply secure member directory write APIs
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124014000_add_secure_member_directory_write_api.sql
+
+      - name: Prepare authenticated member directory test fixture
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO auth.users (id, email, raw_app_meta_data)
+          VALUES (
+            '97000000-0000-4000-8000-000000000001',
+            'member-directory-test@example.invalid',
+            '{}'::jsonb
+          );
+
+          INSERT INTO public.profiles (
+            id, auth_user_id, branch_id, first_name, last_name
+          ) VALUES (
+            '96000000-0000-4000-8000-000000000001',
+            '97000000-0000-4000-8000-000000000001',
+            '91000000-0000-4000-8000-000000000001',
+            'Member Directory',
+            'Test Actor'
+          );
+
+          INSERT INTO public.profile_role_assignments (
+            profile_id, role_id, scope_type, branch_id, district_id, is_active
+          )
+          SELECT
+            '96000000-0000-4000-8000-000000000001',
+            r.id,
+            'church',
+            NULL,
+            NULL,
+            true
+          FROM public.roles AS r
+          WHERE r.name = 'super_admin';
+          SQL
+
+      - name: Verify secure member directory write API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/member-directory-write-api.sql
 
       - name: Verify private finance document attachment storage contract
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_document_attachments.sql
