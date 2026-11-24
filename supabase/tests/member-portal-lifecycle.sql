@@ -242,8 +242,8 @@ BEGIN
     SELECT 1
     FROM pg_catalog.pg_trigger AS trigger
     WHERE trigger.tgrelid = 'auth.users'::regclass
-      AND NOT trigger.tgisinternal
-      AND trigger.tgfoid = 'public.handle_new_user()'::regprocedure
+      AND NOT t.tgisinternal
+      AND t.tgfoid = 'public.handle_new_user()'::regprocedure
   ) INTO v_has_trigger;
 
   IF NOT v_has_trigger THEN
