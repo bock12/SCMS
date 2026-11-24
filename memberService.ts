@@ -53,6 +53,33 @@ async function getLiveMemberProfile(profileId: string): Promise<Profile> {
   return toDirectoryProfile(data);
 }
 
+function mergePortalActionResult(
+  profile: Profile,
+  action: LivePortalAction,
+  result: any
+): Profile {
+  const fallbackStatus = {
+    invite: 'invited',
+    activate: 'active',
+    suspend: 'suspended',
+    revoke: 'not_invited'
+  } as const;
+  const portalStatus = result?.profile?.portal_access_status || fallbackStatus[action];
+  const returnedAuthUserId = result?.profile?.auth_user_id;
+  const authUserId = returnedAuthUserId !== undefined
+    ? returnedAuthUserId
+    : action === 'revoke' ? null : profile.auth_user_id;
+
+  return {
+    ...profile,
+    auth_user_id: authUserId,
+    portal_access_status: portalStatus,
+    status: portalStatus === 'active' || portalStatus === 'suspended'
+      ? portalStatus
+      : undefined
+  };
+}
+
 function unwrapRpcProfile(data: any): Profile {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('The member directory operation returned no saved profile.');
@@ -343,7 +370,7 @@ export async function registerUnifiedMember(
 
     try {
       const invitation = await invokeLivePortalAction(createdProfile.id, 'invite', email);
-      const profile = await getLiveMemberProfile(createdProfile.id);
+      const profile = mergePortalActionResult(createdProfile, 'invite', invitation);
       return {
         profile,
         portalInvite: {
@@ -581,10 +608,14 @@ export async function updateUnifiedMember(
     }
 
     try {
-      if (portalAction) {
-        await invokeLivePortalAction(personId, portalAction, portalAction === 'invite' ? email : undefined);
-      }
-      return { profile: await getLiveMemberProfile(personId) };
+      const savedProfile = unwrapRpcProfile(data);
+      if (!portalAction) return { profile: savedProfile };
+      const portalResult = await invokeLivePortalAction(
+        personId,
+        portalAction,
+        portalAction === 'invite' ? email : undefined
+      );
+      return { profile: mergePortalActionResult(savedProfile, portalAction, portalResult) };
     } catch (portalError) {
       throw new Error(
         `Member details were saved, but portal access could not be updated: ${portalError instanceof Error ? portalError.message : 'Unknown portal access error'}`
@@ -676,11 +707,12 @@ export async function updatePortalAccountStatus(
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+    const current = await getLiveMemberProfile(personId);
     const action: LivePortalAction =
       portalStatus === 'active' ? 'activate' :
       portalStatus === 'suspended' ? 'suspend' : 'revoke';
-    await invokeLivePortalAction(personId, action);
-    return getLiveMemberProfile(personId);
+    const result = await invokeLivePortalAction(personId, action);
+    return mergePortalActionResult(current, action, result);
   }
   if (portalStatus === 'active') {
     const { data: existing, error: lookupError } = await supabase
@@ -721,7 +753,7 @@ export async function enablePortalAccess(
     const email = normalizeMemberEmail(options?.email ?? current.email);
     if (!email) throw new Error('A valid email address is required to enable portal access.');
     const invitation = await invokeLivePortalAction(personId, 'invite', email);
-    const profile = await getLiveMemberProfile(personId);
+    const profile = mergePortalActionResult(current, 'invite', invitation);
     return {
       profile,
       portalInvite: {
@@ -774,8 +806,9 @@ export async function enablePortalAccess(
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
 export async function disablePortalAccess(personId: string): Promise<Profile> {
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    await invokeLivePortalAction(personId, 'revoke');
-    return getLiveMemberProfile(personId);
+    const current = await getLiveMemberProfile(personId);
+    const result = await invokeLivePortalAction(personId, 'revoke');
+    return mergePortalActionResult(current, 'revoke', result);
   }
   await supabase.auth.revokePortalAccess(personId);
   const { data, error } = await supabase
