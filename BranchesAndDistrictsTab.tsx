@@ -1151,12 +1151,24 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                     {overseers.length === 0 ? (
                       <span className="text-slate-400">No district leadership appointments yet</span>
                     ) : (
-                      overseers.map((o, idx) => {
-                        const member = profileById.get(o.profile_id);
+                      overseers.map((appointment, idx) => {
+                        const member = profileById.get(appointment.profile_id);
                         return (
-                          <span key={o.id} className="text-slate-700 font-medium">
+                          <span key={appointment.id} className="inline-flex items-center gap-1 text-slate-700 font-medium">
                             {idx > 0 ? ', ' : ''}
-                            {member ? `${member.first_name} ${member.last_name}` : o.profile_id} ({o.title})
+                            {member ? `${member.first_name} ${member.last_name}` : appointment.profile_id} ({appointment.title})
+                            {canManageThisDistrict && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void handleEndLeadershipAppointment(appointment)}
+                                className="ml-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                                aria-label={`End ${appointment.title} appointment`}
+                                title="End appointment"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
                           </span>
                         );
                       })
@@ -1239,7 +1251,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                   {districtBranches.map(branch => {
                     const leaders = branchLeadershipMap.get(branch.id) || [];
                     const canEditBranch = scope.manageableBranchIds.includes(branch.id);
-                    const canAssignLeadership = scope.assignableBranchIds.includes(branch.id);
+                    const canAssignLeadership = scope.manageableBranchIds.includes(branch.id);
 
                     return (
                       <article
@@ -1397,7 +1409,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
               {filteredStandaloneBranchSummaries.map(({ branch, memberCount }) => {
                 const leaders = branchLeadershipMap.get(branch.id) || [];
                 const canEditBranch = scope.manageableBranchIds.includes(branch.id);
-                const canAssignLeadership = scope.assignableBranchIds.includes(branch.id);
+                const canAssignLeadership = scope.manageableBranchIds.includes(branch.id);
                 const stateLabel = branch.state || branch.state_or_region || '';
 
                 return (
