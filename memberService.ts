@@ -283,12 +283,24 @@ export async function registerUnifiedMember(
       marital_status: input.marital_status || null,
       marriage_date: input.marital_status === 'Married' ? (input.marriage_date || null) : null
     });
-    const {
-      auth_user_id: _authUserId,
-      portal_access_status: _portalAccessStatus,
-      record_status: _recordStatus,
-      ...memberPayload
-    } = canonical;
+    const memberPayload = {
+      first_name: canonical.first_name,
+      last_name: canonical.last_name,
+      branch_id: canonical.branch_id,
+      email: canonical.email,
+      phone: canonical.phone,
+      gender: canonical.gender,
+      avatar_url: canonical.avatar_url,
+      membership_date: canonical.membership_date,
+      membership_status: canonical.membership_status,
+      is_baptized: canonical.is_baptized,
+      baptism_date: canonical.baptism_date,
+      baptized_by_profile_id: canonical.baptized_by_profile_id,
+      baptized_by_name_snapshot: canonical.baptized_by_name_snapshot,
+      date_of_birth: canonical.date_of_birth,
+      marital_status: canonical.marital_status,
+      marriage_date: canonical.marriage_date
+    };
     const { data, error } = await (client as any).rpc('create_member_profile', {
       p_member: memberPayload
     });
@@ -490,7 +502,9 @@ export async function updateUnifiedMember(
       throw new Error('Portal access changes require the trusted server-side provisioning workflow and cannot be combined with a member profile update.');
     }
     const client = requireLiveMemberWriteClient();
-    const { branch_id: _unchangedBranchId, ...memberPatch } = updates;
+    const memberPatch = Object.fromEntries(
+      Object.entries(updates).filter(([key]) => key !== 'branch_id')
+    );
     const { data, error } = await (client as any).rpc('update_member_profile', {
       p_profile_id: personId,
       p_member: memberPatch
