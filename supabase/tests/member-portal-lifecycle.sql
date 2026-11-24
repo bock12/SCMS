@@ -297,6 +297,7 @@ DELETE FROM auth.users
 WHERE id = current_setting('scms.mem_int_003_trusted_auth_id')::uuid;
 
 -- Unlinked identities must not be able to authorize portal lifecycle actions.
+SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000001', true);
 DO $unlinked_actor$
 BEGIN
