@@ -531,6 +531,89 @@ BEGIN
 END;
 $anon_rpc_guards$;
 
+-- Scenario D2: Role assignment reactivation must preserve expiry and reject inactive targets/scopes.
+RESET ROLE;
+DO $seed_role_reactivation_guards$
+DECLARE
+  v_inactive_scope_assignment uuid;
+  v_expired_assignment uuid;
+  v_archived_member_assignment uuid;
+  v_member_profile uuid := current_setting('scms.mem4a_member_profile_id')::uuid;
+  v_member_role uuid := current_setting('scms.mem4a_member_role_id')::uuid;
+  v_inactive_branch uuid := current_setting('scms.mem4a_inactive_branch')::uuid;
+  v_active_branch uuid := current_setting('scms.mem4a_branch_a1')::uuid;
+  v_archived_profile uuid := current_setting('scms.mem4a_standalone_member_id')::uuid;
+BEGIN
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, district_id, is_active
+  ) VALUES (
+    v_member_profile, v_member_role, 'branch', v_inactive_branch, NULL, false
+  ) RETURNING id INTO v_inactive_scope_assignment;
+
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, district_id, is_active, expires_at
+  ) VALUES (
+    v_member_profile, v_member_role, 'branch', v_active_branch, NULL, false, now() - interval '1 day'
+  ) RETURNING id INTO v_expired_assignment;
+
+  UPDATE public.profiles
+  SET record_status = 'archived'
+  WHERE id = v_archived_profile;
+
+  INSERT INTO public.profile_role_assignments (
+    profile_id, role_id, scope_type, branch_id, district_id, is_active
+  ) VALUES (
+    v_archived_profile, v_member_role, 'branch', v_active_branch, NULL, false
+  ) RETURNING id INTO v_archived_member_assignment;
+
+  PERFORM set_config('scms.mem4a_inactive_scope_assignment', v_inactive_scope_assignment::text, true);
+  PERFORM set_config('scms.mem4a_expired_assignment', v_expired_assignment::text, true);
+  PERFORM set_config('scms.mem4a_archived_member_assignment', v_archived_member_assignment::text, true);
+END;
+$seed_role_reactivation_guards$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', current_setting('scms.mem4a_church_admin_auth_id'), true);
+
+DO $role_reactivation_guards$
+BEGIN
+  BEGIN
+    PERFORM public.reactivate_profile_role_assignment(
+      current_setting('scms.mem4a_inactive_scope_assignment')::uuid
+    );
+    RAISE EXCEPTION 'An assignment for an inactive branch was unexpectedly reactivated.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    PERFORM public.reactivate_profile_role_assignment(
+      current_setting('scms.mem4a_archived_member_assignment')::uuid
+    );
+    RAISE EXCEPTION 'An assignment for an archived member was unexpectedly reactivated.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    PERFORM public.reactivate_profile_role_assignment(
+      current_setting('scms.mem4a_expired_assignment')::uuid
+    );
+    RAISE EXCEPTION 'An expired role assignment was unexpectedly made active.' USING ERRCODE = 'P0001';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    NULL;
+  END;
+
+  IF (
+    SELECT expires_at
+    FROM public.profile_role_assignments
+    WHERE id = current_setting('scms.mem4a_expired_assignment')::uuid
+  ) IS NULL THEN
+    RAISE EXCEPTION 'Role assignment expiry metadata was unexpectedly cleared.';
+  END IF;
+END;
+$role_reactivation_guards$;
+
 -- Scenario E & F: Atomic transfer approval moves member, clears source cell leadership/membership,
 -- deactivates branch-scoped ministry membership (preserving row), and preserves church-wide ministry membership.
 RESET ROLE;
