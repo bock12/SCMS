@@ -2186,7 +2186,7 @@ export const supabase = {
     if (
       !actor ||
       !actor.auth_user_id ||
-      (actor.portal_access_status && actor.portal_access_status !== 'active') ||
+      (actor.portal_access_status && (actor.portal_access_status && actor.portal_access_status !== 'active')) ||
       actor.status === 'suspended' ||
       actor.record_status === 'archived'
     ) {
