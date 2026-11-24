@@ -59,6 +59,7 @@ on:
       - "supabase/tests/event_budget_submission_permissions.sql"
       - "supabase/tests/event_budget_payment_integration.sql"
       - "supabase/tests/finance_organizational_scope.sql"
+      - "supabase/tests/finance_transaction_lifecycle.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
