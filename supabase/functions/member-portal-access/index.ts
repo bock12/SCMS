@@ -175,6 +175,26 @@ Deno.serve(async (request: Request) => {
     }
 
     const authUserId = decision.auth_user_id;
+    if (!authUserId && action === "revoke") {
+      // Auth deletion may already have applied profiles.auth_user_id ON DELETE SET NULL.
+      // Finish the suspended -> not_invited transition without needing the deleted ID.
+      const { data: finalized, error: finalizeError } = await adminClient.rpc(
+        "complete_member_portal_action",
+        {
+          p_actor_profile_id: decision.actor_profile_id,
+          p_profile_id: profileId,
+          p_action: "revoke",
+          p_auth_user_id: null,
+        },
+      );
+      if (finalizeError || !finalized) {
+        return jsonResponse({ error: finalizeError?.message || "Portal revocation cleanup could not be completed." }, 503);
+      }
+      return jsonResponse({
+        alreadyDone: false,
+        profile: { id: profileId, auth_user_id: null, portal_access_status: "not_invited" },
+      });
+    }
     if (!authUserId) return jsonResponse({ error: "The member has no linked Auth identity." }, 409);
 
     if (action === "activate") {
@@ -269,7 +289,8 @@ Deno.serve(async (request: Request) => {
         p_actor_profile_id: decision.actor_profile_id,
         p_profile_id: profileId,
         p_action: "revoke",
-        p_auth_user_id: authUserId,
+        // Auth deletion applies ON DELETE SET NULL to profiles.auth_user_id.
+        p_auth_user_id: null,
       },
     );
     if (revokeError || !revoked) {
