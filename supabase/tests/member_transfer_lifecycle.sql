@@ -163,10 +163,15 @@ BEGIN
   WHERE schemaname='public' AND tablename='church_branches' AND policyname='branches_authorized_read';
   SELECT qual INTO v_transfers_policy FROM pg_policies
   WHERE schemaname='public' AND tablename='member_transfers' AND policyname='member_transfers_scoped_read';
-  IF v_profiles_policy NOT LIKE '%manage_member_transfers%'
-    OR v_branches_policy NOT LIKE '%manage_member_transfers%'
+  IF v_profiles_policy LIKE '%manage_member_transfers%'
+    OR v_branches_policy LIKE '%manage_member_transfers%'
     OR v_transfers_policy NOT LIKE '%manage_member_transfers%' THEN
-    RAISE EXCEPTION 'Transfer managers are missing scoped directory, branch or transfer read access.';
+    RAISE EXCEPTION 'Transfer managers must use the limited directory RPC; broad profile/branch read access must remain closed.';
+  END IF;
+  IF NOT has_function_privilege('authenticated','public.get_member_transfer_directory()','EXECUTE')
+    OR has_function_privilege('anon','public.get_member_transfer_directory()','EXECUTE')
+    OR NOT has_function_privilege('authenticated','private.get_member_transfer_directory()','EXECUTE') THEN
+    RAISE EXCEPTION 'The least-privilege transfer directory RPC grants are incomplete.';
   END IF;
 END;
 $transfer_read_policies$;
