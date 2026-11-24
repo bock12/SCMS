@@ -373,14 +373,16 @@ export async function registerUnifiedMember(
       const profile = mergePortalActionResult(createdProfile, 'invite', invitation);
       return {
         profile,
-        portalInvite: {
-          authUserId: invitation.profile?.auth_user_id || '',
-          email,
-          setupToken: '',
-          setupUrl: '',
-          alreadyActivated: false,
-          delivery_method: 'email'
-        }
+        ...(invitation.invitationSent ? {
+          portalInvite: {
+            authUserId: invitation.profile?.auth_user_id || '',
+            email,
+            setupToken: '',
+            setupUrl: '',
+            alreadyActivated: false,
+            delivery_method: 'email' as const
+          }
+        } : {})
       };
     } catch (inviteError) {
       throw new Error(
@@ -614,7 +616,21 @@ export async function updateUnifiedMember(
         portalAction,
         portalAction === 'invite' ? email : undefined
       );
-      return { profile: mergePortalActionResult(savedProfile, portalAction, portalResult) };
+      const profile = mergePortalActionResult(savedProfile, portalAction, portalResult);
+      if (portalAction === 'invite' && portalResult.invitationSent) {
+        return {
+          profile,
+          portalInvite: {
+            authUserId: portalResult.profile?.auth_user_id || '',
+            email: portalResult.profile?.email || email,
+            setupToken: '',
+            setupUrl: '',
+            alreadyActivated: false,
+            delivery_method: 'email'
+          }
+        };
+      }
+      return { profile };
     } catch (portalError) {
       throw new Error(
         `Member details were saved, but portal access could not be updated: ${portalError instanceof Error ? portalError.message : 'Unknown portal access error'}`
@@ -755,14 +771,16 @@ export async function enablePortalAccess(
     const profile = mergePortalActionResult(current, 'invite', invitation);
     return {
       profile,
-      portalInvite: {
-        authUserId: invitation.profile?.auth_user_id || profile.auth_user_id || '',
-        email,
-        setupToken: '',
-        setupUrl: '',
-        alreadyActivated: false,
-        delivery_method: 'email'
-      }
+      ...(invitation.invitationSent ? {
+        portalInvite: {
+          authUserId: invitation.profile?.auth_user_id || profile.auth_user_id || '',
+          email,
+          setupToken: '',
+          setupUrl: '',
+          alreadyActivated: false,
+          delivery_method: 'email' as const
+        }
+      } : {})
     };
   }
   const { data: existing, error: lookupError } = await supabase
