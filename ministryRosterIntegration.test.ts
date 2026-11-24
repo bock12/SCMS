@@ -586,6 +586,38 @@ describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
     await setAdminScope('church', null, null);
   });
 
+  test('legacy profile department labels and browser roster caches do not create ministry membership', async () => {
+    await signInAsChurchSuperAdmin();
+    const { profile: member } = await registerUnifiedMember({
+      first_name: 'Legacy',
+      last_name: 'Fallback',
+      branch_id: 'branch-1',
+      membership_date: '2026-05-01',
+      enable_portal_access: false
+    });
+    const ministry = (await getMinistriesList()).find(item => item.branch_id === 'branch-1')!;
+    await supabase.from('profiles').update({
+      assigned_department: ministry.name,
+      department_name: ministry.name
+    }).eq('id', member.id);
+    memoryStorage.setItem(`fc_roster_${ministry.name}`, JSON.stringify([{
+      id: member.id,
+      member_id: member.id,
+      name: `${member.first_name} ${member.last_name}`,
+      role: 'Team Member'
+    }]));
+
+    const resolved = resolveMemberMinistryStatus({
+      ministry,
+      profile: { ...member, assigned_department: ministry.name, department_name: ministry.name },
+      activeMemberships: []
+    });
+    expect(resolved).toBeNull();
+
+    const affiliations = await getMemberMinistryAffiliations();
+    expect(affiliations[member.id] || []).toHaveLength(0);
+  });
+
   test('Scenario 5: ministry join request approval persists member to canonical roster and removal cleans up cleanly', async () => {
     const memberUser = await signInAsPlainMember();
     const members = await getMembers();
