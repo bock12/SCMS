@@ -74,6 +74,15 @@ The first server-side increment is now applied to the development database and c
 
 **Still outstanding in 004B:** a dedicated attendance management UI, browser acceptance for member/guest registration and check-in, and a full end-to-end run in CI after the latest commits. Event create/edit still has legacy direct writes outside this registration/attendance increment.
 
+### MEM-INT-004C implementation progress (2026-11-24)
+
+- Added branch-scoped welfare case create/update APIs. Members may submit their own case; another member's case requires `manage_welfare` permission in that member's branch. Case updates validate status/priority and require assigned officers to be active in the same branch.
+- Added welfare campaign create/update APIs with branch authorization, supported-currency validation and non-negative target/expected contribution validation.
+- Added welfare contribution and assistance link APIs. A contribution must reference an active campaign and a **posted receipt/adjustment** financial document; assistance must reference an approved/completed case and a **posted payment/adjustment** financial document. Branch and currency/member identity consistency are checked, and the existing database trigger remains an additional integrity guard.
+- Added `welfareManagementService.ts` and equivalent mock RPC behavior. Added `supabase/tests/welfare_case_campaign_lifecycle.sql`; it passed against the development database in a rollback transaction, including rejection of missing/non-posted finance document references.
+
+**Still outstanding in 004C:** the existing welfare passbook read model and contribution/campaign UI still use the legacy `localStorage` model. The current database schema does not yet represent all passbook categories (monthly dues and special support) or the existing card metadata, so replacing that read model requires a deliberate schema/data-model mapping rather than silently dropping those details. No end-to-end posted receipt-to-contribution or posted payment-to-assistance flow has yet been exercised.
+
 ## Recommended implementation sequence
 
 1. **MEM-INT-004A — Ministry roster and transfer lifecycle**
