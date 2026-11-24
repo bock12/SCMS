@@ -24,6 +24,35 @@ function requireLiveMemberWriteClient() {
   return supabaseDataClient;
 }
 
+type LivePortalAction = 'invite' | 'activate' | 'suspend' | 'revoke';
+
+async function invokeLivePortalAction(
+  profileId: string,
+  action: LivePortalAction,
+  email?: string
+): Promise<any> {
+  const client = requireLiveMemberWriteClient();
+  const { data, error } = await client.functions.invoke('member-portal-access', {
+    body: { profileId, action, ...(email ? { email } : {}) }
+  });
+  if (error) throw error;
+  if (!data) throw new Error('The portal access service returned no result.');
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+async function getLiveMemberProfile(profileId: string): Promise<Profile> {
+  const client = requireLiveMemberWriteClient();
+  const { data, error } = await client
+    .from('profiles')
+    .select('id,auth_user_id,branch_id,first_name,last_name,email,phone,gender,avatar_url,portal_access_status,membership_status,membership_date,created_at,is_baptized,baptism_date,baptized_by_profile_id,baptized_by_name_snapshot,date_of_birth,marital_status,marriage_date,record_status')
+    .eq('id', profileId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Member directory record not found after the portal access operation.');
+  return toDirectoryProfile(data);
+}
+
 function unwrapRpcProfile(data: any): Profile {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('The member directory operation returned no saved profile.');
@@ -264,9 +293,6 @@ export async function registerUnifiedMember(
   }
 
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    if (enablePortal) {
-      throw new Error('The member can be saved without Portal Access. Live portal invitations will be enabled after the trusted server-side provisioning workflow is completed.');
-    }
     const client = requireLiveMemberWriteClient();
     const canonical = mapProfileInputToCanonicalInsert({
       first_name: firstName,
@@ -307,7 +333,27 @@ export async function registerUnifiedMember(
       p_member: memberPayload
     });
     if (error) throw error;
-    return { profile: unwrapRpcProfile(data) };
+    const createdProfile = unwrapRpcProfile(data);
+    if (!enablePortal) return { profile: createdProfile };
+
+    try {
+      const invitation = await invokeLivePortalAction(createdProfile.id, 'invite', email);
+      const profile = await getLiveMemberProfile(createdProfile.id);
+      return {
+        profile,
+        portalInvite: {
+          authUserId: invitation.profile?.auth_user_id || '',
+          email,
+          setupToken: '',
+          setupUrl: '',
+          alreadyActivated: false
+        }
+      };
+    } catch (inviteError) {
+      throw new Error(
+        `Member record was saved, but portal invitation failed: ${inviteError instanceof Error ? inviteError.message : 'Unknown invitation error'} You can retry Portal Access from the member record.`
+      );
+    }
   }
 
   const { data: branch, error: branchError } = await supabase
@@ -497,13 +543,6 @@ export async function updateUnifiedMember(
   });
 
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    const portalCurrentlyEnabled = Boolean(current.auth_user_id);
-    if (
-      input.enable_portal_access !== undefined &&
-      input.enable_portal_access !== portalCurrentlyEnabled
-    ) {
-      throw new Error('Portal access changes require the trusted server-side provisioning workflow and cannot be combined with a member profile update.');
-    }
     const client = requireLiveMemberWriteClient();
     const memberPatch = Object.fromEntries(
       Object.entries(updates).filter(([key]) => key !== 'branch_id')
@@ -513,7 +552,36 @@ export async function updateUnifiedMember(
       p_member: memberPatch
     });
     if (error) throw error;
-    return { profile: unwrapRpcProfile(data) };
+
+    let portalAction: LivePortalAction | undefined;
+    if (input.enable_portal_access === true) {
+      portalAction = current.auth_user_id
+        ? (current.portal_access_status === 'suspended' ? 'activate' : undefined)
+        : 'invite';
+    } else if (input.enable_portal_access === false && current.auth_user_id) {
+      portalAction = 'revoke';
+    } else if (input.portal_status === 'archived' && current.auth_user_id) {
+      portalAction = 'revoke';
+    } else if (input.portal_status === 'suspended' && current.auth_user_id && current.portal_access_status !== 'suspended') {
+      portalAction = 'suspend';
+    } else if (input.portal_status === 'active' && current.auth_user_id && current.portal_access_status === 'suspended') {
+      portalAction = 'activate';
+    } else if (input.portal_status === 'active' && !current.auth_user_id) {
+      throw new Error('Portal access must be enabled before the account can be marked active.');
+    } else if (input.portal_status === 'suspended' && !current.auth_user_id) {
+      throw new Error('This member has no linked portal account to suspend.');
+    }
+
+    try {
+      if (portalAction) {
+        await invokeLivePortalAction(personId, portalAction, portalAction === 'invite' ? email : undefined);
+      }
+      return { profile: await getLiveMemberProfile(personId) };
+    } catch (portalError) {
+      throw new Error(
+        `Member details were saved, but portal access could not be updated: ${portalError instanceof Error ? portalError.message : 'Unknown portal access error'}`
+      );
+    }
   }
 
   const { error: updateError } = await supabase
@@ -600,7 +668,11 @@ export async function updatePortalAccountStatus(
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    throw new Error('Portal account lifecycle changes require the trusted server-side Auth provisioning workflow.');
+    const action: LivePortalAction =
+      portalStatus === 'active' ? 'activate' :
+      portalStatus === 'suspended' ? 'suspend' : 'revoke';
+    await invokeLivePortalAction(personId, action);
+    return getLiveMemberProfile(personId);
   }
   if (portalStatus === 'active') {
     const { data: existing, error: lookupError } = await supabase
@@ -637,7 +709,18 @@ export async function enablePortalAccess(
   options?: { email?: string; primary_role?: AppRole }
 ): Promise<UnifiedMemberSaveResult> {
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    throw new Error('Portal invitations require the trusted server-side Auth provisioning workflow.');
+    await invokeLivePortalAction(personId, 'invite', normalizeMemberEmail(options?.email));
+    const profile = await getLiveMemberProfile(personId);
+    return {
+      profile,
+      portalInvite: {
+        authUserId: profile.auth_user_id || '',
+        email: profile.email || '',
+        setupToken: '',
+        setupUrl: '',
+        alreadyActivated: false
+      }
+    };
   }
   const { data: existing, error: lookupError } = await supabase
     .from('profiles')
@@ -679,7 +762,8 @@ export async function enablePortalAccess(
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
 export async function disablePortalAccess(personId: string): Promise<Profile> {
   if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-    throw new Error('Portal revocation requires the trusted server-side Auth provisioning workflow.');
+    await invokeLivePortalAction(personId, 'revoke');
+    return getLiveMemberProfile(personId);
   }
   await supabase.auth.revokePortalAccess(personId);
   const { data, error } = await supabase
