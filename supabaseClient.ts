@@ -2257,6 +2257,183 @@ export const supabase = {
       roles_and_responsibilities: Array.isArray(row.roles_and_responsibilities) ? row.roles_and_responsibilities : []
     });
 
+    if (functionName === 'submit_ministry_join_request') {
+      const ministry = (localDb.ministries || []).find((item: any) =>
+        item.id === args.p_ministry_id && item.status === 'active'
+      );
+      if (!actor || actor.record_status === 'archived' || actor.membership_status !== 'active' || actor.portal_access_status !== 'active') {
+        return { data: null, error: { code: '42501', message: 'Only active church members with active portal access can submit ministry requests.' } };
+      }
+      if (!ministry) return { data: null, error: { code: '23503', message: 'The selected ministry is unavailable or inactive.' } };
+      if (ministry.branch_id && actor.branch_id !== ministry.branch_id) {
+        return { data: null, error: { code: '23514', message: 'You can only request to join ministries available to your current branch.' } };
+      }
+      const roster = (localDb.ministry_members || []).find((item: any) =>
+        item.ministry_id === ministry.id && item.member_id === actor.id && ['active', 'on_leave', 'in_training'].includes(item.status)
+      );
+      if (roster || ministry.leader_id === actor.id) {
+        return { data: null, error: { code: '23505', message: 'You are already on this ministry roster.' } };
+      }
+      if ((localDb.ministry_join_requests || []).some((item: any) =>
+        item.ministry_id === ministry.id && item.member_id === actor.id && item.status === 'pending'
+      )) {
+        return { data: null, error: { code: '23505', message: 'You already have a pending request to join this ministry.' } };
+      }
+      const availability = String(args.p_availability || '').trim();
+      const phone = String(args.p_applicant_phone || '').trim();
+      if (!availability || !phone) return { data: null, error: { code: '22023', message: 'Availability and a contact phone number are required.' } };
+      const preferredRoles = Array.isArray(args.p_preferred_roles) && args.p_preferred_roles.length
+        ? args.p_preferred_roles
+        : ['Open to serving where needed'];
+      const request = {
+        id: createMockUuid(),
+        ministry_id: ministry.id,
+        ministry_name: ministry.name,
+        member_id: actor.id,
+        applicant_name: `${actor.first_name} ${actor.last_name}`.trim(),
+        applicant_email: actor.email || '',
+        applicant_phone: phone,
+        preferred_roles: preferredRoles,
+        availability,
+        note: String(args.p_note || '').trim(),
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      localDb.ministry_join_requests = [...(localDb.ministry_join_requests || []), request];
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_join_requests_updated'));
+      return { data: request, error: null };
+    }
+
+    if (functionName === 'withdraw_ministry_join_request') {
+      const request = (localDb.ministry_join_requests || []).find((item: any) =>
+        item.id === args.p_request_id && item.member_id === actor.id && item.status === 'pending'
+      );
+      if (!request) return { data: null, error: { code: '42501', message: 'Only your own pending ministry requests can be withdrawn.' } };
+      const updated = { ...request, status: 'withdrawn', updated_at: new Date().toISOString() };
+      localDb.ministry_join_requests = (localDb.ministry_join_requests || []).map((item: any) =>
+        item.id === request.id ? updated : item
+      );
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_join_requests_updated'));
+      return { data: updated, error: null };
+    }
+
+    if (functionName === 'review_ministry_join_request') {
+      const request = (localDb.ministry_join_requests || []).find((item: any) => item.id === args.p_request_id);
+      if (!request) return { data: null, error: { code: '23503', message: 'The ministry join request does not exist.' } };
+      const ministry = (localDb.ministries || []).find((item: any) => item.id === request.ministry_id);
+      if (!ministry || !canManageMinistryBranch(ministry.branch_id ?? null)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to review this ministry request.' } };
+      }
+      const action = args.p_action;
+      const now = new Date().toISOString();
+      const reviewerName = `${actor.first_name} ${actor.last_name}`.trim();
+      if (action === 'approve') {
+        if (request.status !== 'pending' || ministry.status !== 'active') {
+          return { data: null, error: { code: '22023', message: 'Only pending requests for active ministries can be approved.' } };
+        }
+        const member = (localDb.profiles || []).find((item: any) =>
+          item.id === request.member_id &&
+          item.record_status !== 'archived' &&
+          item.membership_status === 'active'
+        );
+        if (!member) return { data: null, error: { code: '23503', message: 'The applicant is no longer an active congregation member.' } };
+        if (ministry.branch_id && member.branch_id !== ministry.branch_id) {
+          return { data: null, error: { code: '23514', message: 'The applicant no longer belongs to the ministry branch.' } };
+        }
+        const memberStatus = args.p_member_status || 'active';
+        if (!['active', 'in_training', 'on_leave'].includes(memberStatus)) {
+          return { data: null, error: { code: '22023', message: 'Invalid approved ministry membership status.' } };
+        }
+        const preferred = (request.preferred_roles || []).find((role: string) => role && !role.toLowerCase().startsWith('open to'));
+        const roleTitle = String(args.p_role_title || preferred || 'Team Member').trim();
+        const duty = String(args.p_duty || request.availability || 'Sunday & Ministry Service Duty').trim();
+        let rosterEntry = (localDb.ministry_members || []).find((item: any) =>
+          item.ministry_id === ministry.id && item.member_id === member.id
+        );
+        if (rosterEntry) {
+          rosterEntry = { ...rosterEntry, role_title: roleTitle, duty, status: memberStatus };
+          localDb.ministry_members = (localDb.ministry_members || []).map((item: any) =>
+            item.id === rosterEntry.id ? rosterEntry : item
+          );
+        } else {
+          rosterEntry = {
+            id: createMockUuid(),
+            ministry_id: ministry.id,
+            member_id: member.id,
+            role_title: roleTitle,
+            duty,
+            status: memberStatus,
+            joined_at: new Date().toISOString().slice(0, 10),
+            created_by_profile_id: actor.id,
+            created_at: now
+          };
+          localDb.ministry_members = [...(localDb.ministry_members || []), rosterEntry];
+        }
+        ministry.member_count = (localDb.ministry_members || []).filter((item: any) =>
+          item.ministry_id === ministry.id && ['active', 'on_leave', 'in_training'].includes(item.status)
+        ).length;
+        const updatedRequest = {
+          ...request,
+          status: 'approved',
+          updated_at: now,
+          reviewed_by_id: actor.id,
+          reviewed_by_name: reviewerName,
+          reviewed_at: now,
+          review_note: String(args.p_review_note || '').trim() || undefined,
+          assigned_role_title: roleTitle,
+          assigned_duty: duty
+        };
+        localDb.ministry_join_requests = (localDb.ministry_join_requests || []).map((item: any) =>
+          item.id === request.id ? updatedRequest : item
+        );
+        saveLocalDatabase(localDb);
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_join_requests_updated'));
+        return { data: { request: updatedRequest, roster_entry: rosterEntry }, error: null };
+      }
+      if (action === 'decline') {
+        if (request.status !== 'pending') return { data: null, error: { code: '22023', message: 'Only pending ministry requests can be declined.' } };
+        const updatedRequest = {
+          ...request,
+          status: 'declined',
+          updated_at: now,
+          reviewed_by_id: actor.id,
+          reviewed_by_name: reviewerName,
+          reviewed_at: now,
+          review_note: String(args.p_review_note || '').trim() || undefined
+        };
+        localDb.ministry_join_requests = (localDb.ministry_join_requests || []).map((item: any) =>
+          item.id === request.id ? updatedRequest : item
+        );
+        saveLocalDatabase(localDb);
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_join_requests_updated'));
+        return { data: { request: updatedRequest, roster_entry: null }, error: null };
+      }
+      if (action === 'reopen') {
+        if (!['declined', 'withdrawn'].includes(request.status)) return { data: null, error: { code: '22023', message: 'Only declined or withdrawn requests can be reopened.' } };
+        const updatedRequest = {
+          ...request,
+          status: 'pending',
+          updated_at: now,
+          reviewed_by_id: actor.id,
+          reviewed_by_name: reviewerName,
+          reviewed_at: undefined,
+          review_note: undefined,
+          assigned_role_title: undefined,
+          assigned_duty: undefined
+        };
+        localDb.ministry_join_requests = (localDb.ministry_join_requests || []).map((item: any) =>
+          item.id === request.id ? updatedRequest : item
+        );
+        saveLocalDatabase(localDb);
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('ministry_join_requests_updated'));
+        return { data: { request: updatedRequest, roster_entry: null }, error: null };
+      }
+      return { data: null, error: { code: '22023', message: 'Unsupported ministry join request action.' } };
+    }
+
     if (functionName === 'create_ministry') {
       const {
         p_branch_id = null, p_name, p_description = '', p_category = 'General',
