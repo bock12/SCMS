@@ -227,6 +227,75 @@ BEGIN
 END;
 $directory_read_scope$;
 
+-- The trusted Auth-linking trigger also enters the invited state, then the
+-- email-confirmation trigger activates that exact directory profile.
+DO $trusted_link_create$
+DECLARE
+  v_profile public.profiles;
+  v_auth_user_id uuid := gen_random_uuid();
+BEGIN
+  v_profile := public.create_member_profile(
+    pg_catalog.jsonb_build_object(
+      'first_name', 'MEM-INT-003',
+      'last_name', 'Trusted Link Test',
+      'branch_id', current_setting('scms.mem_int_003_branch_id'),
+      'membership_date', CURRENT_DATE::text,
+      'membership_status', 'active',
+      'email', 'mem-int-003-trusted-link@example.invalid'
+    )
+  );
+  PERFORM set_config('scms.mem_int_003_trusted_profile_id', v_profile.id::text, true);
+  PERFORM set_config('scms.mem_int_003_trusted_auth_id', v_auth_user_id::text, true);
+END;
+$trusted_link_create$;
+
+RESET ROLE;
+INSERT INTO auth.users (id, email, raw_app_meta_data)
+VALUES (
+  current_setting('scms.mem_int_003_trusted_auth_id')::uuid,
+  'mem-int-003-trusted-link@example.invalid',
+  pg_catalog.jsonb_build_object(
+    'provisioned_profile_id',
+    current_setting('scms.mem_int_003_trusted_profile_id')
+  )
+);
+
+DO $trusted_link_invited$
+DECLARE
+  v_profile public.profiles;
+BEGIN
+  SELECT * INTO v_profile
+  FROM public.profiles
+  WHERE id = current_setting('scms.mem_int_003_trusted_profile_id')::uuid;
+
+  IF v_profile.auth_user_id IS DISTINCT FROM current_setting('scms.mem_int_003_trusted_auth_id')::uuid
+    OR v_profile.portal_access_status <> 'invited' THEN
+    RAISE EXCEPTION 'Trusted Auth linking did not create an invited portal state.';
+  END IF;
+END;
+$trusted_link_invited$;
+
+UPDATE auth.users
+SET email_confirmed_at = now()
+WHERE id = current_setting('scms.mem_int_003_trusted_auth_id')::uuid;
+
+DO $trusted_link_active$
+DECLARE
+  v_profile public.profiles;
+BEGIN
+  SELECT * INTO v_profile
+  FROM public.profiles
+  WHERE id = current_setting('scms.mem_int_003_trusted_profile_id')::uuid;
+
+  IF v_profile.portal_access_status <> 'active' THEN
+    RAISE EXCEPTION 'Trusted Auth email confirmation did not activate the linked profile.';
+  END IF;
+END;
+$trusted_link_active$;
+
+DELETE FROM auth.users
+WHERE id = current_setting('scms.mem_int_003_trusted_auth_id')::uuid;
+
 -- Unlinked identities must not be able to authorize portal lifecycle actions.
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000001', true);
 DO $unlinked_actor$
