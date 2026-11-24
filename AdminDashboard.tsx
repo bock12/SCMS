@@ -7671,17 +7671,24 @@ const EventsAdminTab = ({ profile }: { profile: Profile }) => {
   };
 
   const handleDeleteEvent = async (eventId: string) => {
+    const activeRegistrations = registrations.filter(
+      registration => registration.event_id === eventId && registration.status !== 'cancelled'
+    );
+    if (activeRegistrations.length > 0) {
+      alert('This event still has active registrations. Cancel or resolve those registrations before deleting the event.');
+      return;
+    }
     if (!confirm("Are you sure you want to permanently delete this church event?")) return;
     try {
-      // 1. Delete child event registrations
-      await supabase.from('event_registrations').delete().eq('event_id', eventId);
-      // 2. Delete the event from Supabase
       const { error } = await supabase.from('events').delete().eq('id', eventId);
       if (error) {
         console.warn("Supabase event delete note:", error.message);
+        alert(error.message);
+        return;
       }
     } catch (err) {
       console.warn("Event deletion warning:", err);
+      return;
     }
 
     // 3. Immediately remove from local state so UI updates instantly
