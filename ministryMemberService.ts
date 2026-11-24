@@ -123,73 +123,10 @@ export function doesDepartmentMatchMinistry(
 }
 
 export function isMinistryLeaderForProfile(
-  ministry: Pick<Ministry, 'leader_id' | 'leader_name'>,
-  profile: Pick<Profile, 'id' | 'auth_user_id' | 'first_name' | 'last_name'> | null | undefined
+  ministry: Pick<Ministry, 'leader_id'>,
+  profile: Pick<Profile, 'id'> | null | undefined
 ): boolean {
-  if (!profile) return false;
-  if (ministry.leader_id) {
-    if (ministry.leader_id === profile.id) return true;
-    if (profile.auth_user_id && ministry.leader_id === profile.auth_user_id) return true;
-  }
-
-  const profileName = normalizePersonName(`${profile.first_name || ''} ${profile.last_name || ''}`);
-  const leaderName = normalizePersonName(ministry.leader_name);
-  return Boolean(profileName && leaderName && profileName === leaderName);
-}
-
-function findProfileInSavedRosters(
-  ministry: Pick<Ministry, 'id' | 'name' | 'category'>,
-  profile: Profile
-): { role?: string; duty?: string; joined_at?: string } | null {
-  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null;
-
-  const fullName = normalizePersonName(`${profile.first_name || ''} ${profile.last_name || ''}`);
-  const emailLower = (profile.email || '').trim().toLowerCase();
-
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      if (!key.startsWith('fc_roster_') && !key.startsWith('fc_dept_roster_')) continue;
-
-      const deptLabel = key.replace(/^fc_dept_roster_/, '').replace(/^fc_roster_/, '');
-      if (!doesDepartmentMatchMinistry(deptLabel, ministry)) continue;
-
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const list = JSON.parse(raw);
-      if (!Array.isArray(list)) continue;
-
-      const matched = list.find((entry: any) => {
-        if (!entry) return false;
-        if (entry.member_id && (entry.member_id === profile.id || entry.member_id === profile.auth_user_id)) {
-          return true;
-        }
-        if (entry.id && (entry.id === profile.id || entry.id === profile.auth_user_id)) {
-          return true;
-        }
-        if (emailLower && entry.email && String(entry.email).trim().toLowerCase() === emailLower) {
-          return true;
-        }
-        if (fullName && entry.name && normalizePersonName(String(entry.name)) === fullName) {
-          return true;
-        }
-        return false;
-      });
-
-      if (matched) {
-        return {
-          role: matched.role || matched.role_title,
-          duty: matched.duty,
-          joined_at: matched.joined_date || matched.joined_at
-        };
-      }
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
+  return Boolean(profile?.id && ministry.leader_id && ministry.leader_id === profile.id);
 }
 
 export function resolveMemberMinistryStatus(params: {
@@ -200,25 +137,26 @@ export function resolveMemberMinistryStatus(params: {
   const { ministry, profile, activeMemberships } = params;
   if (!profile) return null;
 
-  const isLeader = isMinistryLeaderForProfile(ministry, profile);
-
-  // 1. Canonical persisted `ministry_members` record
   const persisted = activeMemberships.find(
-    m =>
-      m.status !== 'inactive' &&
-      m.ministry_id === ministry.id &&
-      (m.member_id === profile.id || (Boolean(profile.auth_user_id) && m.member_id === profile.auth_user_id))
+    membership =>
+      membership.status !== 'inactive' &&
+      membership.ministry_id === ministry.id &&
+      membership.member_id === profile.id
   );
+
   if (persisted) {
     return {
       membership: persisted,
-      isLeader: isLeader || /leader|director|head/i.test(persisted.role_title || ''),
+      isLeader: isMinistryLeaderForProfile(ministry, profile) ||
+        /leader|director|head/i.test(persisted.role_title || ''),
       source: 'roster'
     };
   }
 
-  // 2. Appointed department / ministry leader (leader_id or leader_name)
-  if (isLeader) {
+  // Leader identity is canonical profiles.id. The migration backfills legacy
+  // leader_id values into ministry_members, but this fallback keeps an existing
+  // canonical leader visible if a roster row needs reconciliation.
+  if (isMinistryLeaderForProfile(ministry, profile)) {
     return {
       membership: {
         id: `leader-${ministry.id}-${profile.id}`,
@@ -234,45 +172,8 @@ export function resolveMemberMinistryStatus(params: {
     };
   }
 
-  // 3. Profile department assignment (assigned_department / department_name)
-  const assignedDept = profile.assigned_department || profile.department_name;
-  if (assignedDept && doesDepartmentMatchMinistry(assignedDept, ministry)) {
-    const roleIsLeader = ['leader', 'worker', 'pastor', 'super_admin', 'admin', 'district_admin'].includes(
-      profile.primary_role
-    );
-    return {
-      membership: {
-        id: `dept-${ministry.id}-${profile.id}`,
-        ministry_id: ministry.id,
-        member_id: profile.id,
-        role_title: roleIsLeader ? 'Department Worker / Leader' : 'Assigned Team Member',
-        duty: `Serving in ${ministry.name}`,
-        status: 'active',
-        joined_at: profile.membership_date || profile.created_at || new Date().toISOString()
-      },
-      isLeader: false,
-      source: 'department_assignment'
-    };
-  }
-
-  // 4. Local leader/admin saved roster cache (`fc_roster_*` / `fc_dept_roster_*`)
-  const localEntry = findProfileInSavedRosters(ministry, profile);
-  if (localEntry) {
-    return {
-      membership: {
-        id: `local-${ministry.id}-${profile.id}`,
-        ministry_id: ministry.id,
-        member_id: profile.id,
-        role_title: localEntry.role || 'Team Member',
-        duty: localEntry.duty || `${ministry.name} Service Duty`,
-        status: 'active',
-        joined_at: localEntry.joined_at || profile.created_at || new Date().toISOString()
-      },
-      isLeader: /leader|director|head/i.test(localEntry.role || ''),
-      source: 'local_roster'
-    };
-  }
-
+  // Profile department labels and browser roster caches are legacy display
+  // data, not proof of an active ministry_members relationship.
   return null;
 }
 
@@ -350,26 +251,7 @@ export async function getMemberMinistryAffiliations(): Promise<Record<string, Me
     result[row.member_id] = [...(result[row.member_id] || []), entry];
   }
 
-  for (const ministry of ministries) {
-    if (!ministry.leader_id) continue;
-    const existingList = result[ministry.leader_id] || [];
-    if (!existingList.some(a => a.ministry_id === ministry.id)) {
-      result[ministry.leader_id] = [
-        ...existingList,
-        {
-          assignment_id: `leader-${ministry.id}-${ministry.leader_id}`,
-          ministry_id: ministry.id,
-          ministry_name: ministry.name,
-          ministry_type: ministry.type,
-          role_title: 'Department Leader',
-          duty: `${ministry.name} Leadership & Oversight`,
-          status: 'active',
-          joined_at: new Date().toISOString().slice(0, 10),
-          is_leader: true
-        }
-      ];
-    }
-  }
+
 
   return result;
 }
