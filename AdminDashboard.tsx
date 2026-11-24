@@ -43,10 +43,14 @@ import {
   addMinistryMember,
   updateMinistryMember,
   removeMinistryMember,
-  ensureMinistryLeaderInRoster,
   isMemberEligibleForRoster,
   isMemberCompatibleWithMinistryBranch
 } from './ministryMemberService';
+import {
+  createMinistryDefinition,
+  updateMinistryDefinition,
+  archiveMinistryDefinition
+} from './ministryDefinitionService';
 import {
   getAllJoinRequests,
   approveMinistryJoinRequest,
@@ -2459,30 +2463,20 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
 
     setRosterBusy(true);
     try {
-      const leaderName = `${chosen.first_name} ${chosen.last_name}`;
-      if (!supabaseIntegrationEnabled) {
-        const { error } = await supabase
-          .from('ministries')
-          .update({ leader_id: chosen.id, leader_name: leaderName })
-          .eq('id', editingMinistry.id);
-        if (error) throw error;
-      }
-      await ensureMinistryLeaderInRoster(
-        { id: editingMinistry.id, name: editingMinistry.name, leader_id: chosen.id },
-        profile?.id
-      );
-      const reloaded = await loadDeptRoster(editingMinistry);
+      const updatedMin = await updateMinistryDefinition(editingMinistry.id, {
+        name: editingMinistry.name,
+        description: editingMinistry.description || '',
+        category: editingMinistry.category || 'General',
+        meeting_time: editingMinistry.meeting_time || 'Weekly Gathering',
+        type: editingMinistry.type || 'service_department',
+        roles_and_responsibilities: editingMinistry.roles_and_responsibilities || [],
+        leader_id: chosen.id
+      });
+      const reloaded = await loadDeptRoster(updatedMin);
       setDeptRoster(reloaded);
-      const updatedMin = {
-        ...editingMinistry,
-        leader_id: chosen.id,
-        leader_name: leaderName,
-        member_count: reloaded.length
-      };
       setEditingMinistry(updatedMin);
-      setMinistries(prev => prev.map(item => (item.id === editingMinistry.id ? updatedMin : item)));
-      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
-      setRosterSuccessNotice(`Appointed ${leaderName} as Department Leader on the ministry roster.`);
+      setMinistries(prev => prev.map(item => (item.id === updatedMin.id ? updatedMin : item)));
+      setRosterSuccessNotice(`Appointed ${chosen.first_name} ${chosen.last_name} as Department Leader.`);
     } catch (error: any) {
       setRosterNotice(error?.message || 'Unable to save ministry leadership appointment.');
     } finally {
@@ -2590,34 +2584,23 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       setMinistryFormError('Only active church members can be appointed as ministry leader.');
       return;
     }
-    const leaderName = leaderProfile 
-      ? `${leaderProfile.first_name} ${leaderProfile.last_name}` 
-      : (newMinistry.leader_name.trim() || 'TBD');
-
-    const createdItem: Ministry = {
-      id: `min_${Date.now()}`,
-      branch_id: profile?.branch_id || null,
-      name: newMinistry.name.trim(),
-      description: newMinistry.description.trim(),
-      leader_name: leaderName,
-      leader_id: leaderProfile ? leaderProfile.id : undefined,
-      meeting_time: newMinistry.meeting_time.trim() || 'Weekly Gathering',
-      member_count: leaderProfile ? 1 : 0,
-      category: newMinistry.category,
-      type: newMinistry.type,
-      roles_and_responsibilities: newMinistry.roles.length > 0 ? newMinistry.roles : ['Department Member']
-    };
+    if (leaderProfile && profile?.branch_id && leaderProfile.branch_id !== profile.branch_id) {
+      setMinistryFormError('The selected leader must belong to this branch.');
+      return;
+    }
 
     try {
-      const writeClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
-      const { error: insertError } = await writeClient.from('ministries').insert(createdItem);
-      if (insertError) throw insertError;
-      if (createdItem.leader_id) {
-        await ensureMinistryLeaderInRoster(createdItem, profile?.id);
-      }
-      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: createdItem.id } }));
+      await createMinistryDefinition({
+        branch_id: profile?.branch_id || null,
+        name: newMinistry.name.trim(),
+        description: newMinistry.description.trim(),
+        category: newMinistry.category,
+        meeting_time: newMinistry.meeting_time.trim() || 'Weekly Gathering',
+        type: newMinistry.type,
+        roles_and_responsibilities: newMinistry.roles.length > 0 ? newMinistry.roles : ['Department Member'],
+        leader_id: leaderProfile?.id || null
+      });
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
       setShowAddMinistryModal(false);
       setNewMinistry({
         name: '',
@@ -2650,35 +2633,19 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       setRosterNotice('The selected leader belongs to a different branch than this ministry.');
       return;
     }
-    const leaderName = leaderProfile 
-      ? `${leaderProfile.first_name} ${leaderProfile.last_name}` 
-      : (editingMinistry.leader_name || 'TBD');
-
-    const updatedData = {
-      name: editingMinistry.name,
-      description: editingMinistry.description,
-      leader_name: leaderName,
-      leader_id: editingMinistry.leader_id,
-      meeting_time: editingMinistry.meeting_time,
-      member_count: Number(editingMinistry.member_count) || 0,
-      category: editingMinistry.category,
-      type: editingMinistry.type || 'service_department',
-      roles_and_responsibilities: editingMinistry.roles_and_responsibilities || []
-    };
 
     try {
-      if (!supabaseIntegrationEnabled) {
-        const { error: updateError } = await supabase.from('ministries').update(updatedData).eq('id', editingMinistry.id);
-        if (updateError) throw updateError;
-      }
-      if (updatedData.leader_id) {
-        await ensureMinistryLeaderInRoster(
-          { id: editingMinistry.id, name: updatedData.name, leader_id: updatedData.leader_id },
-          profile?.id
-        );
-      }
+      const updatedMin = await updateMinistryDefinition(editingMinistry.id, {
+        name: editingMinistry.name,
+        description: editingMinistry.description || '',
+        category: editingMinistry.category || 'General',
+        meeting_time: editingMinistry.meeting_time || 'Weekly Gathering',
+        type: editingMinistry.type || 'service_department',
+        roles_and_responsibilities: editingMinistry.roles_and_responsibilities || [],
+        leader_id: editingMinistry.leader_id || null
+      });
       window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
-      setMinistries(prev => prev.map(m => m.id === editingMinistry.id ? { ...m, ...updatedData } as Ministry : m));
+      setMinistries(prev => prev.map(item => item.id === updatedMin.id ? updatedMin : item));
       setEditingMinistry(null);
     } catch (error: any) {
       setRosterNotice(error?.message || 'Unable to save department changes.');
@@ -2686,17 +2653,14 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   };
 
   const handleDeleteMinistry = async (minId: string) => {
-    if (!confirm("Are you sure you want to remove this ministry department?")) return;
+    if (!confirm('Archive this ministry? Its roster history will be retained.')) return;
     try {
-      const writeClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
-      const { error } = await writeClient.from('ministries').delete().eq('id', minId);
-      if (error) throw error;
-      setMinistries(prev => prev.filter(m => m.id !== minId));
+      await archiveMinistryDefinition(minId);
+      setMinistries(prev => prev.filter(ministry => ministry.id !== minId));
       setEditingMinistry(null);
+      setRosterSuccessNotice('Ministry archived. Its roster history has been retained.');
     } catch (error: any) {
-      setRosterNotice(error?.message || 'Unable to delete department.');
+      setRosterNotice(error?.message || 'Unable to archive department.');
     }
   };
 
