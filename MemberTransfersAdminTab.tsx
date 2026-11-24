@@ -32,22 +32,18 @@ export const MemberTransfersAdminTab: React.FC<MemberTransfersAdminTabProps> = (
     setLoading(true);
     setError(null);
     try {
-      const [transferRows, memberResult, branchResult] = await Promise.all([
+      const [transferRows, directoryResult] = await Promise.all([
         getMemberTransfers(),
-        supabase.from('profiles')
-          .select('id,first_name,last_name,branch_id,membership_status')
-          .eq('record_status', 'active')
-          .order('first_name', { ascending: true }),
-        supabase.from('church_branches')
-          .select('id,name,district_id,status')
-          .eq('status', 'active')
-          .order('name', { ascending: true })
+        supabase.rpc('get_member_transfer_directory')
       ]);
-      if (memberResult.error) throw memberResult.error;
-      if (branchResult.error) throw branchResult.error;
+      if (directoryResult.error) throw directoryResult.error;
+      const directory = (directoryResult.data || {}) as {
+        members?: TransferMemberOption[];
+        branches?: ChurchBranch[];
+      };
       setTransfers(transferRows);
-      setMembers((memberResult.data || []) as TransferMemberOption[]);
-      setBranches((branchResult.data || []) as ChurchBranch[]);
+      setMembers(directory.members || []);
+      setBranches(directory.branches || []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load member transfer data.');
     } finally {
