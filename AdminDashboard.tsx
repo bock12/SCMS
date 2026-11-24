@@ -2487,6 +2487,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       setDeptRoster(reloaded);
       setEditingMinistry(updatedMin);
       setMinistries(prev => prev.map(item => (item.id === updatedMin.id ? updatedMin : item)));
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: updatedMin.id } }));
       setRosterSuccessNotice(`Appointed ${chosen.first_name} ${chosen.last_name} as Department Leader.`);
     } catch (error: any) {
       setRosterNotice(error?.message || 'Unable to save ministry leadership appointment.');
@@ -2667,6 +2668,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     if (!confirm('Archive this ministry? Its roster history will be retained.')) return;
     try {
       await archiveMinistryDefinition(minId);
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: minId } }));
       setMinistries(prev => prev.filter(ministry => ministry.id !== minId));
       setEditingMinistry(null);
       setRosterSuccessNotice('Ministry archived. Its roster history has been retained.');
