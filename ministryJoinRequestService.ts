@@ -1,99 +1,68 @@
 import type { Ministry, MinistryJoinRequest, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
 import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
-import {
-  addMinistryMember,
-  doesDepartmentMatchMinistry,
-  getMinistryRoster,
-  normalizePersonName,
-  removeMinistryMember,
-  resolveMemberMinistryStatus,
-  updateMinistryMember
-} from './ministryMemberService';
+import { removeMinistryMember } from './ministryMemberService';
 import { sendInAppNotification } from './inAppNotificationService';
 import { SYSTEM_NOTIFICATIONS_UPDATED_EVENT } from './systemNotificationService';
 
-const getMinistryMembersReadClient = (): any =>
+const getReadClient = (): any =>
   supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient ? supabaseDataClient : supabase;
 
-const DB_STORAGE_KEY = 'faithconnect_db_v2';
+const getWriteClient = (): any => {
+  if (!supabaseIntegrationEnabled) return supabase;
+  if (!supabaseAuthEnabled) throw new Error('Ministry requests require an active Supabase Auth session.');
+  if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+  return supabaseDataClient;
+};
+
 export const MINISTRY_JOIN_REQUESTS_UPDATED_EVENT = 'ministry_join_requests_updated';
 
 function dispatchRequestsUpdated(ministryId?: string): void {
-  window.dispatchEvent(
-    new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, {
-      detail: { ministryId }
-    })
-  );
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId } }));
   window.dispatchEvent(new CustomEvent(SYSTEM_NOTIFICATIONS_UPDATED_EVENT));
 }
 
-export function getAllJoinRequests(): MinistryJoinRequest[] {
-  try {
-    const raw = localStorage.getItem(DB_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed?.ministry_join_requests) ? parsed.ministry_join_requests : [];
-  } catch {
-    return [];
-  }
-}
-
 export async function fetchAllJoinRequests(): Promise<MinistryJoinRequest[]> {
-  const { data, error } = await supabase
+  const { data, error } = await getReadClient()
     .from('ministry_join_requests')
     .select('*')
     .order('created_at', { ascending: false });
-
   if (error) throw error;
-  return Array.isArray(data) ? (data as MinistryJoinRequest[]) : [];
+  return Array.isArray(data) ? data as MinistryJoinRequest[] : [];
 }
 
-export function getJoinRequestsForMinistry(params: {
+export async function getJoinRequestsForMinistry(params: {
   ministryId?: string;
   ministryName?: string;
   status?: MinistryJoinRequest['status'] | 'all';
-}): MinistryJoinRequest[] {
+}): Promise<MinistryJoinRequest[]> {
   const { ministryId, ministryName, status = 'all' } = params;
-  const targetName = (ministryName || '').trim().toLowerCase();
-
-  return getAllJoinRequests()
-    .filter(req => {
-      const matchesId = Boolean(ministryId && req.ministry_id === ministryId);
-      const matchesName = Boolean(targetName && req.ministry_name.trim().toLowerCase() === targetName);
-      if (ministryId || targetName) {
-        if (!matchesId && !matchesName) return false;
-      }
-      if (status !== 'all' && req.status !== status) return false;
-      return true;
-    })
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  let query = getReadClient().from('ministry_join_requests').select('*');
+  if (ministryId) query = query.eq('ministry_id', ministryId);
+  if (status !== 'all') query = query.eq('status', status);
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data as MinistryJoinRequest[] : [];
+  if (ministryId || !ministryName?.trim()) return rows;
+  const targetName = ministryName.trim().toLowerCase();
+  return rows.filter(request => request.ministry_name.trim().toLowerCase() === targetName);
 }
 
-export function getJoinRequestsForMember(memberId: string): MinistryJoinRequest[] {
+export async function getJoinRequestsForMember(memberId: string): Promise<MinistryJoinRequest[]> {
   if (!memberId) return [];
-  return getAllJoinRequests()
-    .filter(req => req.member_id === memberId)
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const { data, error } = await getReadClient()
+    .from('ministry_join_requests')
+    .select('*')
+    .eq('member_id', memberId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return Array.isArray(data) ? data as MinistryJoinRequest[] : [];
 }
 
-async function resolveDepartmentLeaderId(ministry: Ministry): Promise<string | undefined> {
-  if (ministry.leader_id) return ministry.leader_id;
-  const targetLeaderName = (ministry.leader_name || '').trim().toLowerCase();
-  if (!targetLeaderName) return undefined;
-
-  try {
-    const { data: profiles } = await supabase.from('profiles').select('*');
-    if (Array.isArray(profiles)) {
-      const matched = profiles.find(
-        (p: Profile) => `${p.first_name} ${p.last_name}`.trim().toLowerCase() === targetLeaderName
-      );
-      return matched?.id;
-    }
-  } catch {
-    // Ignore fallback lookup errors
-  }
-  return undefined;
+function resolveDepartmentLeaderId(ministry: Ministry): string | undefined {
+  // leader_id is the canonical profiles.id; leader_name is display-only text.
+  return ministry.leader_id || undefined;
 }
 
 export interface SubmitMinistryJoinRequestInput {
@@ -110,92 +79,32 @@ export async function submitMinistryJoinRequest(
 ): Promise<MinistryJoinRequest> {
   const { ministry, profile, preferredRoles, availability, note, phoneOverride } = input;
   const cleanAvailability = availability.trim();
-  const cleanNote = note.trim();
   const cleanPhone = (phoneOverride ?? profile.phone ?? '').trim();
 
-  if (!profile?.id) {
-    throw new Error('Please sign in to submit a ministry interest request.');
-  }
-  if (!cleanAvailability) {
-    throw new Error('Please specify your service or rehearsal availability.');
-  }
-  if (!cleanPhone) {
-    throw new Error('Please provide a contact phone number so the ministry leader can reach you.');
-  }
+  if (!profile?.id) throw new Error('Please sign in to submit a ministry interest request.');
+  if (!cleanAvailability) throw new Error('Please specify your service or rehearsal availability.');
+  if (!cleanPhone) throw new Error('Please provide a contact phone number so the ministry leader can reach you.');
 
-  // Check if user is already an active member or appointed leader in this ministry
-  const readClient = getMinistryMembersReadClient();
-  const [{ data: existingMembership, error: membershipErr }, { data: existingRequests, error: reqErr }] = await Promise.all([
-    readClient
-      .from('ministry_members')
-      .select('*')
-      .eq('ministry_id', ministry.id),
-    supabase
-      .from('ministry_join_requests')
-      .select('*')
-      .eq('ministry_id', ministry.id)
-      .eq('member_id', profile.id)
-  ]);
-
-  if (membershipErr) throw membershipErr;
-  if (reqErr) throw reqErr;
-
-  const existingStatus = resolveMemberMinistryStatus({
-    ministry,
-    profile,
-    activeMemberships: (existingMembership || []) as MinistryMember[]
+  const { data, error } = await getWriteClient().rpc('submit_ministry_join_request', {
+    p_ministry_id: ministry.id,
+    p_preferred_roles: preferredRoles.length > 0 ? preferredRoles : ['Open to serving where needed'],
+    p_availability: cleanAvailability,
+    p_note: note.trim(),
+    p_applicant_phone: cleanPhone
   });
-  if (existingStatus) {
-    if (existingStatus.isLeader) {
-      throw new Error(`You are already the leader of ${ministry.name}.`);
-    }
-    throw new Error(`You are already on the ${ministry.name} team (${existingStatus.membership.role_title}).`);
-  }
+  if (error) throw error;
+  if (!data) throw new Error('Your ministry request could not be submitted.');
 
-  const existingPending = (existingRequests || []).find(
-    (r: MinistryJoinRequest) => r.status === 'pending'
-  );
-  if (existingPending) {
-    throw new Error(`You already have a pending request to join ${ministry.name}.`);
-  }
-
-  const applicantName = `${profile.first_name} ${profile.last_name}`.trim();
-  const roles = preferredRoles.length > 0 ? preferredRoles : ['Open to serving where needed'];
-
-  const newRequestPayload: MinistryJoinRequest = {
-    id: `mjr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    ministry_id: ministry.id,
-    ministry_name: ministry.name,
-    member_id: profile.id,
-    applicant_name: applicantName,
-    applicant_email: profile.email || '',
-    applicant_phone: cleanPhone,
-    preferred_roles: roles,
-    availability: cleanAvailability,
-    note: cleanNote,
-    status: 'pending',
-    created_at: new Date().toISOString()
-  };
-
-  const { data: insertedRow, error: insertError } = await supabase
-    .from('ministry_join_requests')
-    .insert(newRequestPayload)
-    .select('*')
-    .single();
-
-  if (insertError) throw insertError;
-  const savedRequest = (insertedRow || newRequestPayload) as MinistryJoinRequest;
-
-  const leaderId = await resolveDepartmentLeaderId(ministry);
-
-  // Notify the respective department leader via in-app notifications
+  const savedRequest = data as MinistryJoinRequest;
+  const applicantName = savedRequest.applicant_name || `${profile.first_name} ${profile.last_name}`.trim();
+  const leaderId = resolveDepartmentLeaderId(ministry);
   sendInAppNotification({
     department_name: ministry.name,
     recipient_member_id: leaderId,
     recipient_member_name: ministry.leader_name || 'Department Leader',
     type: 'ministry_join_request',
     title: `New Team Interest: ${applicantName} (${ministry.name})`,
-    message: `${applicantName} expressed interest in ${roles.join(', ')}. Availability: ${cleanAvailability}.`,
+    message: `${applicantName} expressed interest in ${(savedRequest.preferred_roles || []).join(', ')}. Availability: ${savedRequest.availability}.`,
     sent_by: applicantName
   });
 
@@ -205,39 +114,16 @@ export async function submitMinistryJoinRequest(
 
 export async function withdrawMinistryJoinRequest(
   requestId: string,
-  memberId: string
+  _memberId?: string
 ): Promise<MinistryJoinRequest> {
-  const { data: target, error: findErr } = await supabase
-    .from('ministry_join_requests')
-    .select('*')
-    .eq('id', requestId)
-    .eq('member_id', memberId)
-    .maybeSingle();
-
-  if (findErr) throw findErr;
-  if (!target) {
-    throw new Error('Request could not be found.');
-  }
-  if (target.status !== 'pending') {
-    throw new Error('Only pending requests can be withdrawn.');
-  }
-
-  const updatedFields = {
-    status: 'withdrawn' as const,
-    updated_at: new Date().toISOString()
-  };
-
-  const { data: updatedRow, error: updateErr } = await supabase
-    .from('ministry_join_requests')
-    .update(updatedFields)
-    .eq('id', requestId)
-    .select('*')
-    .single();
-
-  if (updateErr) throw updateErr;
-  const updatedItem = (updatedRow || { ...target, ...updatedFields }) as MinistryJoinRequest;
-  dispatchRequestsUpdated(updatedItem.ministry_id);
-  return updatedItem;
+  const { data, error } = await getWriteClient().rpc('withdraw_ministry_join_request', {
+    p_request_id: requestId
+  });
+  if (error) throw error;
+  if (!data) throw new Error('Your ministry request could not be withdrawn.');
+  const updated = data as MinistryJoinRequest;
+  dispatchRequestsUpdated(updated.ministry_id);
+  return updated;
 }
 
 export interface ApproveMinistryJoinRequestInput {
@@ -253,106 +139,34 @@ export async function approveMinistryJoinRequest(
   input: ApproveMinistryJoinRequestInput
 ): Promise<{ request: MinistryJoinRequest; rosterEntry: MinistryMember }> {
   const { requestId, reviewerProfile, roleTitle, duty, memberStatus = 'active', reviewNote } = input;
+  const { data, error } = await getWriteClient().rpc('review_ministry_join_request', {
+    p_request_id: requestId,
+    p_action: 'approve',
+    p_role_title: roleTitle || null,
+    p_duty: duty || null,
+    p_member_status: memberStatus,
+    p_review_note: reviewNote || null
+  });
+  if (error) throw error;
+  const result = data as { request?: MinistryJoinRequest; roster_entry?: MinistryMember | null } | null;
+  if (!result?.request || !result.roster_entry) throw new Error('The request was not approved with a roster assignment.');
 
-  const { data: target, error: findErr } = await supabase
-    .from('ministry_join_requests')
-    .select('*')
-    .eq('id', requestId)
-    .maybeSingle();
-
-  if (findErr) throw findErr;
-  if (!target) {
-    throw new Error('Join request could not be found.');
-  }
-
-  const finalRoleTitle =
-    (roleTitle || '').trim() ||
-    (target.preferred_roles || []).find((r: string) => r && !r.toLowerCase().startsWith('open to')) ||
-    'Team Member';
-  const finalDuty = (duty || '').trim() || target.availability || 'Sunday & Ministry Service Duty';
   const reviewerName = reviewerProfile
     ? `${reviewerProfile.first_name} ${reviewerProfile.last_name}`.trim()
     : 'Ministry Leader';
-
-  // Ensure a canonical ministry_members entry is created or reactivated
-  const currentRoster = await getMinistryRoster(target.ministry_id);
-  const existing = currentRoster.find(entry => entry.member_id === target.member_id);
-
-  let savedEntry: MinistryMember;
-  if (existing) {
-    await updateMinistryMember(existing.id, {
-      role_title: finalRoleTitle,
-      duty: finalDuty,
-      status: memberStatus
-    });
-    savedEntry = {
-      ...existing,
-      role_title: finalRoleTitle,
-      duty: finalDuty,
-      status: memberStatus
-    };
-  } else {
-    savedEntry = await addMinistryMember({
-      ministry_id: target.ministry_id,
-      member_id: target.member_id,
-      role_title: finalRoleTitle,
-      duty: finalDuty,
-      status: memberStatus,
-      created_by: reviewerProfile?.id
-    });
-  }
-
-  // Sync ministry member_count in local mock storage (live schema derives counts from ministry_members)
-  if (!supabaseIntegrationEnabled) {
-    try {
-      const refreshedRoster = await getMinistryRoster(target.ministry_id);
-      const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
-      if (activeCount > 0) {
-        await supabase
-          .from('ministries')
-          .update({ member_count: activeCount })
-          .eq('id', target.ministry_id);
-      }
-    } catch (err) {
-      console.warn('Could not sync ministry member_count after approval:', err);
-    }
-  }
-
-  const updatedFields = {
-    status: 'approved' as const,
-    updated_at: new Date().toISOString(),
-    reviewed_by_id: reviewerProfile?.id,
-    reviewed_by_name: reviewerName,
-    reviewed_at: new Date().toISOString(),
-    review_note: reviewNote?.trim() || undefined,
-    assigned_role_title: finalRoleTitle,
-    assigned_duty: finalDuty
-  };
-
-  const { data: updatedRow, error: updateErr } = await supabase
-    .from('ministry_join_requests')
-    .update(updatedFields)
-    .eq('id', requestId)
-    .select('*')
-    .single();
-
-  if (updateErr) throw updateErr;
-  const updatedRequest = (updatedRow || { ...target, ...updatedFields }) as MinistryJoinRequest;
-
-  dispatchRequestsUpdated(target.ministry_id);
-
-  // Notify applicant of approval
+  const request = result.request;
+  dispatchRequestsUpdated(request.ministry_id);
   sendInAppNotification({
-    department_name: target.ministry_name,
-    recipient_member_id: target.member_id,
-    recipient_member_name: target.applicant_name,
+    department_name: request.ministry_name,
+    recipient_member_id: request.member_id,
+    recipient_member_name: request.applicant_name,
     type: 'ministry_join_update',
-    title: `Welcome to ${target.ministry_name}!`,
-    message: `Your request to join ${target.ministry_name} was approved by ${reviewerName}. Assigned Role: ${finalRoleTitle} (${finalDuty}).`,
+    title: `Welcome to ${request.ministry_name}!`,
+    message: `Your request to join ${request.ministry_name} was approved by ${reviewerName}. Assigned Role: ${request.assigned_role_title} (${request.assigned_duty}).`,
     sent_by: reviewerName
   });
 
-  return { request: updatedRequest, rosterEntry: savedEntry };
+  return { request, rosterEntry: result.roster_entry };
 }
 
 export async function declineMinistryJoinRequest(input: {
@@ -361,97 +175,48 @@ export async function declineMinistryJoinRequest(input: {
   reviewNote?: string;
 }): Promise<MinistryJoinRequest> {
   const { requestId, reviewerProfile, reviewNote } = input;
+  const { data, error } = await getWriteClient().rpc('review_ministry_join_request', {
+    p_request_id: requestId,
+    p_action: 'decline',
+    p_review_note: reviewNote || null
+  });
+  if (error) throw error;
+  const result = data as { request?: MinistryJoinRequest } | null;
+  if (!result?.request) throw new Error('The ministry request could not be declined.');
 
-  const { data: target, error: findErr } = await supabase
-    .from('ministry_join_requests')
-    .select('*')
-    .eq('id', requestId)
-    .maybeSingle();
-
-  if (findErr) throw findErr;
-  if (!target) {
-    throw new Error('Join request could not be found.');
-  }
-
+  const request = result.request;
   const reviewerName = reviewerProfile
     ? `${reviewerProfile.first_name} ${reviewerProfile.last_name}`.trim()
     : 'Ministry Leader';
   const noteText = (reviewNote || '').trim();
-
-  const updatedFields = {
-    status: 'declined' as const,
-    updated_at: new Date().toISOString(),
-    reviewed_by_id: reviewerProfile?.id,
-    reviewed_by_name: reviewerName,
-    reviewed_at: new Date().toISOString(),
-    review_note: noteText || undefined
-  };
-
-  const { data: updatedRow, error: updateErr } = await supabase
-    .from('ministry_join_requests')
-    .update(updatedFields)
-    .eq('id', requestId)
-    .select('*')
-    .single();
-
-  if (updateErr) throw updateErr;
-  const updatedRequest = (updatedRow || { ...target, ...updatedFields }) as MinistryJoinRequest;
-
-  dispatchRequestsUpdated(target.ministry_id);
-
+  dispatchRequestsUpdated(request.ministry_id);
   sendInAppNotification({
-    department_name: target.ministry_name,
-    recipient_member_id: target.member_id,
-    recipient_member_name: target.applicant_name,
+    department_name: request.ministry_name,
+    recipient_member_id: request.member_id,
+    recipient_member_name: request.applicant_name,
     type: 'ministry_join_update',
-    title: `Update on Your ${target.ministry_name} Request`,
+    title: `Update on Your ${request.ministry_name} Request`,
     message: noteText
       ? `${reviewerName} reviewed your request: "${noteText}"`
-      : `Thank you for your willingness to serve in ${target.ministry_name}. Please reach out to ${reviewerName} for next steps.`,
+      : `Thank you for your willingness to serve in ${request.ministry_name}. Please reach out to ${reviewerName} for next steps.`,
     sent_by: reviewerName
   });
-
-  return updatedRequest;
+  return request;
 }
 
 export async function reopenMinistryJoinRequest(
   requestId: string,
   reviewerProfile: Profile | null
 ): Promise<MinistryJoinRequest> {
-  const { data: target, error: findErr } = await supabase
-    .from('ministry_join_requests')
-    .select('*')
-    .eq('id', requestId)
-    .maybeSingle();
-
-  if (findErr) throw findErr;
-  if (!target) {
-    throw new Error('Join request could not be found.');
-  }
-
-  const reviewerName = reviewerProfile
-    ? `${reviewerProfile.first_name} ${reviewerProfile.last_name}`.trim()
-    : 'Ministry Leader';
-
-  const updatedFields = {
-    status: 'pending' as const,
-    updated_at: new Date().toISOString(),
-    reviewed_by_id: reviewerProfile?.id,
-    reviewed_by_name: reviewerName,
-    review_note: undefined
-  };
-
-  const { data: updatedRow, error: updateErr } = await supabase
-    .from('ministry_join_requests')
-    .update(updatedFields)
-    .eq('id', requestId)
-    .select('*')
-    .single();
-
-  if (updateErr) throw updateErr;
-  const reopened = (updatedRow || { ...target, ...updatedFields }) as MinistryJoinRequest;
-  dispatchRequestsUpdated(target.ministry_id);
-  return reopened;
+  const { data, error } = await getWriteClient().rpc('review_ministry_join_request', {
+    p_request_id: requestId,
+    p_action: 'reopen'
+  });
+  if (error) throw error;
+  const result = data as { request?: MinistryJoinRequest } | null;
+  if (!result?.request) throw new Error('The ministry request could not be reopened.');
+  dispatchRequestsUpdated(result.request.ministry_id);
+  return result.request;
 }
 
 export async function leaveMinistryTeam(input: {
@@ -461,103 +226,35 @@ export async function leaveMinistryTeam(input: {
   reason?: string;
 }): Promise<void> {
   const { ministry, profile, membershipId, reason } = input;
-  const isSyntheticId =
-    !membershipId ||
-    membershipId.startsWith('leader-') ||
-    membershipId.startsWith('dept-') ||
-    membershipId.startsWith('local-');
+  if (!profile?.id) throw new Error('A member profile is required to leave a ministry.');
+  if (ministry.leader_id === profile.id) {
+    throw new Error('Please arrange a new ministry leader before leaving this ministry.');
+  }
 
-  if (!isSyntheticId) {
+  if (membershipId && !membershipId.startsWith('leader-') && !membershipId.startsWith('dept-') && !membershipId.startsWith('local-')) {
     await removeMinistryMember(membershipId);
-  } else if (profile?.id) {
-    // Clean up any persisted roster entry matching member_id just in case
-    const { data: persisted } = await supabase
+  } else {
+    const { data, error } = await getReadClient()
       .from('ministry_members')
-      .select('*')
+      .select('id')
       .eq('ministry_id', ministry.id)
       .eq('member_id', profile.id);
-    if (Array.isArray(persisted)) {
-      for (const row of persisted) {
-        await removeMinistryMember(row.id);
-      }
-    }
-  }
-
-  // Remove from local leader/admin roster caches if present
-  try {
-    const profileName = normalizePersonName(`${profile.first_name || ''} ${profile.last_name || ''}`);
-    const profileEmail = (profile.email || '').trim().toLowerCase();
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || (!key.startsWith('fc_roster_') && !key.startsWith('fc_dept_roster_'))) continue;
-      const deptLabel = key.replace(/^fc_dept_roster_/, '').replace(/^fc_roster_/, '');
-      if (!doesDepartmentMatchMinistry(deptLabel, ministry)) continue;
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const list = JSON.parse(raw);
-      if (!Array.isArray(list)) continue;
-      const filtered = list.filter((entry: any) => {
-        if (!entry) return false;
-        if (entry.member_id === profile.id || entry.id === profile.id) return false;
-        if (profile.auth_user_id && (entry.member_id === profile.auth_user_id || entry.id === profile.auth_user_id)) return false;
-        if (profileEmail && entry.email && String(entry.email).trim().toLowerCase() === profileEmail) return false;
-        if (profileName && entry.name && normalizePersonName(String(entry.name)) === profileName) return false;
-        return true;
-      });
-      if (filtered.length !== list.length) {
-        localStorage.setItem(key, JSON.stringify(filtered));
-      }
-    }
-  } catch (err) {
-    console.warn('Could not clean local roster cache on step-down:', err);
-  }
-
-  // Clear matching assigned_department / department_name on profile if present
-  const assignedDept = profile.assigned_department || profile.department_name;
-  if (assignedDept && doesDepartmentMatchMinistry(assignedDept, ministry)) {
-    try {
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
-        .update({ assigned_department: '', department_name: '' })
-        .eq('id', profile.id)
-        .select('*')
-        .maybeSingle();
-      if (updatedProfile) {
-        window.dispatchEvent(new CustomEvent('profile-updated', { detail: updatedProfile }));
-      }
-    } catch (err) {
-      console.warn('Could not clear profile department assignment on step-down:', err);
-    }
-  }
-
-  if (!supabaseIntegrationEnabled) {
-    try {
-      const refreshedRoster = await getMinistryRoster(ministry.id);
-      const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
-      await supabase
-        .from('ministries')
-        .update({ member_count: activeCount })
-        .eq('id', ministry.id);
-    } catch (err) {
-      console.warn('Could not sync ministry member_count after leaving team:', err);
-    }
+    if (error) throw error;
+    for (const row of data || []) await removeMinistryMember(row.id);
   }
 
   const memberName = `${profile.first_name} ${profile.last_name}`.trim();
-  const cleanReason = (reason || '').trim();
-  const leaderId = await resolveDepartmentLeaderId(ministry);
-
+  const leaderId = resolveDepartmentLeaderId(ministry);
   sendInAppNotification({
     department_name: ministry.name,
     recipient_member_id: leaderId,
     recipient_member_name: ministry.leader_name || 'Department Leader',
     type: 'ministry_join_update',
     title: `Team Roster Update: ${memberName} (${ministry.name})`,
-    message: cleanReason
-      ? `${memberName} stepped down from ${ministry.name}. Note: "${cleanReason}"`
+    message: reason?.trim()
+      ? `${memberName} stepped down from ${ministry.name}. Note: "${reason.trim()}".`
       : `${memberName} stepped down from active service in ${ministry.name}.`,
     sent_by: memberName
   });
-
   dispatchRequestsUpdated(ministry.id);
 }
