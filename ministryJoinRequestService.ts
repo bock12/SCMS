@@ -1,5 +1,6 @@
 import type { Ministry, MinistryJoinRequest, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
+import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 import {
   addMinistryMember,
   doesDepartmentMatchMinistry,
@@ -11,6 +12,9 @@ import {
 } from './ministryMemberService';
 import { sendInAppNotification } from './inAppNotificationService';
 import { SYSTEM_NOTIFICATIONS_UPDATED_EVENT } from './systemNotificationService';
+
+const getMinistryMembersReadClient = (): any =>
+  supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient ? supabaseDataClient : supabase;
 
 const DB_STORAGE_KEY = 'faithconnect_db_v2';
 export const MINISTRY_JOIN_REQUESTS_UPDATED_EVENT = 'ministry_join_requests_updated';
@@ -120,8 +124,9 @@ export async function submitMinistryJoinRequest(
   }
 
   // Check if user is already an active member or appointed leader in this ministry
+  const readClient = getMinistryMembersReadClient();
   const [{ data: existingMembership, error: membershipErr }, { data: existingRequests, error: reqErr }] = await Promise.all([
-    supabase
+    readClient
       .from('ministry_members')
       .select('*')
       .eq('ministry_id', ministry.id),
@@ -297,18 +302,20 @@ export async function approveMinistryJoinRequest(
     });
   }
 
-  // Sync ministry member_count from persisted roster
-  try {
-    const refreshedRoster = await getMinistryRoster(target.ministry_id);
-    const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
-    if (activeCount > 0) {
-      await supabase
-        .from('ministries')
-        .update({ member_count: activeCount })
-        .eq('id', target.ministry_id);
+  // Sync ministry member_count in local mock storage (live schema derives counts from ministry_members)
+  if (!supabaseIntegrationEnabled) {
+    try {
+      const refreshedRoster = await getMinistryRoster(target.ministry_id);
+      const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
+      if (activeCount > 0) {
+        await supabase
+          .from('ministries')
+          .update({ member_count: activeCount })
+          .eq('id', target.ministry_id);
+      }
+    } catch (err) {
+      console.warn('Could not sync ministry member_count after approval:', err);
     }
-  } catch (err) {
-    console.warn('Could not sync ministry member_count after approval:', err);
   }
 
   const updatedFields = {
@@ -523,15 +530,17 @@ export async function leaveMinistryTeam(input: {
     }
   }
 
-  try {
-    const refreshedRoster = await getMinistryRoster(ministry.id);
-    const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
-    await supabase
-      .from('ministries')
-      .update({ member_count: activeCount })
-      .eq('id', ministry.id);
-  } catch (err) {
-    console.warn('Could not sync ministry member_count after leaving team:', err);
+  if (!supabaseIntegrationEnabled) {
+    try {
+      const refreshedRoster = await getMinistryRoster(ministry.id);
+      const activeCount = refreshedRoster.filter(entry => entry.status !== 'inactive').length;
+      await supabase
+        .from('ministries')
+        .update({ member_count: activeCount })
+        .eq('id', ministry.id);
+    } catch (err) {
+      console.warn('Could not sync ministry member_count after leaving team:', err);
+    }
   }
 
   const memberName = `${profile.first_name} ${profile.last_name}`.trim();

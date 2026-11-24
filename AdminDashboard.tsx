@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, FinancialRecord, ChurchEvent, EventRegistration, EventCategory, EventTargetAudience, GivingConfig, EventRecurrence, EventOccurrence, OccurrenceOverride, EventRecurrenceRuleConfig, MonthRecurrenceOverride, ChurchProfile, MembershipStatus, PortalAccountStatus } from './types';
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { MemberTransfersAdminTab } from './MemberTransfersAdminTab';
@@ -36,7 +37,16 @@ import {
 } from './churchProfileService';
 import { getMembers, hasPortalAccess, registerUnifiedMember, updateUnifiedMember, updatePortalAccountStatus, enablePortalAccess, type PortalInvitationInfo } from './memberService';
 import { getProfileRoleData, assignProfileRole, deactivateProfileRoleAssignment, type SystemRole, type ProfileRoleAssignment } from './profileRoleAssignmentService';
-import { getMinistryRoster, addMinistryMember, updateMinistryMember, removeMinistryMember, ensureMinistryLeaderInRoster } from './ministryMemberService';
+import {
+  getMinistriesList,
+  getMinistryRoster,
+  addMinistryMember,
+  updateMinistryMember,
+  removeMinistryMember,
+  ensureMinistryLeaderInRoster,
+  isMemberEligibleForRoster,
+  isMemberCompatibleWithMinistryBranch
+} from './ministryMemberService';
 import {
   getAllJoinRequests,
   approveMinistryJoinRequest,
@@ -2205,6 +2215,8 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const [editRosterStatusInput, setEditRosterStatusInput] = useState<'active' | 'in_training' | 'on_leave'>('active');
   const [rosterNotice, setRosterNotice] = useState<string | null>(null);
   const [rosterSuccessNotice, setRosterSuccessNotice] = useState<string | null>(null);
+  const [ministryFormError, setMinistryFormError] = useState<string | null>(null);
+  const [rosterBusy, setRosterBusy] = useState(false);
 
   // Join requests review state
   const [allJoinRequests, setAllJoinRequests] = useState<MinistryJoinRequest[]>(() => getAllJoinRequests());
@@ -2220,17 +2232,19 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const [adminReviewBusy, setAdminReviewBusy] = useState(false);
 
   const fetchMinistriesAndProfiles = async () => {
-    const [minRes, profRes, memberResult] = await Promise.all([
-      supabase.from('ministries').select('*'),
-      supabase.from('profiles').select('*').order('first_name', { ascending: true }),
-      getMembers().catch(error => {
-        console.error('Unable to load ministry membership directory:', error);
-        return [];
-      })
-    ]);
-    if (minRes.data) setMinistries(minRes.data as Ministry[]);
-    if (profRes.data) setProfiles(profRes.data as Profile[]);
-    setChurchMembers(memberResult.filter(member => (member.membership_status || 'active') === 'active'));
+    try {
+      const [minList, memberResult] = await Promise.all([
+        getMinistriesList(),
+        getMembers()
+      ]);
+      setMinistries(minList);
+      const eligible = memberResult.filter(isMemberEligibleForRoster);
+      setProfiles(eligible);
+      setChurchMembers(eligible);
+    } catch (error: any) {
+      console.error('Unable to load ministry membership directory:', error);
+      setRosterNotice(error?.message || 'Unable to load ministries and member directory.');
+    }
   };
 
   useEffect(() => {
@@ -2255,71 +2269,32 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [adminReviewingReq, adminReviewBusy]);
 
+  const mapRosterEntries = (entries: Awaited<ReturnType<typeof getMinistryRoster>>) =>
+    entries.map(entry => ({
+      id: entry.id,
+      membership_assignment_id: entry.id,
+      member_id: entry.member_id,
+      name: `${entry.member.first_name} ${entry.member.last_name}`,
+      duty: entry.duty,
+      email: entry.member.email || '',
+      phone: entry.member.phone || '',
+      avatar_url: entry.member.avatar_url || '',
+      role: entry.role_title,
+      status: entry.status
+    }));
+
   const loadDeptRoster = async (ministry: Ministry) => {
     const persistedRoster = await getMinistryRoster(ministry.id);
-    if (persistedRoster.length > 0) {
-      return persistedRoster.map(entry => ({
-        id: entry.id,
-        membership_assignment_id: entry.id,
-        member_id: entry.member_id,
-        name: `${entry.member.first_name} ${entry.member.last_name}`,
-        duty: entry.duty,
-        email: entry.member.email || '',
-        phone: entry.member.phone || '',
-        avatar_url: entry.member.avatar_url || '',
-        role: entry.role_title,
-        status: entry.status
-      }));
-    }
+    return mapRosterEntries(persistedRoster);
+  };
 
-    // Read legacy browser rosters once as a compatibility fallback against canonical profiles.
-    try {
-      const raw = localStorage.getItem(`fc_dept_roster_${ministry.name}`);
-      if (raw) {
-        const legacyRoster = JSON.parse(raw);
-        if (Array.isArray(legacyRoster)) {
-          return legacyRoster.map((entry: any) => {
-            const member = churchMembers.find(item =>
-              item.id === entry.id ||
-              item.auth_user_id === entry.id ||
-              (entry.email && item.email?.toLowerCase() === String(entry.email).toLowerCase()) ||
-              `${item.first_name} ${item.last_name}`.toLowerCase() === String(entry.name || '').toLowerCase()
-            );
-            if (!member) return null;
-            return {
-              id: member.id,
-              member_id: member.id,
-              name: `${member.first_name} ${member.last_name}`,
-              duty: entry.duty || 'Department Member',
-              email: member.email || '',
-              phone: member.phone || '',
-              avatar_url: member.avatar_url || '',
-              role: entry.role || 'Team Member',
-              status: entry.status || 'active'
-            };
-          }).filter(Boolean);
-        }
-      }
-    } catch (error) {
-      console.warn('Unable to read legacy ministry roster:', error);
+  const syncMockMemberCount = async (ministry: Ministry, nextCount: number) => {
+    const updatedMin = { ...ministry, member_count: nextCount };
+    setEditingMinistry(prev => (prev && prev.id === ministry.id ? updatedMin : prev));
+    setMinistries(prev => prev.map(item => (item.id === ministry.id ? updatedMin : item)));
+    if (!supabaseIntegrationEnabled) {
+      await supabase.from('ministries').update({ member_count: nextCount }).eq('id', ministry.id);
     }
-
-    return churchMembers
-      .filter(member =>
-        member.department_name?.toLowerCase() === ministry.name.toLowerCase() ||
-        member.assigned_department?.toLowerCase() === ministry.name.toLowerCase()
-      )
-      .map(member => ({
-        id: member.id,
-        member_id: member.id,
-        name: `${member.first_name} ${member.last_name}`,
-        duty: 'Active Team Member',
-        email: member.email || '',
-        phone: member.phone || '',
-        avatar_url: member.avatar_url || '',
-        role: member.primary_role || 'member',
-        status: 'active'
-      }));
   };
 
   const handleOpenDepartmentDetail = async (m: Ministry) => {
@@ -2337,9 +2312,9 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     setAllJoinRequests(getAllJoinRequests());
     try {
       setDeptRoster(await loadDeptRoster(m));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Unable to load department membership roster:', error);
-      setRosterNotice('Unable to load this ministry roster. Please try again.');
+      setRosterNotice(error?.message || 'Unable to load this ministry roster. Please try again.');
     }
   };
 
@@ -2368,22 +2343,151 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
     );
   };
 
+  const handleAddAdminRosterMember = async () => {
+    if (!editingMinistry || !selectedRosterMemberId) return;
+    const chosen = churchMembers.find(member => member.id === selectedRosterMemberId);
+    if (!chosen) return;
+
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
+
+    if (!isMemberEligibleForRoster(chosen)) {
+      setRosterNotice('Only active church members can be assigned to a ministry roster.');
+      return;
+    }
+    if (!isMemberCompatibleWithMinistryBranch(chosen, editingMinistry)) {
+      setRosterNotice('Selected member belongs to a different branch than this ministry.');
+      return;
+    }
+    if (deptRoster.some(item => item.member_id === chosen.id)) {
+      setRosterNotice(`${chosen.first_name} ${chosen.last_name} is already on this department's roster.`);
+      return;
+    }
+
+    setRosterBusy(true);
+    try {
+      await addMinistryMember({
+        ministry_id: editingMinistry.id,
+        member_id: chosen.id,
+        role_title: 'Team Member',
+        duty: addMemberDutyInput.trim() || 'Department Member',
+        status: 'active',
+        created_by: profile?.id
+      });
+      const reloaded = await loadDeptRoster(editingMinistry);
+      setDeptRoster(reloaded);
+      await syncMockMemberCount(editingMinistry, reloaded.length);
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
+      setSelectedRosterMemberId('');
+      setAddMemberDutyInput('');
+      setRosterSuccessNotice(`Added ${chosen.first_name} ${chosen.last_name} to the ${editingMinistry.name} roster.`);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to add member to the ministry roster.');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
   const handleSaveAdminRosterEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingRosterItem) return;
-    const updated = deptRoster.map(m =>
-      m.id === editingRosterItem.id
-        ? {
-            ...m,
-            role: editRosterRoleInput.trim() || m.role,
-            duty: editRosterDutyInput.trim() || m.duty,
-            status: editRosterStatusInput
-          }
-        : m
-    );
-    await saveDeptRoster(updated);
-    setRosterSuccessNotice(`Updated role & service assignment for ${editingRosterItem.name}.`);
-    setEditingRosterItem(null);
+    if (!editingRosterItem || !editingMinistry) return;
+    if (!editingRosterItem.membership_assignment_id) {
+      setRosterNotice('This assignment cannot be edited because it lacks a persisted roster ID.');
+      return;
+    }
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
+    setRosterBusy(true);
+    try {
+      await updateMinistryMember(editingRosterItem.membership_assignment_id, {
+        role_title: editRosterRoleInput.trim() || editingRosterItem.role || 'Team Member',
+        duty: editRosterDutyInput.trim() || editingRosterItem.duty || 'Department Member',
+        status: editRosterStatusInput
+      });
+      const reloaded = await loadDeptRoster(editingMinistry);
+      setDeptRoster(reloaded);
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
+      setRosterSuccessNotice(`Updated role & service assignment for ${editingRosterItem.name}.`);
+      setEditingRosterItem(null);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to update ministry assignment.');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  const handleRemoveAdminRosterMember = async (mem: any) => {
+    if (!editingMinistry) return;
+    if (!mem?.membership_assignment_id) {
+      setRosterNotice('This assignment cannot be removed because it lacks a persisted roster ID.');
+      return;
+    }
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
+    setRosterBusy(true);
+    try {
+      await removeMinistryMember(mem.membership_assignment_id);
+      const reloaded = await loadDeptRoster(editingMinistry);
+      setDeptRoster(reloaded);
+      await syncMockMemberCount(editingMinistry, reloaded.length);
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
+      setRosterSuccessNotice(`Removed ${mem.name} from the ${editingMinistry.name} roster.`);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to remove member from the ministry roster.');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  const handleSaveLeaderAppointment = async () => {
+    if (!editingMinistry) return;
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
+    if (!editingMinistry.leader_id) {
+      setRosterNotice('Select an eligible congregation member before saving a leader appointment.');
+      return;
+    }
+    const chosen = profiles.find(p => p.id === editingMinistry.leader_id);
+    if (!chosen || !isMemberEligibleForRoster(chosen)) {
+      setRosterNotice('Only active church members can be appointed as a ministry leader.');
+      return;
+    }
+    if (!isMemberCompatibleWithMinistryBranch(chosen, editingMinistry)) {
+      setRosterNotice('The selected leader belongs to a different branch than this ministry.');
+      return;
+    }
+
+    setRosterBusy(true);
+    try {
+      const leaderName = `${chosen.first_name} ${chosen.last_name}`;
+      if (!supabaseIntegrationEnabled) {
+        const { error } = await supabase
+          .from('ministries')
+          .update({ leader_id: chosen.id, leader_name: leaderName })
+          .eq('id', editingMinistry.id);
+        if (error) throw error;
+      }
+      await ensureMinistryLeaderInRoster(
+        { id: editingMinistry.id, name: editingMinistry.name, leader_id: chosen.id },
+        profile?.id
+      );
+      const reloaded = await loadDeptRoster(editingMinistry);
+      setDeptRoster(reloaded);
+      const updatedMin = {
+        ...editingMinistry,
+        leader_id: chosen.id,
+        leader_name: leaderName,
+        member_count: reloaded.length
+      };
+      setEditingMinistry(updatedMin);
+      setMinistries(prev => prev.map(item => (item.id === editingMinistry.id ? updatedMin : item)));
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
+      setRosterSuccessNotice(`Appointed ${leaderName} as Department Leader on the ministry roster.`);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to save ministry leadership appointment.');
+    } finally {
+      setRosterBusy(false);
+    }
   };
 
   const openAdminApproveJoinModal = (req: MinistryJoinRequest) => {
@@ -2420,10 +2524,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
         if (editingMinistry) {
           const reloaded = await loadDeptRoster(editingMinistry);
           setDeptRoster(reloaded);
-          const updatedCount = reloaded.length;
-          const updatedMin = { ...editingMinistry, member_count: updatedCount };
-          setEditingMinistry(updatedMin);
-          setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
+          await syncMockMemberCount(editingMinistry, reloaded.length);
         }
         setAllJoinRequests(getAllJoinRequests());
         setRosterSuccessNotice(
@@ -2445,72 +2546,6 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       setRosterNotice(error?.message || 'Unable to process this join request right now.');
     } finally {
       setAdminReviewBusy(false);
-    }
-  };
-
-  const saveDeptRoster = async (updatedRoster: any[]) => {
-    if (!editingMinistry) return;
-    setRosterNotice(null);
-    try {
-      const currentAssignments = await getMinistryRoster(editingMinistry.id);
-      const updatedMemberIds = new Set(updatedRoster.map(item => item.member_id || item.id));
-      const currentByMemberId = new Map(currentAssignments.map(item => [item.member_id, item]));
-
-      for (const assignment of currentAssignments) {
-        if (!updatedMemberIds.has(assignment.member_id)) {
-          await removeMinistryMember(assignment.id);
-        }
-      }
-
-      for (const item of updatedRoster) {
-        const memberId = item.member_id || item.id;
-        if (!memberId) continue;
-        const existing = currentByMemberId.get(memberId);
-        const statusMap: Record<string, 'active' | 'on_leave' | 'in_training' | 'inactive'> = {
-          Active: 'active', 'On Leave': 'on_leave', 'In Training': 'in_training',
-          active: 'active', on_leave: 'on_leave', in_training: 'in_training', inactive: 'inactive'
-        };
-        const changes = {
-          role_title: item.role || 'Team Member',
-          duty: item.duty || 'Department Member',
-          status: statusMap[item.status] || 'active'
-        };
-        if (existing) {
-          await updateMinistryMember(existing.id, changes);
-        } else {
-          await addMinistryMember({
-            ministry_id: editingMinistry.id,
-            member_id: memberId,
-            ...changes
-          });
-        }
-      }
-
-      const savedRoster = await getMinistryRoster(editingMinistry.id);
-      const normalizedRoster = savedRoster.map(entry => ({
-        id: entry.id,
-        membership_assignment_id: entry.id,
-        member_id: entry.member_id,
-        name: `${entry.member.first_name} ${entry.member.last_name}`,
-        duty: entry.duty,
-        email: entry.member.email || '',
-        phone: entry.member.phone || '',
-        avatar_url: entry.member.avatar_url || '',
-        role: entry.role_title,
-        status: entry.status
-      }));
-      setDeptRoster(normalizedRoster);
-      const updatedCount = normalizedRoster.length;
-      const updatedMin = { ...editingMinistry, member_count: updatedCount };
-      setEditingMinistry(updatedMin);
-      setMinistries(prev => prev.map(item => item.id === editingMinistry.id ? updatedMin : item));
-      const { error } = await supabase.from('ministries')
-        .update({ member_count: updatedCount })
-        .eq('id', editingMinistry.id);
-      if (error) throw error;
-    } catch (error) {
-      console.error('Failed to save department membership roster:', error);
-      setRosterNotice('The ministry roster could not be saved. Please try again.');
     }
   };
 
@@ -2548,48 +2583,73 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
   const handleCreateMinistry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMinistry.name.trim()) return;
+    setMinistryFormError(null);
 
     const leaderProfile = profiles.find(p => p.id === newMinistry.leader_id);
+    if (leaderProfile && !isMemberEligibleForRoster(leaderProfile)) {
+      setMinistryFormError('Only active church members can be appointed as ministry leader.');
+      return;
+    }
     const leaderName = leaderProfile 
       ? `${leaderProfile.first_name} ${leaderProfile.last_name}` 
       : (newMinistry.leader_name.trim() || 'TBD');
 
     const createdItem: Ministry = {
       id: `min_${Date.now()}`,
+      branch_id: profile?.branch_id || null,
       name: newMinistry.name.trim(),
       description: newMinistry.description.trim(),
       leader_name: leaderName,
       leader_id: leaderProfile ? leaderProfile.id : undefined,
       meeting_time: newMinistry.meeting_time.trim() || 'Weekly Gathering',
-      member_count: 1,
+      member_count: leaderProfile ? 1 : 0,
       category: newMinistry.category,
       type: newMinistry.type,
       roles_and_responsibilities: newMinistry.roles.length > 0 ? newMinistry.roles : ['Department Member']
     };
 
-    await supabase.from('ministries').insert(createdItem);
-    if (createdItem.leader_id) {
-      await ensureMinistryLeaderInRoster(createdItem, profile?.id);
+    try {
+      const writeClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
+      const { error: insertError } = await writeClient.from('ministries').insert(createdItem);
+      if (insertError) throw insertError;
+      if (createdItem.leader_id) {
+        await ensureMinistryLeaderInRoster(createdItem, profile?.id);
+      }
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: createdItem.id } }));
+      setShowAddMinistryModal(false);
+      setNewMinistry({
+        name: '',
+        description: '',
+        leader_name: '',
+        leader_id: '',
+        meeting_time: '',
+        category: 'Worship',
+        type: 'service_department',
+        roles: ['Department Team Lead', 'Volunteer Coordinator', 'Service Duty Member']
+      });
+      await fetchMinistriesAndProfiles();
+    } catch (error: any) {
+      setMinistryFormError(error?.message || 'Unable to create department.');
     }
-    setShowAddMinistryModal(false);
-    setNewMinistry({
-      name: '',
-      description: '',
-      leader_name: '',
-      leader_id: '',
-      meeting_time: '',
-      category: 'Worship',
-      type: 'service_department',
-      roles: ['Department Team Lead', 'Volunteer Coordinator', 'Service Duty Member']
-    });
-    fetchMinistriesAndProfiles();
   };
 
   const handleSaveMinistryEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingMinistry) return;
+    setRosterNotice(null);
+    setRosterSuccessNotice(null);
 
     const leaderProfile = profiles.find(p => p.id === editingMinistry.leader_id);
+    if (leaderProfile && !isMemberEligibleForRoster(leaderProfile)) {
+      setRosterNotice('Only active church members can be appointed as ministry leader.');
+      return;
+    }
+    if (leaderProfile && !isMemberCompatibleWithMinistryBranch(leaderProfile, editingMinistry)) {
+      setRosterNotice('The selected leader belongs to a different branch than this ministry.');
+      return;
+    }
     const leaderName = leaderProfile 
       ? `${leaderProfile.first_name} ${leaderProfile.last_name}` 
       : (editingMinistry.leader_name || 'TBD');
@@ -2600,25 +2660,44 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
       leader_name: leaderName,
       leader_id: editingMinistry.leader_id,
       meeting_time: editingMinistry.meeting_time,
-      member_count: Number(editingMinistry.member_count) || 1,
+      member_count: Number(editingMinistry.member_count) || 0,
       category: editingMinistry.category,
       type: editingMinistry.type || 'service_department',
       roles_and_responsibilities: editingMinistry.roles_and_responsibilities || []
     };
 
-    await supabase.from('ministries').update(updatedData).eq('id', editingMinistry.id);
-    if (updatedData.leader_id) {
-      await ensureMinistryLeaderInRoster({ id: editingMinistry.id, name: updatedData.name, leader_id: updatedData.leader_id }, profile?.id);
+    try {
+      if (!supabaseIntegrationEnabled) {
+        const { error: updateError } = await supabase.from('ministries').update(updatedData).eq('id', editingMinistry.id);
+        if (updateError) throw updateError;
+      }
+      if (updatedData.leader_id) {
+        await ensureMinistryLeaderInRoster(
+          { id: editingMinistry.id, name: updatedData.name, leader_id: updatedData.leader_id },
+          profile?.id
+        );
+      }
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, { detail: { ministryId: editingMinistry.id } }));
+      setMinistries(prev => prev.map(m => m.id === editingMinistry.id ? { ...m, ...updatedData } as Ministry : m));
+      setEditingMinistry(null);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to save department changes.');
     }
-    setMinistries(prev => prev.map(m => m.id === editingMinistry.id ? { ...m, ...updatedData } as Ministry : m));
-    setEditingMinistry(null);
   };
 
   const handleDeleteMinistry = async (minId: string) => {
     if (!confirm("Are you sure you want to remove this ministry department?")) return;
-    await supabase.from('ministries').delete().eq('id', minId);
-    setMinistries(prev => prev.filter(m => m.id !== minId));
-    setEditingMinistry(null);
+    try {
+      const writeClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
+      const { error } = await writeClient.from('ministries').delete().eq('id', minId);
+      if (error) throw error;
+      setMinistries(prev => prev.filter(m => m.id !== minId));
+      setEditingMinistry(null);
+    } catch (error: any) {
+      setRosterNotice(error?.message || 'Unable to delete department.');
+    }
   };
 
   const handleAddRoleToEditing = () => {
@@ -2898,12 +2977,24 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
               </div>
               <button 
                 type="button"
-                onClick={() => setShowAddMinistryModal(false)} 
+                onClick={() => {
+                  setMinistryFormError(null);
+                  setShowAddMinistryModal(false);
+                }} 
                 className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
               >
                 <X size={20} />
               </button>
             </div>
+
+            {ministryFormError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+                <span>{ministryFormError}</span>
+                <button type="button" onClick={() => setMinistryFormError(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleCreateMinistry} className="space-y-4 text-xs">
               {/* Ministry Name & Category */}
@@ -3049,9 +3140,9 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                 >
                   <option value="">-- Select Member from Congregation Roster --</option>
-                  {profiles.map(p => (
+                  {profiles.filter(isMemberEligibleForRoster).map(p => (
                     <option key={p.id} value={p.id}>
-                      {p.first_name} {p.last_name} ({p.primary_role})
+                      {p.first_name} {p.last_name}{hasPortalAccess(p) ? ` (Portal enabled · ${p.primary_role.replace('_', ' ')})` : ' (Directory only)'}
                     </option>
                   ))}
                 </select>
@@ -3298,11 +3389,17 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                         className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                       >
                         <option value="">-- Choose Member --</option>
-                        {churchMembers.map(member => (
-                          <option key={member.id} value={member.id}>
-                            {member.first_name} {member.last_name}{hasPortalAccess(member) ? ` (${member.primary_role.replace('_', ' ')})` : ' (Directory only)'}
-                          </option>
-                        ))}
+                        {churchMembers
+                          .filter(member =>
+                            isMemberEligibleForRoster(member) &&
+                            isMemberCompatibleWithMinistryBranch(member, editingMinistry) &&
+                            !deptRoster.some(item => item.member_id === member.id)
+                          )
+                          .map(member => (
+                            <option key={member.id} value={member.id}>
+                              {member.first_name} {member.last_name}{hasPortalAccess(member) ? ` (Portal enabled · ${member.primary_role.replace('_', ' ')})` : ' (Directory only)'}
+                            </option>
+                          ))}
                       </select>
                     </div>
 
@@ -3323,35 +3420,8 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                   <div className="flex justify-end pt-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!selectedRosterMemberId) return;
-                        const chosen = churchMembers.find(member => member.id === selectedRosterMemberId);
-                        if (!chosen) return;
-
-                        const exists = deptRoster.some(item => item.member_id === chosen.id);
-                        if (exists) {
-                          setRosterNotice(`${chosen.first_name} ${chosen.last_name} is already on this department's roster.`);
-                          return;
-                        }
-
-                        setRosterNotice(null);
-                        const newItem = {
-                          id: chosen.id,
-                          member_id: chosen.id,
-                          name: `${chosen.first_name} ${chosen.last_name}`,
-                          duty: addMemberDutyInput.trim() || 'Department Member',
-                          email: chosen.email || '',
-                          phone: chosen.phone || '',
-                          avatar_url: chosen.avatar_url || '',
-                          role: chosen.primary_role || 'Team Member',
-                          status: 'active'
-                        };
-
-                        saveDeptRoster([...deptRoster, newItem]);
-                        setSelectedRosterMemberId('');
-                        setAddMemberDutyInput('');
-                      }}
-                      disabled={!selectedRosterMemberId}
+                      onClick={handleAddAdminRosterMember}
+                      disabled={!selectedRosterMemberId || rosterBusy}
                       className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
                     >
                       <UserPlus size={14} />
@@ -3625,12 +3695,10 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                const updated = deptRoster.filter(m => m.id !== mem.id);
-                                saveDeptRoster(updated);
-                              }}
+                              disabled={rosterBusy}
+                              onClick={() => handleRemoveAdminRosterMember(mem)}
                               title="Remove member from department"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer transition-colors disabled:opacity-50"
                             >
                               <Trash2 size={15} />
                             </button>
@@ -3646,6 +3714,24 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
             {/* TAB 2: LEADERSHIP STRUCTURE */}
             {detailModalTab === 'leadership' && (
               <div className="space-y-5 animate-in fade-in duration-150">
+                {rosterSuccessNotice && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+                    <span>{rosterSuccessNotice}</span>
+                    <button type="button" onClick={() => setRosterSuccessNotice(null)} className="text-emerald-600 hover:text-emerald-800 cursor-pointer">
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {rosterNotice && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+                    <span>{rosterNotice}</span>
+                    <button type="button" onClick={() => setRosterNotice(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer">
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
                 {/* Primary Leader Panel */}
                 <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -3653,7 +3739,7 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                       <Award size={18} className="text-amber-600" />
                       Primary Department Head / Leader
                     </span>
-                    <span className="text-[10px] text-amber-800 font-bold">Main Supervisor</span>
+                    <span className="text-[10px] text-amber-800 font-bold">Ministry Roster Appointment</span>
                   </div>
 
                   {(() => {
@@ -3672,27 +3758,42 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
                     );
                   })()}
 
-                  <div className="space-y-1.5 pt-1">
-                    <label className="text-[10px] font-bold text-amber-900 block">Reassign Primary Leader from Roster:</label>
-                    <select 
-                      value={editingMinistry.leader_id || ''}
-                      onChange={(e) => {
-                        const chosen = profiles.find(p => p.id === e.target.value);
-                        setEditingMinistry({
-                          ...editingMinistry,
-                          leader_id: e.target.value,
-                          leader_name: chosen ? `${chosen.first_name} ${chosen.last_name}` : editingMinistry.leader_name
-                        });
-                      }}
-                      className="w-full p-2.5 bg-white border border-amber-200 rounded-xl font-bold text-xs text-slate-900 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
-                    >
-                      <option value="">-- Select Leader from Congregation --</option>
-                      {profiles.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.first_name} {p.last_name} ({p.primary_role.replace('_', ' ')})
-                        </option>
-                      ))}
-                    </select>
+                  <div className="space-y-2 pt-1">
+                    <label className="text-[10px] font-bold text-amber-900 block">Reassign Primary Leader from Registered Members:</label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <select 
+                        value={editingMinistry.leader_id || ''}
+                        onChange={(e) => {
+                          const chosen = profiles.find(p => p.id === e.target.value);
+                          setEditingMinistry({
+                            ...editingMinistry,
+                            leader_id: e.target.value,
+                            leader_name: chosen ? `${chosen.first_name} ${chosen.last_name}` : editingMinistry.leader_name
+                          });
+                        }}
+                        className="flex-1 p-2.5 bg-white border border-amber-200 rounded-xl font-bold text-xs text-slate-900 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                      >
+                        <option value="">-- Select Leader from Congregation --</option>
+                        {profiles
+                          .filter(p => isMemberEligibleForRoster(p) && isMemberCompatibleWithMinistryBranch(p, editingMinistry))
+                          .map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.first_name} {p.last_name}{hasPortalAccess(p) ? ` (Portal enabled · ${p.primary_role.replace('_', ' ')})` : ' (Directory only)'}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!editingMinistry.leader_id || rosterBusy}
+                        onClick={handleSaveLeaderAppointment}
+                        className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        Save Leader Appointment
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-amber-900/90 leading-relaxed">
+                      Ministry leadership appointments are saved on the ministry roster and do not grant system or portal permissions. Manage system access in Roles &amp; Permissions.
+                    </p>
                   </div>
                 </div>
 
@@ -3773,6 +3874,14 @@ const MinistriesAdminTab = ({ profile }: { profile?: Profile | null }) => {
             {/* TAB 3: DEPARTMENT SETTINGS */}
             {detailModalTab === 'settings' && (
               <form onSubmit={handleSaveMinistryEdit} className="space-y-5 text-xs animate-in fade-in duration-150">
+                {rosterNotice && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+                    <span>{rosterNotice}</span>
+                    <button type="button" onClick={() => setRosterNotice(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer">
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
                 {/* Title & Category */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>

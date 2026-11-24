@@ -190,6 +190,7 @@ export interface ChatMessage {
 
 export interface Ministry {
   id: string;
+  branch_id?: string | null;
   name: string;
   description: string;
   leader_name: string;
@@ -197,7 +198,9 @@ export interface Ministry {
   meeting_time: string;
   member_count: number;
   category: string;
+  entity_type?: 'ministry' | 'department' | 'fellowship';
   type?: 'social_fellowship' | 'service_department';
+  status?: 'active' | 'inactive' | 'archived';
   roles_and_responsibilities?: string[];
 }
 
@@ -675,6 +678,7 @@ export interface MinistryMember {
   status: 'active' | 'on_leave' | 'in_training' | 'inactive';
   joined_at: string;
   created_by?: string;
+  created_by_profile_id?: string | null;
 }
 
 export type MinistryJoinRequestStatus = 'pending' | 'approved' | 'declined' | 'withdrawn';

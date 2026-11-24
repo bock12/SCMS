@@ -71,11 +71,16 @@ import {
 } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
 import {
+  getMinistriesList,
   getMinistryRoster,
+  getMemberMinistryAffiliations,
   addMinistryMember,
   updateMinistryMember,
   removeMinistryMember,
   resolveMemberMinistryStatus,
+  isMemberEligibleForRoster,
+  isMemberCompatibleWithMinistryBranch,
+  type MemberMinistryAffiliation,
   type ResolvedMinistryMembership
 } from './ministryMemberService';
 import {
@@ -1760,6 +1765,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [affiliationsByMemberId, setAffiliationsByMemberId] = useState<Record<string, MemberMinistryAffiliation[]>>({});
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Unified Modals State
@@ -1804,6 +1810,17 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
 
   useEffect(() => {
     loadDirectory();
+    const handleRosterSync = () => {
+      getMemberMinistryAffiliations()
+        .then(setAffiliationsByMemberId)
+        .catch(() => {});
+    };
+    window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleRosterSync);
+    window.addEventListener('storage', handleRosterSync);
+    return () => {
+      window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleRosterSync);
+      window.removeEventListener('storage', handleRosterSync);
+    };
   }, []);
 
   const loadDirectory = async () => {
@@ -1812,11 +1829,16 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
       const branchClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
         ? supabaseDataClient
         : supabase;
-      const [directoryRows, branchRes] = await Promise.all([
+      const [directoryRows, branchRes, affiliations] = await Promise.all([
         getMembers(),
-        branchClient.from('church_branches').select('*').order('name', { ascending: true })
+        branchClient.from('church_branches').select('*').order('name', { ascending: true }),
+        getMemberMinistryAffiliations().catch(err => {
+          console.warn('Unable to load ministry affiliations for directory:', err);
+          return {} as Record<string, MemberMinistryAffiliation[]>;
+        })
       ]);
       setMembers(directoryRows);
+      setAffiliationsByMemberId(affiliations);
       if (branchRes.data) setBranches(branchRes.data as ChurchBranch[]);
     } catch (error) {
       console.error('Unable to load unified member directory:', error);
@@ -1974,10 +1996,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleTogglePortalSuspend = async (person: Profile) => {
-    if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-      showToast('error', 'Portal account changes require the secure member administration API, which is not yet enabled in the live database.');
-      return;
-    }
     const currentStatus = person.status || 'active';
     const nextStatus: PortalAccountStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
     try {
@@ -2012,10 +2030,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleEnablePortalFromCard = async (person: Profile) => {
-    if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-      showToast('error', 'Portal invitations must be created by the secure server-side provisioning workflow; this action is not yet enabled.');
-      return;
-    }
     if (!person.email?.trim()) {
       openEditModal(person);
       setFormEnablePortal(true);
@@ -2038,10 +2052,6 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const handleDisablePortalFromCard = async (person: Profile) => {
-    if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
-      showToast('error', 'Portal revocation requires the secure server-side provisioning workflow; this action is not yet enabled.');
-      return;
-    }
     try {
       const updated = await disablePortalAccess(person.id);
       setMembers(prev => prev.map(p => (p.id === person.id ? updated : p)));
@@ -2293,6 +2303,16 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       <span className="text-slate-400 font-semibold w-14">Branch:</span>
                       <span className="text-slate-700 truncate">{branchNameById.get(person.branch_id) || 'Main Campus'}</span>
                     </p>
+                    {(affiliationsByMemberId[person.id] || []).length > 0 && (
+                      <p className="flex items-center gap-2 truncate">
+                        <span className="text-slate-400 font-semibold w-14">Teams:</span>
+                        <span className="text-indigo-700 font-semibold truncate">
+                          {(affiliationsByMemberId[person.id] || [])
+                            .map(a => (a.is_leader ? `${a.ministry_name} (Leader)` : a.ministry_name))
+                            .join(' · ')}
+                        </span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -2432,6 +2452,38 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                 </span>
               </div>
               <div className="flex justify-between"><span className="text-slate-400">Membership Since:</span> <span className="font-bold">{viewingPerson.membership_date || new Date(viewingPerson.created_at).toLocaleDateString()}</span></div>
+            </div>
+
+            <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-indigo-950 uppercase tracking-wider text-[10px]">
+                  Ministries &amp; Appointments
+                </span>
+                <span className="text-[10px] font-semibold text-indigo-700">
+                  {(affiliationsByMemberId[viewingPerson.id] || []).length} Active
+                </span>
+              </div>
+              {(affiliationsByMemberId[viewingPerson.id] || []).length === 0 ? (
+                <p className="text-[11px] text-slate-500">
+                  No active ministry or department roster assignments yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-indigo-100">
+                  {affiliationsByMemberId[viewingPerson.id].map(aff => (
+                    <div key={aff.assignment_id} className="py-1.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 truncate">{aff.ministry_name}</p>
+                        <p className="text-[11px] text-slate-500 truncate">
+                          {aff.role_title}{aff.duty ? ` · ${aff.duty}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-extrabold uppercase text-indigo-700 whitespace-nowrap">
+                        {aff.is_leader ? 'Leader' : aff.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="pt-2 flex justify-end gap-2">
@@ -2690,11 +2742,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       3. Portal Account (Optional)
                     </h4>
                     <p className="text-[11px] text-indigo-700 mt-0.5">
-                      {supabaseIntegrationEnabled && supabaseAuthEnabled
-                        ? 'Live portal invitations are not enabled yet. Create or edit the member without changing portal access.'
-                        : formEnablePortal
-                          ? 'Portal login will be linked via an activation invite (no password stored on profile).'
-                          : 'Directory record only—no portal login or auth user will be created.'}
+                      {formEnablePortal
+                        ? 'Portal login will be linked via an activation invite (no password stored on profile).'
+                        : 'Directory record only—no portal login or auth user will be created.'}
                     </p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer font-bold text-indigo-950 shrink-0">
@@ -2702,8 +2752,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                       type="checkbox" 
                       checked={formEnablePortal} 
                       onChange={e => setFormEnablePortal(e.target.checked)} 
-                      disabled={supabaseIntegrationEnabled && supabaseAuthEnabled}
-                      className="w-4 h-4 text-indigo-600 rounded disabled:opacity-50"
+                      className="w-4 h-4 text-indigo-600 rounded"
                     />
                     <span>Enable Portal Access</span>
                   </label>
@@ -2713,7 +2762,12 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
                       <label className="font-bold text-slate-600 uppercase block mb-1">Portal Role</label>
-                      <select disabled={supabaseIntegrationEnabled && supabaseAuthEnabled} value={formRole} onChange={e => setFormRole(e.target.value as AppRole)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold disabled:opacity-50">
+                      <select
+                        disabled={supabaseIntegrationEnabled && supabaseAuthEnabled}
+                        value={formRole}
+                        onChange={e => setFormRole(e.target.value as AppRole)}
+                        className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold disabled:opacity-60"
+                      >
                         <option value="member">Member</option>
                         <option value="worker">Worker</option>
                         <option value="leader">Leader (Dept Lead)</option>
@@ -2723,10 +2777,19 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                         <option value="district_admin">District Admin</option>
                         <option value="super_admin">Super Admin</option>
                       </select>
+                      {supabaseIntegrationEnabled && supabaseAuthEnabled && (
+                        <p className="text-[10px] text-indigo-700 mt-1">
+                          System role permissions are managed separately in Governance Roles &amp; Permissions.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="font-bold text-slate-600 uppercase block mb-1">Portal Account Status</label>
-                      <select disabled={supabaseIntegrationEnabled && supabaseAuthEnabled} value={formPortalStatus} onChange={e => setFormPortalStatus(e.target.value as PortalAccountStatus)} className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold disabled:opacity-50">
+                      <select
+                        value={formPortalStatus}
+                        onChange={e => setFormPortalStatus(e.target.value as PortalAccountStatus)}
+                        className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl outline-none font-semibold"
+                      >
                         <option value="active">Active</option>
                         <option value="suspended">Suspended</option>
                         <option value="archived">Archived</option>
@@ -2819,12 +2882,15 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     setLoadingMinistries(true);
     setLoadError(null);
     try {
-      const [{ data: minData, error: minErr }, { data: mmData }] = await Promise.all([
-        supabase.from('ministries').select('*'),
-        supabase.from('ministry_members').select('*')
+      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
+      const [minList, { data: mmData, error: mmErr }] = await Promise.all([
+        getMinistriesList(),
+        readClient.from('ministry_members').select('*')
       ]);
-      if (minErr) throw minErr;
-      if (minData) setMinistries(minData as Ministry[]);
+      if (mmErr) throw mmErr;
+      setMinistries(minList);
       if (Array.isArray(mmData)) {
         setAllActiveMemberships((mmData as MinistryMember[]).filter(m => m.status !== 'inactive'));
       }
@@ -2848,7 +2914,10 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const syncFreshProfile = async (memberId?: string) => {
     if (!memberId) return;
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', memberId).maybeSingle();
+      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
+      const { data } = await readClient.from('profiles').select('*').eq('id', memberId).maybeSingle();
       if (data) setFreshProfile(data as Profile);
     } catch {
       // Keep current profile snapshot
@@ -2864,24 +2933,24 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 
   useEffect(() => {
     const handleSync = () => {
+      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+        ? supabaseDataClient
+        : supabase;
       if (profile?.id) {
         setMyJoinRequests(getJoinRequestsForMember(profile.id));
         syncFreshProfile(profile.id);
       }
-      supabase
+      readClient
         .from('ministry_members')
         .select('*')
-        .then(({ data }) => {
+        .then(({ data }: any) => {
           if (Array.isArray(data)) {
             setAllActiveMemberships((data as MinistryMember[]).filter(m => m.status !== 'inactive'));
           }
         });
-      supabase
-        .from('ministries')
-        .select('*')
-        .then(({ data }) => {
-          if (data) setMinistries(data as Ministry[]);
-        });
+      getMinistriesList()
+        .then(setMinistries)
+        .catch(() => {});
     };
     window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleSync);
     window.addEventListener('profile-updated', handleSync);
@@ -4748,30 +4817,28 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [newNoticeText, setNewNoticeText] = useState('');
 
   useEffect(() => {
-    supabase
-      .from('ministries')
-      .select('*')
-      .then(({ data }) => {
-        if (data) {
-          const list = data as Ministry[];
-          setDbMinistries(list);
-          if (
-            !canSwitchDepts &&
-            profile &&
-            !(profile as any)?.assigned_department &&
-            !(profile as any)?.department_name
-          ) {
-            const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim().toLowerCase();
-            const ledMinistry = list.find(
-              m =>
-                (m.leader_id && m.leader_id === profile.id) ||
-                (fullName && (m.leader_name || '').trim().toLowerCase() === fullName)
-            );
-            if (ledMinistry?.name) {
-              setActiveDept(ledMinistry.name);
-            }
+    getMinistriesList()
+      .then(list => {
+        setDbMinistries(list);
+        if (
+          !canSwitchDepts &&
+          profile &&
+          !(profile as any)?.assigned_department &&
+          !(profile as any)?.department_name
+        ) {
+          const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim().toLowerCase();
+          const ledMinistry = list.find(
+            m =>
+              (m.leader_id && m.leader_id === profile.id) ||
+              (fullName && (m.leader_name || '').trim().toLowerCase() === fullName)
+          );
+          if (ledMinistry?.name) {
+            setActiveDept(ledMinistry.name);
           }
         }
+      })
+      .catch(err => {
+        console.error('Unable to load ministries for Leader Console:', err);
       });
   }, [canSwitchDepts, profile?.id]);
 
@@ -4807,39 +4874,9 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     };
   }, [activeDept, activeMinistryObj?.id, activeMinistryObj?.name]);
 
-  // Department Roster State & localStorage + ministry_members Persistence
-  const getInitialDeptRoster = (deptName: string) => {
-    const saved = localStorage.getItem(`fc_roster_${deptName}`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        console.error('Error parsing roster:', e);
-      }
-    }
-
-    if (deptName.includes('Media')) {
-      return [
-        { id: 'r-1', name: 'David Koroma', role: 'Media Team Lead', status: 'Active', duty: 'Sanctuary Main Stream Switcher', email: 'dkoroma@gracecathedral.org', phone: '+232 76 123456', joined_date: '2023-04-12' },
-        { id: 'r-2', name: 'Samuel Cole', role: 'Audio Engineer Lead', status: 'Active', duty: 'FOH Sound Desk & Wireless Mics', email: 'scole@gracecathedral.org', phone: '+232 77 987654', joined_date: '2023-08-15' },
-        { id: 'r-3', name: 'Emmanuel Peters', role: 'Graphics & Slide Operator', status: 'Active', duty: 'Sanctuary Projection & Livestream Overlays', email: 'epeters@gmail.com', phone: '+232 78 456789', joined_date: '2024-01-10' }
-      ];
-    } else if (deptName.includes('Choir') || deptName.includes('Voices')) {
-      return [
-        { id: 'r-1', name: 'Hannah Adams', role: 'Worship Director', status: 'Active', duty: 'Sunday 1st Service Lead', email: 'hadams@gracecathedral.org', phone: '+232 76 555123', joined_date: '2022-11-01' },
-        { id: 'r-2', name: 'Grace Campbell', role: 'Soprano Lead', status: 'Active', duty: 'Sunday 2nd Service Choir', email: 'gcampbell@gmail.com', phone: '+232 77 111222', joined_date: '2023-02-14' },
-        { id: 'r-3', name: 'Michael Turay', role: 'Main Keyboardist', status: 'Active', duty: 'Choir Rehearsal & Service Band', email: 'mturay@gmail.com', phone: '+232 78 999888', joined_date: '2023-06-20' }
-      ];
-    } else {
-      return [
-        { id: 'r-1', name: 'David Koroma', role: `${deptName} Lead`, status: 'Active', duty: 'Ministry Operations & Logistics', email: 'dkoroma@gracecathedral.org', phone: '+232 76 123456', joined_date: '2023-01-15' },
-        { id: 'r-2', name: 'Sarah Bangura', role: 'Assistant Coordinator', status: 'Active', duty: 'Sunday Roster Scheduling', email: 'sbangura@gmail.com', phone: '+232 77 222333', joined_date: '2023-05-10' }
-      ];
-    }
-  };
-
-  const [deptRoster, setDeptRoster] = useState<any[]>(() => getInitialDeptRoster(activeDept));
+  // Department Roster State — strictly sourced from canonical `ministry_members` + `profiles`
+  const [deptRoster, setDeptRoster] = useState<any[]>([]);
+  const [rosterActionError, setRosterActionError] = useState<string | null>(null);
 
   const formatRosterStatusLabel = (status: string): 'Active' | 'On Leave' | 'In Training' => {
     if (status === 'on_leave' || status === 'On Leave') return 'On Leave';
@@ -4848,17 +4885,13 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   };
 
   const loadSyncedDeptRoster = async () => {
-    const fallback = getInitialDeptRoster(activeDept);
     if (!activeMinistryObj?.id) {
-      setDeptRoster(fallback);
+      setDeptRoster([]);
       return;
     }
     try {
+      setRosterActionError(null);
       const persisted = await getMinistryRoster(activeMinistryObj.id);
-      if (persisted.length === 0) {
-        setDeptRoster(fallback);
-        return;
-      }
       const mappedPersisted = persisted
         .filter(entry => entry.status !== 'inactive')
         .map(entry => ({
@@ -4871,20 +4904,16 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           duty: entry.duty || 'Department Member',
           email: entry.member.email || '',
           phone: entry.member.phone || '',
+          branch_id: entry.member.branch_id,
+          membership_status: entry.member.membership_status || 'active',
+          portal_enabled: hasPortalAccess(entry.member),
           joined_date: (entry.joined_at || '').slice(0, 10)
         }));
-      const persistedIds = new Set(mappedPersisted.map(m => m.member_id));
-      const persistedNames = new Set(mappedPersisted.map(m => m.name.toLowerCase()));
-      const merged = [
-        ...mappedPersisted,
-        ...fallback.filter(
-          f => !persistedIds.has(f.id) && !persistedNames.has((f.name || '').toLowerCase())
-        )
-      ];
-      setDeptRoster(merged);
-    } catch (err) {
-      console.warn('Unable to sync ministry_members roster:', err);
-      setDeptRoster(fallback);
+      setDeptRoster(mappedPersisted);
+    } catch (err: any) {
+      console.error('Unable to load ministry_members roster:', err);
+      setRosterActionError(err?.message || 'Unable to load the department roster from the database.');
+      setDeptRoster([]);
     }
   };
 
@@ -4927,12 +4956,6 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [reviewingJoinReq, reviewSubmitting]);
 
-  const updateDeptRoster = (newRoster: any[]) => {
-    setDeptRoster(newRoster);
-    localStorage.setItem(`fc_roster_${activeDept}`, JSON.stringify(newRoster));
-    window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
-  };
-
   // View Member Modal state
   const [viewingRosterMember, setViewingRosterMember] = useState<any | null>(null);
 
@@ -4944,6 +4967,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [editRosterStatus, setEditRosterStatus] = useState<'Active' | 'On Leave' | 'In Training'>('Active');
   const [editRosterEmail, setEditRosterEmail] = useState('');
   const [editRosterPhone, setEditRosterPhone] = useState('');
+  const [editRosterError, setEditRosterError] = useState<string | null>(null);
 
   // Add/Appoint Member Modal state
   const [showAddRosterModal, setShowAddRosterModal] = useState(false);
@@ -4953,6 +4977,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [addRosterStatus, setAddRosterStatus] = useState<'Active' | 'On Leave' | 'In Training'>('Active');
   const [addRosterEmail, setAddRosterEmail] = useState('');
   const [addRosterPhone, setAddRosterPhone] = useState('');
+  const [addRosterError, setAddRosterError] = useState<string | null>(null);
 
   // Registered Congregation Members Directory
   const [congregationMembers, setCongregationMembers] = useState<Profile[]>([]);
@@ -4971,7 +4996,15 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     return () => { isMounted = false; };
   }, []);
 
+  const eligibleCongregationMembers = congregationMembers.filter(
+    member =>
+      isMemberEligibleForRoster(member) &&
+      isMemberCompatibleWithMinistryBranch(member, activeMinistryObj) &&
+      !deptRoster.some(entry => entry.member_id === member.id)
+  );
+
   const openEditRosterMember = (member: any) => {
+    setEditRosterError(null);
     setEditingRosterMember(member);
     setEditRosterName(member.name || '');
     setEditRosterRole(member.role || '');
@@ -4989,40 +5022,34 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
   const handleSaveRosterEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingRosterMember || !editRosterName.trim()) return;
-
-    if (editingRosterMember.assignment_id) {
-      try {
-        await updateMinistryMember(editingRosterMember.assignment_id, {
-          role_title: editRosterRole.trim() || 'Team Member',
-          duty: editRosterDuty.trim() || 'Sunday Duty',
-          status: mapUiStatusToDb(editRosterStatus)
-        });
-      } catch (err) {
-        console.warn('Could not update persisted ministry_members entry:', err);
-      }
+    if (!editingRosterMember) return;
+    if (!editingRosterMember.assignment_id) {
+      setEditRosterError('This roster entry is missing its persisted assignment identifier.');
+      return;
     }
 
-    const updated = deptRoster.map(m => m.id === editingRosterMember.id ? {
-      ...m,
-      name: editRosterName.trim(),
-      role: editRosterRole.trim() || 'Team Member',
-      duty: editRosterDuty.trim() || 'Sunday Duty',
-      status: editRosterStatus,
-      email: editRosterEmail.trim(),
-      phone: editRosterPhone.trim()
-    } : m);
-
-    updateDeptRoster(updated);
-    setEditingRosterMember(null);
-    setProposalSuccessToast(`Updated roster role & details for ${editRosterName.trim()}`);
-    setTimeout(() => setProposalSuccessToast(null), 4000);
+    setEditRosterError(null);
+    try {
+      await updateMinistryMember(editingRosterMember.assignment_id, {
+        role_title: editRosterRole.trim() || 'Team Member',
+        duty: editRosterDuty.trim() || 'Sunday Duty',
+        status: mapUiStatusToDb(editRosterStatus)
+      });
+      await loadSyncedDeptRoster();
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
+      setEditingRosterMember(null);
+      setProposalSuccessToast(`Updated roster role & details for ${editRosterName.trim() || editingRosterMember.name}`);
+      setTimeout(() => setProposalSuccessToast(null), 4000);
+    } catch (err: any) {
+      setEditRosterError(err?.message || 'Unable to update this ministry roster assignment.');
+    }
   };
 
   // Delete Member Modal state
   const [deletingRosterMember, setDeletingRosterMember] = useState<any | null>(null);
 
   const handleDeleteRosterMember = (member: any) => {
+    setRosterActionError(null);
     setDeletingRosterMember(member);
   };
 
@@ -5030,26 +5057,29 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     if (!deletingRosterMember) return;
     const memberId = deletingRosterMember.id;
     const memberName = deletingRosterMember.name;
-
-    if (deletingRosterMember.assignment_id) {
-      try {
-        await removeMinistryMember(deletingRosterMember.assignment_id);
-      } catch (err) {
-        console.warn('Could not remove persisted ministry_members entry:', err);
-      }
+    if (!deletingRosterMember.assignment_id) {
+      setRosterActionError('Cannot remove an unpersisted roster item.');
+      setDeletingRosterMember(null);
+      return;
     }
 
-    const updated = deptRoster.filter(m => m.id !== memberId);
-    updateDeptRoster(updated);
-    if (viewingRosterMember?.id === memberId) setViewingRosterMember(null);
-    if (editingRosterMember?.id === memberId) setEditingRosterMember(null);
-    setDeletingRosterMember(null);
-
-    setProposalSuccessToast(`Removed ${memberName} from ${activeDept} roster.`);
-    setTimeout(() => setProposalSuccessToast(null), 4000);
+    try {
+      await removeMinistryMember(deletingRosterMember.assignment_id);
+      await loadSyncedDeptRoster();
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
+      if (viewingRosterMember?.id === memberId) setViewingRosterMember(null);
+      if (editingRosterMember?.id === memberId) setEditingRosterMember(null);
+      setDeletingRosterMember(null);
+      setProposalSuccessToast(`Removed ${memberName} from ${activeDept} roster.`);
+      setTimeout(() => setProposalSuccessToast(null), 4000);
+    } catch (err: any) {
+      setRosterActionError(err?.message || `Unable to remove ${memberName} from ${activeDept}.`);
+      setDeletingRosterMember(null);
+    }
   };
 
   const openAddRosterModal = () => {
+    setAddRosterError(null);
     setSelectedCongregationMemberId('');
     setAddRosterName('');
     setAddRosterRole('');
@@ -5062,51 +5092,47 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
 
   const handleAddRosterMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addRosterName.trim()) return;
+    setAddRosterError(null);
+
+    if (!activeMinistryObj?.id) {
+      setAddRosterError('No active ministry record matches this department yet. Create or select a ministry in Admin first.');
+      return;
+    }
+    if (!selectedCongregationMemberId) {
+      setAddRosterError('Select a registered church member from the Member Directory.');
+      return;
+    }
+
+    const chosenMember = congregationMembers.find(p => p.id === selectedCongregationMemberId);
+    if (!chosenMember || !isMemberEligibleForRoster(chosenMember)) {
+      setAddRosterError('Only active congregation members can be appointed to a ministry roster.');
+      return;
+    }
+    if (!isMemberCompatibleWithMinistryBranch(chosenMember, activeMinistryObj)) {
+      setAddRosterError('This member belongs to a different branch than the selected ministry.');
+      return;
+    }
 
     const roleTitle = addRosterRole.trim() || 'Team Member';
     const dutyText = addRosterDuty.trim() || 'General Ministry Duty';
-    const cleanEmail = addRosterEmail.trim().toLowerCase();
-    const matchedProfile = selectedCongregationMemberId
-      ? congregationMembers.find(p => p.id === selectedCongregationMemberId)
-      : congregationMembers.find(p => cleanEmail && p.email?.trim().toLowerCase() === cleanEmail);
-    const resolvedMemberId = selectedCongregationMemberId || matchedProfile?.id || '';
-    let assignmentId: string | undefined;
 
-    if (resolvedMemberId && activeMinistryObj?.id) {
-      try {
-        const saved = await addMinistryMember({
-          ministry_id: activeMinistryObj.id,
-          member_id: resolvedMemberId,
-          role_title: roleTitle,
-          duty: dutyText,
-          status: mapUiStatusToDb(addRosterStatus),
-          created_by: profile?.id
-        });
-        assignmentId = saved.id;
-      } catch (err) {
-        console.warn('Could not persist congregation roster assignment:', err);
-      }
+    try {
+      await addMinistryMember({
+        ministry_id: activeMinistryObj.id,
+        member_id: chosenMember.id,
+        role_title: roleTitle,
+        duty: dutyText,
+        status: mapUiStatusToDb(addRosterStatus),
+        created_by: profile?.id
+      });
+      await loadSyncedDeptRoster();
+      window.dispatchEvent(new CustomEvent(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT));
+      setShowAddRosterModal(false);
+      setProposalSuccessToast(`Appointed ${chosenMember.first_name} ${chosenMember.last_name} as ${roleTitle} in ${activeDept}!`);
+      setTimeout(() => setProposalSuccessToast(null), 4000);
+    } catch (err: any) {
+      setAddRosterError(err?.message || 'Unable to appoint this church member to the ministry roster.');
     }
-
-    const newMember = {
-      id: resolvedMemberId || `r_${Date.now()}`,
-      assignment_id: assignmentId,
-      member_id: resolvedMemberId || undefined,
-      name: addRosterName.trim(),
-      role: roleTitle,
-      duty: dutyText,
-      status: addRosterStatus,
-      email: addRosterEmail.trim(),
-      phone: addRosterPhone.trim(),
-      joined_date: new Date().toISOString().slice(0, 10)
-    };
-
-    const updated = [...deptRoster.filter(m => m.id !== newMember.id), newMember];
-    updateDeptRoster(updated);
-    setShowAddRosterModal(false);
-    setProposalSuccessToast(`Appointed ${addRosterName.trim()} as ${newMember.role} in ${activeDept}!`);
-    setTimeout(() => setProposalSuccessToast(null), 4000);
   };
 
   const reloadReqs = async () => {
@@ -6360,9 +6386,18 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </button>
               </div>
 
+              {rosterActionError && (
+                <div role="alert" className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center justify-between gap-2">
+                  <span>{rosterActionError}</span>
+                  <button type="button" onClick={() => setRosterActionError(null)} className="text-rose-600 hover:text-rose-800 cursor-pointer">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
               {deptRoster.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs">
-                  No appointed team members found for {activeDept}. Click "+ Appoint Team Member" to add leaders or workers!
+                  No appointed team members found for {activeDept}. Click &ldquo;Appoint Team Member&rdquo; to assign an active congregation member.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -8765,15 +8800,22 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <form onSubmit={handleSaveRosterEdit} className="space-y-4 text-xs">
+              {editRosterError && (
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold">
+                  {editRosterError}
+                </div>
+              )}
               <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Member Full Name *</label>
+                <label className="font-extrabold text-slate-700 block mb-1">Congregation Member</label>
                 <input
                   type="text"
-                  required
+                  readOnly
                   value={editRosterName}
-                  onChange={e => setEditRosterName(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none"
                 />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Personal contact details are managed on the central Member Directory record.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -8815,30 +8857,6 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="name@gmail.com"
-                    value={editRosterEmail}
-                    onChange={e => setEditRosterEmail(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="+232 76 000000"
-                    value={editRosterPhone}
-                    onChange={e => setEditRosterPhone(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-
               <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -8871,15 +8889,13 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   return (
                     <>
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                        {isSocial ? '👥 Social Fellowship Member' : '🛠️ Service Department Volunteer'}
+                        {isSocial ? 'Social Fellowship Member' : 'Service Department Volunteer'}
                       </span>
                       <h3 className="text-xl font-black text-slate-900 mt-1">
                         {isSocial ? `Add Member to ${activeDept}` : `Add Volunteer to ${activeDept}`}
                       </h3>
                       <p className="text-xs text-slate-500">
-                        {isSocial
-                          ? 'Add a new member or leader to this social fellowship roster.'
-                          : 'Register a new volunteer or team member to this service department roster.'}
+                        Appoint an active congregation member from the Member Directory (portal access optional).
                       </p>
                     </>
                   );
@@ -8891,45 +8907,57 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
             </div>
 
             <form onSubmit={handleAddRosterMember} className="space-y-4 text-xs">
+              {addRosterError && (
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold">
+                  {addRosterError}
+                </div>
+              )}
+
               <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-2">
-                <label className="font-extrabold text-indigo-900 block">Quick Pick from Congregation Directory (Optional)</label>
+                <label className="font-extrabold text-indigo-900 block">
+                  Select Registered Congregation Member *
+                </label>
                 <select
+                  required
                   value={selectedCongregationMemberId}
                   onChange={e => {
                     const mId = e.target.value;
                     setSelectedCongregationMemberId(mId);
-                    if (mId) {
-                      const found = congregationMembers.find(m => m.id === mId);
-                      if (found) {
-                        setAddRosterName(`${found.first_name} ${found.last_name}`);
-                        setAddRosterEmail(found.email || '');
-                        setAddRosterPhone(found.phone || '');
-                      }
+                    const found = congregationMembers.find(m => m.id === mId);
+                    if (found) {
+                      setAddRosterName(`${found.first_name} ${found.last_name}`);
+                      setAddRosterEmail(found.email || '');
+                      setAddRosterPhone(found.phone || '');
+                    } else {
+                      setAddRosterName('');
+                      setAddRosterEmail('');
+                      setAddRosterPhone('');
                     }
                   }}
-                  className="w-full p-2 bg-white border border-indigo-200 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer"
+                  className="w-full p-2.5 bg-white border border-indigo-200 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer"
                 >
-                  <option value="">-- Choose registered congregation member --</option>
-                  {congregationMembers.map(m => (
+                  <option value="">-- Choose active congregation member --</option>
+                  {eligibleCongregationMembers.map(m => (
                     <option key={m.id} value={m.id}>
-                      👤 {m.first_name} {m.last_name} ({m.email || 'Member'})
+                      {m.first_name} {m.last_name} ({hasPortalAccess(m) ? 'Portal enabled' : 'Directory only'})
                     </option>
                   ))}
                 </select>
-                <p className="text-[10px] text-indigo-700 font-medium">Selecting auto-fills name and contact details. Or type details manually below!</p>
+                <p className="text-[10px] text-indigo-700 font-medium">
+                  Only active members in compatible branches appear here. Both portal-enabled and directory-only members are eligible.
+                </p>
               </div>
 
-              <div>
-                <label className="font-extrabold text-slate-700 block mb-1">Member Full Name (Manual or Auto-Filled) *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Jonathan Davis"
-                  value={addRosterName}
-                  onChange={e => setAddRosterName(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
+              {selectedCongregationMemberId && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-slate-900">{addRosterName}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {[addRosterEmail || 'No email', addRosterPhone || 'No phone'].join(' · ')}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -8970,30 +8998,6 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="jdavis@gmail.com"
-                    value={addRosterEmail}
-                    onChange={e => setAddRosterEmail(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="+232 76 123456"
-                    value={addRosterPhone}
-                    onChange={e => setAddRosterPhone(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
               <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -9004,7 +9008,8 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                  disabled={!selectedCongregationMemberId}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-extrabold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <UserPlus size={15} /> Confirm Appointment
                 </button>

@@ -2181,8 +2181,14 @@ export const supabase = {
         functionName === 'get_event_budgets') {
       return mockFinanceRpc.rpc(functionName, args);
     }
-    if (!actor) {
-      return { data: null, error: { code: '42501', message: 'An authenticated church profile is required.' } };
+    if (
+      !actor ||
+      !actor.auth_user_id ||
+      (actor.portal_access_status && actor.portal_access_status !== 'active') ||
+      actor.status === 'suspended' ||
+      actor.record_status === 'archived'
+    ) {
+      return { data: null, error: { code: '42501', message: 'An active linked church profile is required.' } };
     }
 
     const getActorAssignmentsForPermission = (permissionKey: string) =>
@@ -2577,22 +2583,28 @@ export const supabase = {
 
       let ministry: any;
       let existing: any;
+      let targetMember: any;
       if (p_action === 'add') {
         ministry = (localDb.ministries || []).find((item: any) => item.id === p_ministry_id && (item.status || 'active') === 'active');
         if (!ministry || !p_member_id) {
-          return { data: null, error: { code: '23503', message: 'The selected ministry and church member are required.' } };
+          return { data: null, error: { code: '23503', message: 'The selected ministry is unavailable or inactive.' } };
         }
-        const member = (localDb.profiles || []).find((item: any) => item.id === p_member_id);
-        if (!member || member.record_status === 'archived' || member.status === 'archived') {
-          return { data: null, error: { code: '23503', message: 'The selected church member is unavailable.' } };
+        targetMember = (localDb.profiles || []).find((item: any) => item.id === p_member_id);
+        if (
+          !targetMember ||
+          targetMember.record_status === 'archived' ||
+          (targetMember.membership_status || 'active') !== 'active'
+        ) {
+          return { data: null, error: { code: '23503', message: 'Only active church members can be assigned to a ministry roster.' } };
         }
-        if (ministry.branch_id && member.branch_id !== ministry.branch_id) {
+        if (ministry.branch_id && targetMember.branch_id !== ministry.branch_id) {
           return { data: null, error: { code: '42501', message: 'A member can only join a ministry in their assigned branch.' } };
         }
       } else {
         existing = (localDb.ministry_members || []).find((item: any) => item.id === p_assignment_id);
         ministry = (localDb.ministries || []).find((item: any) => item.id === existing?.ministry_id);
-        if (!existing || !ministry) {
+        targetMember = (localDb.profiles || []).find((item: any) => item.id === existing?.member_id);
+        if (!existing || !ministry || !targetMember) {
           return { data: null, error: { code: 'P0002', message: 'The ministry roster assignment could not be found.' } };
         }
       }
@@ -2624,6 +2636,18 @@ export const supabase = {
       }
 
       if (p_action === 'update') {
+        if ((ministry.status || 'active') !== 'active') {
+          return { data: null, error: { code: '23503', message: 'Cannot update roster assignments for an inactive or archived ministry.' } };
+        }
+        if (
+          targetMember.record_status === 'archived' ||
+          ['suspended', 'archived'].includes(targetMember.membership_status || 'active')
+        ) {
+          return { data: null, error: { code: '23503', message: 'Cannot update a suspended or archived church member on a ministry roster.' } };
+        }
+        if (ministry.branch_id && targetMember.branch_id !== ministry.branch_id) {
+          return { data: null, error: { code: '42501', message: 'A member can only maintain an active assignment in their assigned branch.' } };
+        }
         const updated = {
           ...existing,
           role_title: String(p_role_title || '').trim() || existing.role_title,
@@ -2633,6 +2657,10 @@ export const supabase = {
         localDb.ministry_members = (localDb.ministry_members || []).map((item: any) => item.id === p_assignment_id ? updated : item);
         saveLocalDatabase(localDb);
         return { data: updated, error: null };
+      }
+
+      if ((ministry.status || 'active') === 'archived') {
+        return { data: null, error: { code: '23503', message: 'Cannot remove roster assignments from an archived ministry.' } };
       }
 
       localDb.ministry_members = (localDb.ministry_members || []).filter((item: any) => item.id !== p_assignment_id);

@@ -1,14 +1,87 @@
 import type { Ministry, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
+import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
+import { mapCanonicalProfileToProfile } from './memberProfileMapper';
 
 export interface MinistryRosterEntry extends MinistryMember {
   member: Profile;
+}
+
+export interface MemberMinistryAffiliation {
+  assignment_id: string;
+  ministry_id: string;
+  ministry_name: string;
+  ministry_type?: 'social_fellowship' | 'service_department';
+  role_title: string;
+  duty: string;
+  status: MinistryMember['status'];
+  joined_at: string;
+  is_leader: boolean;
 }
 
 export interface ResolvedMinistryMembership {
   membership: MinistryMember;
   isLeader: boolean;
   source: 'roster' | 'leader' | 'department_assignment' | 'local_roster';
+}
+
+function getMinistryReadClient(): any {
+  return supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+    ? supabaseDataClient
+    : supabase;
+}
+
+function requireMinistryWriteClient(): any {
+  if (!supabaseIntegrationEnabled) {
+    return supabase;
+  }
+  if (!supabaseAuthEnabled) {
+    throw new Error('Ministry roster changes require a real Supabase Auth session.');
+  }
+  if (!supabaseDataClient) {
+    throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+  }
+  return supabaseDataClient;
+}
+
+function normalizeMinistryRow(row: any): Ministry {
+  const entityType = row.entity_type as Ministry['entity_type'];
+  const derivedType: Ministry['type'] =
+    row.type || (entityType === 'fellowship' ? 'social_fellowship' : 'service_department');
+  return {
+    ...row,
+    leader_name: row.leader_name || 'Ministry Leadership',
+    meeting_time: row.meeting_time || 'Scheduled Gathering',
+    member_count: typeof row.member_count === 'number' ? row.member_count : 0,
+    category: row.category || 'Ministry',
+    type: derivedType,
+    roles_and_responsibilities: Array.isArray(row.roles_and_responsibilities)
+      ? row.roles_and_responsibilities
+      : []
+  };
+}
+
+export function isMemberEligibleForRoster(member: Profile | null | undefined): boolean {
+  if (!member) return false;
+  return (member.membership_status || 'active') === 'active' && (member as any).record_status !== 'archived';
+}
+
+export function isMemberCompatibleWithMinistryBranch(
+  member: Pick<Profile, 'branch_id'> | null | undefined,
+  ministry: Pick<Ministry, 'branch_id'> | null | undefined
+): boolean {
+  if (!member) return false;
+  if (!ministry?.branch_id) return true;
+  return member.branch_id === ministry.branch_id;
+}
+
+export async function getMinistriesList(): Promise<Ministry[]> {
+  const client = getMinistryReadClient();
+  const { data, error } = await client.from('ministries').select('*');
+  if (error) throw error;
+  return (Array.isArray(data) ? data : [])
+    .filter((m: any) => !m.status || m.status === 'active')
+    .map(normalizeMinistryRow);
 }
 
 const LEADERSHIP_TITLES =
@@ -208,15 +281,26 @@ export function resolveMemberMinistryStatus(params: {
  * supporting all church members whether or not they have portal login access.
  */
 export async function getMinistryRoster(ministryId: string): Promise<MinistryRosterEntry[]> {
+  const client = getMinistryReadClient();
   const [{ data: assignments, error: assignmentError }, { data: profiles, error: profileError }] = await Promise.all([
-    supabase.from('ministry_members').select('*').eq('ministry_id', ministryId).order('joined_at', { ascending: true }),
-    supabase.from('profiles').select('*')
+    client.from('ministry_members').select('*').eq('ministry_id', ministryId).order('joined_at', { ascending: true }),
+    client
+      .from('profiles')
+      .select('id,auth_user_id,branch_id,first_name,last_name,email,phone,gender,avatar_url,portal_access_status,membership_status,membership_date,created_at,is_baptized,baptism_date,baptized_by_profile_id,baptized_by_name_snapshot,date_of_birth,marital_status,marriage_date')
   ]);
 
   if (assignmentError) throw assignmentError;
   if (profileError) throw profileError;
 
-  const memberById = new Map<string, Profile>((profiles || []).map((person: Profile) => [person.id, person]));
+  const memberById = new Map<string, Profile>(
+    (profiles || []).map((person: any) => {
+      const normalized = 'portal_access_status' in person
+        ? mapCanonicalProfileToProfile(person)
+        : (person as Profile);
+      return [normalized.id, normalized];
+    })
+  );
+
   return (assignments || [])
     .map((assignment: MinistryMember) => {
       const member = memberById.get(assignment.member_id);
@@ -225,10 +309,76 @@ export async function getMinistryRoster(ministryId: string): Promise<MinistryRos
     .filter((entry): entry is MinistryRosterEntry => entry !== null);
 }
 
+/**
+ * Resolves all active ministry & department affiliations (including leadership roles)
+ * keyed by canonical `profiles.id` for display in the Member Directory.
+ */
+export async function getMemberMinistryAffiliations(): Promise<Record<string, MemberMinistryAffiliation[]>> {
+  const client = getMinistryReadClient();
+  const [{ data: minRows, error: minErr }, { data: membershipRows, error: memErr }] = await Promise.all([
+    client.from('ministries').select('*'),
+    client.from('ministry_members').select('*').order('joined_at', { ascending: true })
+  ]);
+
+  if (minErr) throw minErr;
+  if (memErr) throw memErr;
+
+  const ministries = (Array.isArray(minRows) ? minRows : [])
+    .filter((m: any) => !m.status || m.status === 'active')
+    .map(normalizeMinistryRow);
+  const ministryById = new Map<string, Ministry>(ministries.map(m => [m.id, m]));
+  const result: Record<string, MemberMinistryAffiliation[]> = {};
+
+  for (const row of (Array.isArray(membershipRows) ? membershipRows : []) as MinistryMember[]) {
+    if (row.status === 'inactive') continue;
+    const ministry = ministryById.get(row.ministry_id);
+    if (!ministry) continue;
+    const isLeader =
+      ministry.leader_id === row.member_id ||
+      /\b(leader|director|head)\b/i.test(row.role_title || '');
+    const entry: MemberMinistryAffiliation = {
+      assignment_id: row.id,
+      ministry_id: ministry.id,
+      ministry_name: ministry.name,
+      ministry_type: ministry.type,
+      role_title: row.role_title || 'Team Member',
+      duty: row.duty || '',
+      status: row.status,
+      joined_at: row.joined_at,
+      is_leader: isLeader
+    };
+    result[row.member_id] = [...(result[row.member_id] || []), entry];
+  }
+
+  for (const ministry of ministries) {
+    if (!ministry.leader_id) continue;
+    const existingList = result[ministry.leader_id] || [];
+    if (!existingList.some(a => a.ministry_id === ministry.id)) {
+      result[ministry.leader_id] = [
+        ...existingList,
+        {
+          assignment_id: `leader-${ministry.id}-${ministry.leader_id}`,
+          ministry_id: ministry.id,
+          ministry_name: ministry.name,
+          ministry_type: ministry.type,
+          role_title: 'Department Leader',
+          duty: `${ministry.name} Leadership & Oversight`,
+          status: 'active',
+          joined_at: new Date().toISOString().slice(0, 10),
+          is_leader: true
+        }
+      ];
+    }
+  }
+
+  return result;
+}
+
 export async function addMinistryMember(
   assignment: Omit<MinistryMember, 'id' | 'joined_at'> & { joined_at?: string }
 ): Promise<MinistryMember> {
-  const { data, error } = await supabase.rpc('manage_ministry_member', {
+  const client = requireMinistryWriteClient();
+  const { data, error } = await client.rpc('manage_ministry_member', {
     p_action: 'add',
     p_ministry_id: assignment.ministry_id,
     p_member_id: assignment.member_id,
@@ -247,7 +397,8 @@ export async function updateMinistryMember(
   assignmentId: string,
   changes: Partial<Pick<MinistryMember, 'role_title' | 'duty' | 'status'>>
 ): Promise<void> {
-  const { error } = await supabase.rpc('manage_ministry_member', {
+  const client = requireMinistryWriteClient();
+  const { error } = await client.rpc('manage_ministry_member', {
     p_action: 'update',
     p_assignment_id: assignmentId,
     p_role_title: changes.role_title ?? null,
@@ -259,7 +410,8 @@ export async function updateMinistryMember(
 }
 
 export async function removeMinistryMember(assignmentId: string): Promise<void> {
-  const { error } = await supabase.rpc('manage_ministry_member', {
+  const client = requireMinistryWriteClient();
+  const { error } = await client.rpc('manage_ministry_member', {
     p_action: 'remove',
     p_assignment_id: assignmentId
   });
@@ -267,27 +419,34 @@ export async function removeMinistryMember(assignmentId: string): Promise<void> 
   if (error) throw error;
 }
 
+/**
+ * Ensures an appointed ministry/department leader is persisted in `ministry_members`
+ * without altering or granting any system portal permissions (`profile_role_assignments`).
+ */
 export async function ensureMinistryLeaderInRoster(
   ministry: Pick<Ministry, 'id' | 'name' | 'leader_id'>,
   createdById?: string
 ): Promise<void> {
   if (!ministry.id || !ministry.leader_id) return;
-  try {
-    const existing = await getMinistryRoster(ministry.id);
-    const alreadyInRoster = existing.find(
-      entry => entry.member_id === ministry.leader_id && entry.status !== 'inactive'
-    );
-    if (!alreadyInRoster) {
-      await addMinistryMember({
-        ministry_id: ministry.id,
-        member_id: ministry.leader_id,
+  const existing = await getMinistryRoster(ministry.id);
+  const currentEntry = existing.find(entry => entry.member_id === ministry.leader_id);
+  if (currentEntry) {
+    if (currentEntry.status === 'inactive' || !/\b(leader|director|head)\b/i.test(currentEntry.role_title || '')) {
+      await updateMinistryMember(currentEntry.id, {
         role_title: 'Department Leader',
-        duty: `${ministry.name} Leadership & Oversight`,
-        status: 'active',
-        created_by: createdById
+        duty: currentEntry.duty || `${ministry.name} Leadership & Oversight`,
+        status: 'active'
       });
     }
-  } catch (err) {
-    console.warn('Could not sync ministry leader to roster:', err);
+    return;
   }
+
+  await addMinistryMember({
+    ministry_id: ministry.id,
+    member_id: ministry.leader_id,
+    role_title: 'Department Leader',
+    duty: `${ministry.name} Leadership & Oversight`,
+    status: 'active',
+    created_by: createdById
+  });
 }

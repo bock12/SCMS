@@ -1,0 +1,513 @@
+import { beforeEach, describe, expect, test } from 'bun:test';
+
+const values = new Map<string, string>();
+const memoryStorage = {
+  getItem(key: string) { return values.get(key) ?? null; },
+  setItem(key: string, value: string) { values.set(key, String(value)); },
+  removeItem(key: string) { values.delete(key); },
+  clear() { values.clear(); },
+  key(index: number) { return [...values.keys()][index] ?? null; },
+  get length() { return values.size; }
+};
+
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: memoryStorage
+});
+
+if (typeof (globalThis as any).window === 'undefined') {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      dispatchEvent: () => true,
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    }
+  });
+}
+
+const { supabase } = await import('./supabaseClient');
+const {
+  getMembers,
+  hasPortalAccess,
+  registerUnifiedMember,
+  updateUnifiedMember,
+  updateMembershipStatus,
+  updatePortalAccountStatus,
+  enablePortalAccess
+} = await import('./memberService');
+const {
+  getMinistriesList,
+  getMinistryRoster,
+  getMemberMinistryAffiliations,
+  addMinistryMember,
+  updateMinistryMember,
+  removeMinistryMember,
+  ensureMinistryLeaderInRoster,
+  isMemberEligibleForRoster,
+  isMemberCompatibleWithMinistryBranch
+} = await import('./ministryMemberService');
+const {
+  submitMinistryJoinRequest,
+  approveMinistryJoinRequest
+} = await import('./ministryJoinRequestService');
+const {
+  getProfileRoleData,
+  assignProfileRole
+} = await import('./profileRoleAssignmentService');
+
+async function signInAsChurchSuperAdmin() {
+  const res = await supabase.auth.signInWithPassword({
+    email: 'admin@faithconnect.church',
+    password: 'password123'
+  });
+  expect(res.error).toBeNull();
+  return res.data.user!;
+}
+
+async function signInAsPlainMember() {
+  const res = await supabase.auth.signInWithPassword({
+    email: 'member@faithconnect.church',
+    password: 'password123'
+  });
+  expect(res.error).toBeNull();
+  return res.data.user!;
+}
+
+async function setAdminScope(scopeType: 'church' | 'district' | 'branch', branchId: string | null = null, districtId: string | null = null) {
+  await supabase.from('profile_role_assignments').delete().eq('profile_id', 'usr-admin-1');
+  await supabase.from('profile_role_assignments').insert({
+    id: `admin-scope-${scopeType}`,
+    profile_id: 'usr-admin-1',
+    role_id: 'mock-role-super-admin',
+    scope_type: scopeType,
+    branch_id: branchId,
+    district_id: districtId,
+    assigned_at: '2026-01-01T00:00:00.000Z',
+    expires_at: null,
+    is_active: true
+  });
+}
+
+beforeEach(async () => {
+  memoryStorage.clear();
+  await supabase.auth.signOut();
+});
+
+describe('Congregation Roster Integration & Security (MEM-INT-004B)', () => {
+  test('Scenario 1: portal-less member participates in multiple ministries and retains affiliations after directory edits', async () => {
+    await signInAsChurchSuperAdmin();
+
+    const { profile: member, portalInvite } = await registerUnifiedMember({
+      first_name: 'Fatu',
+      last_name: 'Koroma',
+      branch_id: 'branch-1',
+      membership_date: '2026-10-01',
+      gender: 'female',
+      phone: '+23276111222',
+      is_baptized: true,
+      baptism_date: '2024-05-12',
+      enable_portal_access: false
+    });
+
+    expect(portalInvite).toBeUndefined();
+    expect(member.auth_user_id ?? null).toBeNull();
+    expect(hasPortalAccess(member)).toBe(false);
+    expect(isMemberEligibleForRoster(member)).toBe(true);
+
+    const rawUsers = JSON.parse(memoryStorage.getItem('faithconnect_auth_users_v2') || '{}');
+    expect(Object.values(rawUsers).some((u: any) => u.id === member.id)).toBe(false);
+
+    const ministries = await getMinistriesList();
+    expect(ministries.length).toBeGreaterThanOrEqual(2);
+    const serviceDept = ministries.find(m => m.type === 'service_department') || ministries[0];
+    const fellowshipDept = ministries.find(m => m.id !== serviceDept.id) || ministries[1];
+
+    const firstAssignment = await addMinistryMember({
+      ministry_id: serviceDept.id,
+      member_id: member.id,
+      role_title: 'Choir Soprano',
+      duty: 'Sunday Worship Service',
+      status: 'active'
+    });
+    const secondAssignment = await addMinistryMember({
+      ministry_id: fellowshipDept.id,
+      member_id: member.id,
+      role_title: 'Fellowship Member',
+      duty: 'Monthly Outreach',
+      status: 'in_training'
+    });
+
+    expect(firstAssignment.member_id).toBe(member.id);
+    expect(secondAssignment.member_id).toBe(member.id);
+
+    const deptRoster = await getMinistryRoster(serviceDept.id);
+    const foundInRoster = deptRoster.find(entry => entry.member_id === member.id);
+    expect(foundInRoster).toBeDefined();
+    expect(foundInRoster?.member.first_name).toBe('Fatu');
+    expect(hasPortalAccess(foundInRoster!.member)).toBe(false);
+
+    const updatedMember = await updateUnifiedMember(member.id, {
+      first_name: 'Fatu Mariama',
+      last_name: 'Koroma',
+      phone: '+23276999888',
+      is_baptized: true,
+      baptism_date: '2024-05-12'
+    });
+    expect(updatedMember.profile.id).toBe(member.id);
+    expect(updatedMember.profile.auth_user_id ?? null).toBeNull();
+
+    // Fresh reload queries show persisted canonical name & ministry affiliations intact
+    const affiliations = await getMemberMinistryAffiliations();
+    const fatuTeams = affiliations[member.id] || [];
+    expect(fatuTeams.map(a => a.ministry_id).sort()).toEqual([serviceDept.id, fellowshipDept.id].sort());
+
+    const reloadedRoster = await getMinistryRoster(serviceDept.id);
+    expect(reloadedRoster.find(r => r.member_id === member.id)?.member.first_name).toBe('Fatu Mariama');
+  });
+
+  test('Scenario 2: portal suspension leaves membership and ministry roster intact, while membership suspension restricts updates', async () => {
+    await signInAsChurchSuperAdmin();
+
+    const created = await registerUnifiedMember({
+      first_name: 'Mohamed',
+      last_name: 'Sesay',
+      branch_id: 'branch-1',
+      membership_date: '2026-09-10',
+      email: 'mohamed.sesay@example.org',
+      enable_portal_access: true
+    });
+    await supabase.auth.completePasswordSetup({
+      email: created.portalInvite!.email,
+      setupToken: created.portalInvite!.setupToken,
+      newPassword: 'SecurePassword123!'
+    });
+
+    // Re-sign-in as super admin to manage roster
+    await signInAsChurchSuperAdmin();
+    const [ministry] = await getMinistriesList();
+    const assignment = await addMinistryMember({
+      ministry_id: ministry.id,
+      member_id: created.profile.id,
+      role_title: 'Sound Technician',
+      duty: 'Console Mixing',
+      status: 'active'
+    });
+
+    // Suspend portal access only -> member still active in church & ministry roster
+    const portalSuspended = await updatePortalAccountStatus(created.profile.id, 'suspended');
+    expect(portalSuspended.status).toBe('suspended');
+    expect(portalSuspended.membership_status).toBe('active');
+    expect(isMemberEligibleForRoster(portalSuspended)).toBe(true);
+
+    const rosterAfterPortalSuspend = await getMinistryRoster(ministry.id);
+    expect(rosterAfterPortalSuspend.some(r => r.member_id === created.profile.id && r.status === 'active')).toBe(true);
+
+    // Updating roster duty while portal is suspended still works because church membership is active
+    await updateMinistryMember(assignment.id, { duty: 'Livestream Audio Backup' });
+    const rosterAfterUpdate = await getMinistryRoster(ministry.id);
+    expect(rosterAfterUpdate.find(r => r.id === assignment.id)?.duty).toBe('Livestream Audio Backup');
+
+    // Reactivate portal, then suspend church membership -> roster updates blocked, removal still allowed
+    await updatePortalAccountStatus(created.profile.id, 'active');
+    await updateMembershipStatus(created.profile.id, 'suspended');
+
+    await expect(
+      updateMinistryMember(assignment.id, { role_title: 'Audio Lead' })
+    ).rejects.toMatchObject({ code: '23503' });
+
+    await removeMinistryMember(assignment.id);
+    const rosterAfterCleanup = await getMinistryRoster(ministry.id);
+    expect(rosterAfterCleanup.some(r => r.id === assignment.id)).toBe(false);
+  });
+
+  test('Scenario 3: ministry leadership appointment persists on roster without granting system portal permissions', async () => {
+    await signInAsChurchSuperAdmin();
+
+    const { profile: appointee } = await registerUnifiedMember({
+      first_name: 'Isatu',
+      last_name: 'Mansaray',
+      branch_id: 'branch-1',
+      membership_date: '2026-08-15',
+      email: 'isatu.mansaray@example.org',
+      enable_portal_access: false
+    });
+
+    const [ministry] = await getMinistriesList();
+    await ensureMinistryLeaderInRoster(
+      { id: ministry.id, name: ministry.name, leader_id: appointee.id },
+      'usr-admin-1'
+    );
+
+    const roster = await getMinistryRoster(ministry.id);
+    const leaderRow = roster.find(r => r.member_id === appointee.id);
+    expect(leaderRow).toBeDefined();
+    expect(leaderRow?.role_title).toBe('Department Leader');
+    expect(leaderRow?.status).toBe('active');
+
+    const affiliations = await getMemberMinistryAffiliations();
+    expect(affiliations[appointee.id]?.some(a => a.ministry_id === ministry.id && a.is_leader)).toBe(true);
+
+    // Crucial: appointing a ministry leader must NOT create any system RBAC assignment
+    const roleDataBefore = await getProfileRoleData();
+    const appointeeSystemRolesBefore = roleDataBefore.assignments.filter(
+      a => a.profile_id === appointee.id && a.is_active
+    );
+    expect(appointeeSystemRolesBefore).toHaveLength(0);
+
+    // Portal permissions remain governed strictly by explicit portal activation + profile_role_assignments
+    const portalEnabled = await enablePortalAccess(appointee.id);
+    expect(hasPortalAccess(portalEnabled.profile)).toBe(true);
+    await assignProfileRole({
+      profile_id: appointee.id,
+      role_id: 'mock-role-leader',
+      scope_type: 'branch',
+      branch_id: 'branch-1'
+    });
+    const roleDataAfter = await getProfileRoleData();
+    const appointeeSystemRolesAfter = roleDataAfter.assignments.filter(
+      a => a.profile_id === appointee.id && a.is_active
+    );
+    expect(appointeeSystemRolesAfter).toHaveLength(1);
+    expect(appointeeSystemRolesAfter[0].role_id).toBe('mock-role-leader');
+    expect(appointeeSystemRolesAfter[0].scope_type).toBe('branch');
+  });
+
+  test('Scenario 4: enforces auth, manage_ministries permission, branch scope, duplicates, and status checks', async () => {
+    // Create branch-1, branch-2, and inactive test ministries + members as church super admin
+    await signInAsChurchSuperAdmin();
+    const { profile: branch1Member } = await registerUnifiedMember({
+      first_name: 'Sahr',
+      last_name: 'Kargbo',
+      branch_id: 'branch-1',
+      membership_date: '2026-07-01',
+      enable_portal_access: false
+    });
+    const { profile: branch2Member } = await registerUnifiedMember({
+      first_name: 'Mariatu',
+      last_name: 'Conteh',
+      branch_id: 'branch-2',
+      membership_date: '2026-07-01',
+      enable_portal_access: false
+    });
+
+    await supabase.from('ministries').insert({
+      id: 'min-branch-1-ushers',
+      branch_id: 'branch-1',
+      name: 'Grace Cathedral Ushers',
+      description: 'Branch 1 ushers team',
+      leader_name: 'TBD',
+      meeting_time: 'Sundays 7:30 AM',
+      member_count: 0,
+      category: 'Hospitality',
+      type: 'service_department',
+      status: 'active',
+      roles_and_responsibilities: ['Usher']
+    });
+    await supabase.from('ministries').insert({
+      id: 'min-branch-2-choir',
+      branch_id: 'branch-2',
+      name: 'Bo Campus Choir',
+      description: 'Branch 2 choir team',
+      leader_name: 'TBD',
+      meeting_time: 'Fridays 5 PM',
+      member_count: 0,
+      category: 'Worship',
+      type: 'service_department',
+      status: 'active',
+      roles_and_responsibilities: ['Vocalist']
+    });
+    await supabase.from('ministries').insert({
+      id: 'min-church-wide-missions',
+      branch_id: null,
+      name: 'Global Missions Network',
+      description: 'Church-wide missions ministry',
+      leader_name: 'TBD',
+      meeting_time: 'Monthly',
+      member_count: 0,
+      category: 'Outreach',
+      type: 'service_department',
+      status: 'active',
+      roles_and_responsibilities: ['Coordinator']
+    });
+    await supabase.from('ministries').insert({
+      id: 'min-archived-team',
+      branch_id: 'branch-1',
+      name: 'Archived Ministry Team',
+      description: 'Inactive team',
+      leader_name: 'TBD',
+      meeting_time: 'N/A',
+      member_count: 0,
+      category: 'Outreach',
+      type: 'service_department',
+      status: 'inactive',
+      roles_and_responsibilities: []
+    });
+
+    // Branch compatibility helpers match backend rules
+    expect(isMemberCompatibleWithMinistryBranch(branch1Member, { branch_id: 'branch-2' })).toBe(false);
+    expect(isMemberCompatibleWithMinistryBranch(branch2Member, { branch_id: 'branch-2' })).toBe(true);
+
+    // 4a. Unauthenticated user rejected
+    await supabase.auth.signOut();
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-1-ushers',
+        member_id: branch1Member.id,
+        role_title: 'Member',
+        duty: 'Service',
+        status: 'active'
+      })
+    ).rejects.toBeTruthy();
+
+    // 4b. Authenticated plain member without manage_ministries rejected (42501)
+    await signInAsPlainMember();
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-1-ushers',
+        member_id: branch1Member.id,
+        role_title: 'Member',
+        duty: 'Service',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // 4c. Branch-1 scoped admin can manage branch-1 ministry, blocked from branch-2 & church-wide ministries
+    await setAdminScope('branch', 'branch-1', null);
+    await signInAsChurchSuperAdmin();
+
+    const added = await addMinistryMember({
+      ministry_id: 'min-branch-1-ushers',
+      member_id: branch1Member.id,
+      role_title: 'Usher',
+      duty: 'Sanctuary Door',
+      status: 'active'
+    });
+    expect(added.member_id).toBe(branch1Member.id);
+
+    // Duplicate assignment rejected (23505)
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-1-ushers',
+        member_id: branch1Member.id,
+        role_title: 'Usher',
+        duty: 'Duplicate Check',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '23505' });
+
+    // Branch-1 admin blocked from branch-2 ministry (42501)
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-2-choir',
+        member_id: branch2Member.id,
+        role_title: 'Vocalist',
+        duty: 'Choir',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // Branch-1 admin blocked from church-wide (branch_id = null) ministry (42501)
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-church-wide-missions',
+        member_id: branch1Member.id,
+        role_title: 'Coordinator',
+        duty: 'Global Missions',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // Restore church-wide admin: cross-branch member assignment still rejected (42501)
+    await setAdminScope('church', null, null);
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-2-choir',
+        member_id: branch1Member.id,
+        role_title: 'Vocalist',
+        duty: 'Cross-Branch Attempt',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // Nonexistent / synthetic member ID rejected (23503)
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-1-ushers',
+        member_id: 'synthetic-nonexistent-member',
+        role_title: 'Member',
+        duty: 'Fake Member Attempt',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '23503' });
+
+    // Inactive/archived ministry rejected (23503)
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-archived-team',
+        member_id: branch1Member.id,
+        role_title: 'Member',
+        duty: 'Inactive Ministry Attempt',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '23503' });
+
+    // Suspended church member rejected on add (23503)
+    const { profile: suspendedMember } = await registerUnifiedMember({
+      first_name: 'Kelfa',
+      last_name: 'Bangura',
+      branch_id: 'branch-1',
+      membership_date: '2026-07-01',
+      membership_status: 'suspended',
+      enable_portal_access: false
+    });
+    expect(isMemberEligibleForRoster(suspendedMember)).toBe(false);
+    await expect(
+      addMinistryMember({
+        ministry_id: 'min-branch-1-ushers',
+        member_id: suspendedMember.id,
+        role_title: 'Member',
+        duty: 'Suspended Member Attempt',
+        status: 'active'
+      })
+    ).rejects.toMatchObject({ code: '23503' });
+  });
+
+  test('Scenario 5: ministry join request approval persists member to canonical roster and removal cleans up cleanly', async () => {
+    const memberUser = await signInAsPlainMember();
+    const members = await getMembers();
+    const applicant = members.find(m => m.auth_user_id === memberUser.id || m.id === 'usr-member-1')!;
+    expect(applicant).toBeDefined();
+
+    const ministries = await getMinistriesList();
+    const targetMinistry = ministries[1] || ministries[0];
+
+    const joinReq = await submitMinistryJoinRequest({
+      ministry: targetMinistry,
+      profile: applicant,
+      preferredRoles: ['Hospitality'],
+      availability: 'Sundays 8:00 AM',
+      note: 'Happy to serve the congregation.'
+    });
+
+    await signInAsChurchSuperAdmin();
+    const adminProfile = (await getMembers()).find(m => m.id === 'usr-admin-1')!;
+    const approved = await approveMinistryJoinRequest({
+      requestId: joinReq.id,
+      reviewerProfile: adminProfile,
+      roleTitle: 'Welcome Greeter',
+      duty: 'Main Entrance Hospitality',
+      memberStatus: 'active'
+    });
+
+    expect(approved.request.status).toBe('approved');
+    const roster = await getMinistryRoster(targetMinistry.id);
+    const createdEntry = roster.find(r => r.member_id === applicant.id);
+    expect(createdEntry).toBeDefined();
+    expect(createdEntry?.role_title).toBe('Welcome Greeter');
+
+    await removeMinistryMember(createdEntry!.id);
+    const afterRemove = await getMinistryRoster(targetMinistry.id);
+    expect(afterRemove.some(r => r.member_id === applicant.id)).toBe(false);
+  });
+});
