@@ -480,7 +480,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
 
   const handleCreateLeadershipAppointment = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!leadershipTarget || !leaderProfileId || !leaderTitle.trim().trim()) return;
+    if (!leadershipTarget || !leaderProfileId || !leaderTitle.trim()) return;
     setSaving(true);
     setLeaderModalError(null);
     setNotice(null);
@@ -1147,17 +1147,16 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                     <p className="text-xs text-slate-600 mt-1">{district.description}</p>
                   )}
                   <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-semibold text-slate-600">District Oversight:</span>
+                    <span className="font-semibold text-slate-600">District Leadership:</span>
                     {overseers.length === 0 ? (
-                      <span className="text-slate-400">No district admin assigned</span>
+                      <span className="text-slate-400">No district leadership appointments yet</span>
                     ) : (
                       overseers.map((o, idx) => {
                         const member = profileById.get(o.profile_id);
-                        const role = roleById.get(o.role_id);
                         return (
                           <span key={o.id} className="text-slate-700 font-medium">
                             {idx > 0 ? ', ' : ''}
-                            {member ? `${member.first_name} ${member.last_name}` : o.profile_id} ({role ? formatRoleName(role.name) : 'Overseer'})
+                            {member ? `${member.first_name} ${member.last_name}` : o.profile_id} ({o.title})
                           </span>
                         );
                       })
@@ -1181,6 +1180,13 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                       className="min-h-[40px] px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
                     >
                       <Plus size={14} /> Add Branch to District
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAssignDistrictLeadership(district)}
+                      className="min-h-[40px] px-3.5 py-2 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+                    >
+                      <UserPlus size={14} /> Appoint District Leader
                     </button>
 
                     {scope.canCreateDistrict && (
@@ -1267,17 +1273,13 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
 
                             {leaders.length === 0 ? (
                               <p className="text-xs text-slate-400">
-                                No branch-scoped pastor or leaders assigned yet.
+                                No branch leadership appointments yet.
                               </p>
                             ) : (
                               <div className="space-y-1.5">
                                 {leaders.map(assignment => {
                                   const member = profileById.get(assignment.profile_id);
-                                  const role = roleById.get(assignment.role_id);
-                                  const canManageThisRole =
-                                    canAssignLeadership &&
-                                    role &&
-                                    canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name);
+                                  const canManageThisRole = canAssignLeadership;
                                   const isConfirming = confirmEndAppointmentId === assignment.id;
 
                                   return (
@@ -1290,7 +1292,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                           {member ? `${member.first_name} ${member.last_name}` : assignment.profile_id}
                                         </span>
                                         <span className="text-slate-500 font-semibold">
-                                          {role ? formatRoleName(role.name) : 'Assigned Leader'}
+                                          {assignment.title}
                                         </span>
                                       </div>
 
@@ -1319,7 +1321,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                             type="button"
                                             disabled={saving}
                                             onClick={() => setConfirmEndAppointmentId(assignment.id)}
-                                            aria-label={`Remove ${member ? member.first_name : 'leader'} from ${branch.name}`}
+                                            aria-label={`End ${member ? member.first_name : 'leader'} appointment at ${branch.name}`}
                                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
                                           >
                                             <Trash2 size={14} />
@@ -1438,11 +1440,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                           <div className="space-y-1.5">
                             {leaders.map(assignment => {
                               const member = profileById.get(assignment.profile_id);
-                              const role = roleById.get(assignment.role_id);
-                              const canManageThisRole =
-                                canAssignLeadership &&
-                                role &&
-                                canManageTargetRoleByScope(scope.hasChurchRoleAccess, role.name);
+                              const canManageThisRole = canAssignLeadership;
                               const isConfirming = confirmEndAppointmentId === assignment.id;
 
                               return (
@@ -1483,7 +1481,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                                         type="button"
                                         disabled={saving}
                                         onClick={() => setConfirmEndAppointmentId(assignment.id)}
-                                        aria-label={`Remove ${member ? member.first_name : 'leader'} from ${branch.name}`}
+                                        aria-label={`End ${member ? member.first_name : 'leader'} appointment at ${branch.name}`}
                                         className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
                                       >
                                         <Trash2 size={14} />
@@ -1841,10 +1839,10 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
             <div className="p-4 sm:p-6 border-b border-slate-200 flex items-start justify-between gap-3">
               <div>
                 <h3 id="assign-branch-leader-title" className="text-lg font-black text-slate-900">
-                  Assign Branch Leadership
+                  {leadershipTarget.scope_type === 'branch' ? 'Appoint Branch Leader' : 'Appoint District Leader'}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Branch scope: <strong className="text-slate-800">{leadershipTarget.scope_type === 'branch' ? leadershipTarget.branch.name : leadershipTarget.district.name}</strong>
+                  {leadershipTarget.scope_type === 'branch' ? 'Branch' : 'District'} scope: <strong className="text-slate-800">{leadershipTarget.scope_type === 'branch' ? leadershipTarget.branch.name : leadershipTarget.district.name}</strong>
                 </p>
               </div>
               <button
@@ -1874,36 +1872,47 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                   className="mt-1 w-full min-h-[44px] px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium"
                 >
                   <option value="">Select member</option>
-                  {profiles.map(member => (
+                  {profiles.filter(member =>
+                    member.record_status === 'active' &&
+                    member.membership_status === 'active' &&
+                    (leadershipTarget.scope_type === 'branch'
+                      ? member.branch_id === leadershipTarget.branch.id
+                      : branches.some(branch => branch.id === member.branch_id && branch.district_id === leadershipTarget.district.id))
+                  ).map(member => (
                     <option key={member.id} value={member.id}>
-                      {member.first_name} {member.last_name} ({member.email || 'Directory profile'})
+                      {member.first_name} {member.last_name} ({member.email || 'No portal account'})
                     </option>
                   ))}
                 </select>
               </label>
 
               <label className="block text-sm font-bold text-slate-700">
-                Leadership Role
-                <select
+                Leadership Title
+                <input
                   required
+                  minLength={2}
+                  maxLength={100}
                   value={leaderTitle}
-                  onChange={e => setLeaderRoleId(e.target.value)}
+                  onChange={e => setLeaderTitle(e.target.value)}
+                  placeholder={leadershipTarget.scope_type === 'branch' ? 'e.g. Pastor, Branch Secretary' : 'e.g. District Overseer'}
                   className="mt-1 w-full min-h-[44px] px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium"
-                >
-                  <option value="">Select role</option>
-                  {[] .map(role => (
-                    <option key={role.id} value={role.id}>
-                      {formatRoleName(role.name)}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
 
-              {!scope.hasChurchRoleAccess && (
-                <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                  Your district assignment permits appointing operational branch roles (Pastor, Finance Officer, Leader, Worker, Member) for branches in your district.
-                </p>
-              )}
+              <label className="block text-sm font-bold text-slate-700">
+                Responsibilities (optional)
+                <textarea
+                  rows={3}
+                  value={leaderResponsibilities}
+                  onChange={e => setLeaderResponsibilities(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium"
+                  placeholder="Describe the responsibilities for this appointment."
+                />
+              </label>
+
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                This records an organizational leadership appointment only. It does not grant application roles or permissions; manage those separately in Roles &amp; Permissions.
+              </p>
             </div>
 
             <div className="p-4 sm:p-6 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
@@ -1920,7 +1929,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                 disabled={saving || !leaderProfileId || !leaderTitle.trim()}
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-extrabold cursor-pointer disabled:opacity-50"
               >
-                {saving ? 'Assigning…' : 'Assign Branch Leader'}
+                {saving ? 'Saving…' : 'Save Appointment'}
               </button>
             </div>
           </form>
