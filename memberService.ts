@@ -1,7 +1,7 @@
 import type { AppRole, MembershipStatus, PortalAccountStatus, Profile } from './types';
 import { mapCanonicalProfileToProfile, mapProfileInputToCanonicalInsert, mapProfileInputToCanonicalUpdate } from './memberProfileMapper';
 import { supabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 
 function createUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -12,6 +12,22 @@ function createUuid(): string {
     const random = Math.floor(Math.random() * 16);
     return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16);
   });
+}
+
+function requireLiveMemberWriteClient() {
+  if (!supabaseAuthEnabled) {
+    throw new Error('Secure member writes require a real Supabase Auth session. Mock development login cannot authorize live database writes.');
+  }
+  if (!supabaseDataClient) {
+    throw new Error('Supabase is enabled but its URL or publishable key is missing.');
+  }
+  return supabaseDataClient;
+}
+
+function unwrapRpcProfile(data: any): Profile {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('The member directory operation returned no saved profile.');
+  return toDirectoryProfile(row);
 }
 
 function toDirectoryProfile(row: any): Profile {
@@ -245,6 +261,41 @@ export async function registerUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
+  if (supabaseIntegrationEnabled) {
+    if (enablePortal) {
+      throw new Error('The member can be saved without Portal Access. Live portal invitations will be enabled after the trusted server-side provisioning workflow is completed.');
+    }
+    const client = requireLiveMemberWriteClient();
+    const canonical = mapProfileInputToCanonicalInsert({
+      first_name: firstName,
+      last_name: lastName,
+      branch_id: branchId,
+      membership_date: membershipDate,
+      membership_status: input.membership_status || 'active',
+      email,
+      phone,
+      gender: input.gender || 'other',
+      avatar_url: input.avatar_url || null,
+      is_baptized: Boolean(input.is_baptized),
+      baptism_date: input.is_baptized ? (input.baptism_date || null) : null,
+      baptized_by_name_snapshot: input.is_baptized ? (input.baptized_by?.trim() || null) : null,
+      date_of_birth: input.date_of_birth || null,
+      marital_status: input.marital_status || null,
+      marriage_date: input.marital_status === 'Married' ? (input.marriage_date || null) : null
+    });
+    const {
+      auth_user_id: _authUserId,
+      portal_access_status: _portalAccessStatus,
+      record_status: _recordStatus,
+      ...memberPayload
+    } = canonical;
+    const { data, error } = await (client as any).rpc('create_member_profile', {
+      p_member: memberPayload
+    });
+    if (error) throw error;
+    return { profile: unwrapRpcProfile(data) };
+  }
+
   const { data: branch, error: branchError } = await supabase
     .from('church_branches')
     .select('id')
@@ -369,7 +420,10 @@ export async function updateUnifiedMember(
     portal_status: input.portal_status
   });
 
-  const { data: existing, error: lookupError } = await supabase
+  const readClient = supabaseIntegrationEnabled
+    ? requireLiveMemberWriteClient()
+    : supabase;
+  const { data: existing, error: lookupError } = await readClient
     .from('profiles')
     .select('*')
     .eq('id', personId)
@@ -401,7 +455,9 @@ export async function updateUnifiedMember(
     if (!branch) throw new Error('The selected branch does not exist.');
   }
 
-  await assertUniqueContactDetails(email, phone, personId);
+  if (!supabaseIntegrationEnabled) {
+    await assertUniqueContactDetails(email, phone, personId);
+  }
 
   const updates = mapProfileInputToCanonicalUpdate({
     first_name: firstName,
@@ -424,6 +480,24 @@ export async function updateUnifiedMember(
       marriage_date: input.marital_status === 'Married' ? (input.marriage_date || null) : null
     } : {})
   });
+
+  if (supabaseIntegrationEnabled) {
+    const portalCurrentlyEnabled = Boolean(current.auth_user_id);
+    if (
+      input.enable_portal_access !== undefined &&
+      input.enable_portal_access !== portalCurrentlyEnabled
+    ) {
+      throw new Error('Portal access changes require the trusted server-side provisioning workflow and cannot be combined with a member profile update.');
+    }
+    const client = requireLiveMemberWriteClient();
+    const { branch_id: _unchangedBranchId, ...memberPatch } = updates;
+    const { data, error } = await (client as any).rpc('update_member_profile', {
+      p_profile_id: personId,
+      p_member: memberPatch
+    });
+    if (error) throw error;
+    return { profile: unwrapRpcProfile(data) };
+  }
 
   const { error: updateError } = await supabase
     .from('profiles')
@@ -483,6 +557,15 @@ export async function updateMembershipStatus(
   membershipStatus: MembershipStatus
 ): Promise<Profile> {
   validateMemberAttributes({ membership_status: membershipStatus });
+  if (supabaseIntegrationEnabled) {
+    const client = requireLiveMemberWriteClient();
+    const { data, error } = await (client as any).rpc('update_member_profile', {
+      p_profile_id: personId,
+      p_member: { membership_status: membershipStatus }
+    });
+    if (error) throw error;
+    return unwrapRpcProfile(data);
+  }
   const { data, error } = await supabase
     .from('profiles')
     .update({ membership_status: membershipStatus })
@@ -499,6 +582,9 @@ export async function updatePortalAccountStatus(
   portalStatus: PortalAccountStatus
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
+  if (supabaseIntegrationEnabled) {
+    throw new Error('Portal account lifecycle changes require the trusted server-side Auth provisioning workflow.');
+  }
   if (portalStatus === 'active') {
     const { data: existing, error: lookupError } = await supabase
       .from('profiles').select('auth_user_id').eq('id', personId).maybeSingle();
@@ -533,6 +619,9 @@ export async function enablePortalAccess(
   personId: string,
   options?: { email?: string; primary_role?: AppRole }
 ): Promise<UnifiedMemberSaveResult> {
+  if (supabaseIntegrationEnabled) {
+    throw new Error('Portal invitations require the trusted server-side Auth provisioning workflow.');
+  }
   const { data: existing, error: lookupError } = await supabase
     .from('profiles')
     .select('*')
@@ -572,6 +661,9 @@ export async function enablePortalAccess(
 
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
 export async function disablePortalAccess(personId: string): Promise<Profile> {
+  if (supabaseIntegrationEnabled) {
+    throw new Error('Portal revocation requires the trusted server-side Auth provisioning workflow.');
+  }
   await supabase.auth.revokePortalAccess(personId);
   const { data, error } = await supabase
     .from('profiles')
