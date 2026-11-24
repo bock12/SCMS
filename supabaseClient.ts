@@ -2801,6 +2801,103 @@ export const supabase = {
       return { data: null, error: null };
     }
 
+    if (functionName === 'create_leadership_appointment') {
+      const {
+        p_profile_id,
+        p_scope_type,
+        p_branch_id = null,
+        p_district_id = null,
+        p_title = '',
+        p_responsibilities = null,
+        p_effective_from = new Date().toISOString().slice(0, 10)
+      } = args;
+      const title = String(p_title || '').trim();
+      const member = (localDb.profiles || []).find((item: any) =>
+        item.id === p_profile_id &&
+        item.record_status !== 'archived' &&
+        item.membership_status === 'active'
+      );
+      if (!member || title.length < 2 || title.length > 100) {
+        return { data: null, error: { code: '23503', message: 'Select an active congregation member and a valid leadership title.' } };
+      }
+      if (p_scope_type === 'branch') {
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === p_branch_id && (item.status || 'active') === 'active');
+        if (!branch || p_district_id !== null || member.branch_id !== p_branch_id) {
+          return { data: null, error: { code: '23514', message: 'The member must belong to the selected active branch.' } };
+        }
+      } else if (p_scope_type === 'district') {
+        const district = (localDb.districts || []).find((item: any) => item.id === p_district_id && (item.status || 'active') === 'active');
+        const memberBranch = (localDb.church_branches || []).find((item: any) => item.id === member.branch_id);
+        if (!district || p_branch_id !== null || memberBranch?.district_id !== p_district_id) {
+          return { data: null, error: { code: '23514', message: 'The member must belong to an active branch in the selected district.' } };
+        }
+      } else {
+        return { data: null, error: { code: '22023', message: 'Leadership appointment scope must be branch or district.' } };
+      }
+      const scopeBranchId = p_scope_type === 'branch' ? p_branch_id : null;
+      const scopeDistrictId = p_scope_type === 'district' ? p_district_id : null;
+      if (!actorCanManageScope(p_scope_type, scopeBranchId, scopeDistrictId)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to manage leadership appointments for this scope.' } };
+      }
+      const duplicate = (localDb.leadership_appointments || []).some((item: any) =>
+        item.status === 'active' &&
+        item.profile_id === p_profile_id &&
+        item.scope_type === p_scope_type &&
+        item.branch_id === scopeBranchId &&
+        item.district_id === scopeDistrictId &&
+        String(item.title).toLowerCase() === title.toLowerCase()
+      );
+      if (duplicate) return { data: null, error: { code: '23505', message: 'This member already holds this leadership title in the selected scope.' } };
+      const appointment = {
+        id: createMockUuid(),
+        profile_id: p_profile_id,
+        scope_type: p_scope_type,
+        branch_id: scopeBranchId,
+        district_id: scopeDistrictId,
+        title,
+        responsibilities: String(p_responsibilities || '').trim() || null,
+        status: 'active',
+        appointed_by_profile_id: actor.id,
+        appointed_at: new Date().toISOString(),
+        effective_from: p_effective_from || new Date().toISOString().slice(0, 10),
+        effective_to: null,
+        ended_by_profile_id: null,
+        ended_at: null,
+        end_reason: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      localDb.leadership_appointments = [...(localDb.leadership_appointments || []), appointment];
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('leadership_appointments_updated'));
+      return { data: appointment, error: null };
+    }
+
+    if (functionName === 'end_leadership_appointment') {
+      const appointment = (localDb.leadership_appointments || []).find((item: any) => item.id === args.p_appointment_id);
+      if (!appointment) return { data: null, error: { code: '23503', message: 'The selected leadership appointment does not exist.' } };
+      if (appointment.status !== 'active') return { data: null, error: { code: '22023', message: 'The leadership appointment is already ended.' } };
+      if (!actorCanManageScope(appointment.scope_type, appointment.branch_id, appointment.district_id)) {
+        return { data: null, error: { code: '42501', message: 'You do not have permission to end this leadership appointment.' } };
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const updated = {
+        ...appointment,
+        status: 'ended',
+        ended_by_profile_id: actor.id,
+        ended_at: new Date().toISOString(),
+        effective_to: appointment.effective_to && appointment.effective_to < today ? appointment.effective_to : today,
+        end_reason: String(args.p_end_reason || '').trim() || null,
+        updated_at: new Date().toISOString()
+      };
+      localDb.leadership_appointments = (localDb.leadership_appointments || []).map((item: any) =>
+        item.id === appointment.id ? updated : item
+      );
+      saveLocalDatabase(localDb);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('leadership_appointments_updated'));
+      return { data: updated, error: null };
+    }
+
     if (functionName === 'assign_profile_role') {
       const { p_profile_id, p_role_id, p_scope_type = 'church', p_branch_id = null, p_district_id = null } = args;
       const targetExists = (localDb.profiles || []).some(
