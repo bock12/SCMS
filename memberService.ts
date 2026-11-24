@@ -157,7 +157,6 @@ export interface UnifiedMemberRegistrationInput {
   email?: string;
   phone?: string;
   avatar_url?: string;
-  assigned_department?: string;
   is_baptized?: boolean;
   baptism_date?: string;
   baptized_by?: string;
@@ -331,7 +330,6 @@ export interface UnifiedMemberUpdateInput {
   avatar_url?: string;
   membership_status?: MembershipStatus;
   membership_date?: string;
-  assigned_department?: string;
   is_baptized?: boolean;
   baptism_date?: string;
   baptized_by?: string;
