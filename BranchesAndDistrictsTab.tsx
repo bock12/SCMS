@@ -1885,7 +1885,7 @@ export const BranchesAndDistrictsTab: React.FC<BranchesAndDistrictsTabProps> = (
                 >
                   <option value="">Select member</option>
                   {profiles.filter(member =>
-                    member.record_status === 'active' &&
+                    member.record_status !== 'archived' &&
                     member.membership_status === 'active' &&
                     (leadershipTarget.scope_type === 'branch'
                       ? member.branch_id === leadershipTarget.branch.id
