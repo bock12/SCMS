@@ -61,7 +61,18 @@ The first server-side increment is now applied to the development database and c
 - `memberTransferService.ts` exposes read, request, approve/reject and cancel operations; the mock client implements the same lifecycle. `MemberTransfer` now matches the database status and timestamp fields while retaining the legacy optional `request_date` alias.
 - Regression scripts `supabase/tests/ministry_roster_lifecycle.sql` and `supabase/tests/member_transfer_lifecycle.sql` are included in PostgreSQL fresh-install CI.
 
-**Still outstanding in 004A:** application UI wiring for transfer requests/review, ministry join-request approval integration (the current live schema does not contain `ministry_join_requests`), and end-to-end browser acceptance. The development database lifecycle scripts passed transactionally and rolled back all fixtures; CI validation is running.
+**Still outstanding in 004A:** application UI wiring for transfer requests/review and ministry join-request approval integration (the current live schema does not contain `ministry_join_requests`). The development database lifecycle scripts passed transactionally and rolled back all fixtures.
+
+### MEM-INT-004B implementation progress (2026-11-24)
+
+- Added `public.manage_event_registration` for member/guest registration, cancellation, check-in and absence marking. Member registrations now store `member_id = profiles.id`; guest registrations remain unlinked and retain contact snapshots.
+- Registration creation locks the event, prevents duplicate active member registrations, and applies capacity/waitlist rules in the same transaction. Waitlisted attendees cannot be checked in while the event remains at capacity.
+- Event check-in for a linked member now creates or updates a matching `attendance_sessions` / `attendance_records` entry. Event attendance sessions are unique by event, date and branch, so church-wide events can record attendance separately for members from different branches.
+- Added `public.manage_attendance` for branch-authorized attendance session creation and attendance record upsert. New `attendanceService.ts` and `eventRegistrationService.ts` expose the read/write operations.
+- Admin event roster registration and cancellation now use the registration service. Manual and QR check-in now use the attendance RPC. Event deletion is blocked while active registrations remain; it no longer attempts to bypass registration lifecycle with direct child-row deletion.
+- Added regression coverage in `supabase/tests/event_registration_attendance_lifecycle.sql`; the test ran successfully against the development database inside a rollback transaction.
+
+**Still outstanding in 004B:** a dedicated attendance management UI, browser acceptance for member/guest registration and check-in, and a full end-to-end run in CI after the latest commits. Event create/edit still has legacy direct writes outside this registration/attendance increment.
 
 ## Recommended implementation sequence
 
