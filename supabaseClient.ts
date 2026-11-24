@@ -2229,6 +2229,93 @@ export const supabase = {
       return true;
     };
 
+    if (functionName === 'manage_member_transfer') {
+      const { p_action, p_transfer_id, p_member_id, p_to_branch_id, p_notes } = args;
+      if (!['request', 'approve', 'reject', 'cancel'].includes(p_action)) {
+        return { data: null, error: { code: '22023', message: 'Unsupported member transfer operation.' } };
+      }
+
+      const transferAssignments = getActorAssignmentsForPermission('manage_member_transfers');
+      const canManageTransferBranch = (branchId: string | null | undefined) => {
+        if (!branchId) return transferAssignments.some((item: any) => item.scope_type === 'church');
+        const branch = (localDb.church_branches || []).find((item: any) => item.id === branchId);
+        return transferAssignments.some((item: any) =>
+          item.scope_type === 'church' ||
+          (item.scope_type === 'branch' && item.branch_id === branchId) ||
+          (item.scope_type === 'district' && Boolean(branch?.district_id) && item.district_id === branch.district_id)
+        );
+      };
+
+      if (p_action === 'request') {
+        if (!p_to_branch_id) return { data: null, error: { code: '22023', message: 'A destination branch is required.' } };
+        const member = (localDb.profiles || []).find((item: any) => item.id === (p_member_id || actor.id));
+        const targetBranch = (localDb.church_branches || []).find((item: any) => item.id === p_to_branch_id && item.status !== 'archived');
+        if (!member || member.membership_status !== 'active' || member.record_status === 'archived') {
+          return { data: null, error: { code: '23503', message: 'The selected active church member could not be found.' } };
+        }
+        if (!targetBranch) return { data: null, error: { code: '23503', message: 'The destination branch is unavailable.' } };
+        if (member.branch_id === p_to_branch_id) return { data: null, error: { code: '22023', message: 'The member is already assigned to the selected branch.' } };
+        if (member.id !== actor.id && !canManageTransferBranch(member.branch_id)) {
+          return { data: null, error: { code: '42501', message: 'You do not have permission to request a transfer for this member.' } };
+        }
+        if ((localDb.member_transfers || []).some((item: any) => item.member_id === member.id && item.status === 'pending')) {
+          return { data: null, error: { code: '23505', message: 'This member already has a pending transfer request.' } };
+        }
+        const created = {
+          id: createMockUuid(),
+          member_id: member.id,
+          from_branch_id: member.branch_id || null,
+          to_branch_id: p_to_branch_id,
+          status: 'pending',
+          requested_at: new Date().toISOString(),
+          requested_by_profile_id: actor.id,
+          approved_by_profile_id: null,
+          approved_at: null,
+          notes: String(p_notes || '').trim() || null
+        };
+        localDb.member_transfers = [...(localDb.member_transfers || []), created];
+        saveLocalDatabase(localDb);
+        return { data: created, error: null };
+      }
+
+      const transfer = (localDb.member_transfers || []).find((item: any) => item.id === p_transfer_id);
+      if (!transfer) return { data: null, error: { code: 'P0002', message: 'The member transfer request could not be found.' } };
+      if (transfer.status !== 'pending') return { data: null, error: { code: '22023', message: 'Only pending transfer requests can be changed.' } };
+
+      if (p_action === 'cancel') {
+        if (transfer.requested_by_profile_id !== actor.id && !canManageTransferBranch(transfer.from_branch_id)) {
+          return { data: null, error: { code: '42501', message: 'You do not have permission to cancel this transfer request.' } };
+        }
+        const updated = { ...transfer, status: 'cancelled' };
+        localDb.member_transfers = (localDb.member_transfers || []).map((item: any) => item.id === transfer.id ? updated : item);
+        saveLocalDatabase(localDb);
+        return { data: updated, error: null };
+      }
+
+      if (!canManageTransferBranch(transfer.from_branch_id) || !canManageTransferBranch(transfer.to_branch_id)) {
+        return { data: null, error: { code: '42501', message: 'Transfer review requires permission in both the source and destination branches.' } };
+      }
+      const member = (localDb.profiles || []).find((item: any) => item.id === transfer.member_id);
+      if (!member || member.branch_id !== transfer.from_branch_id) {
+        return { data: null, error: { code: '23514', message: 'The member branch no longer matches this transfer request.' } };
+      }
+      const now = new Date().toISOString();
+      const updated = {
+        ...transfer,
+        status: p_action === 'approve' ? 'approved' : 'rejected',
+        approved_by_profile_id: actor.id,
+        approved_at: now
+      };
+      if (p_action === 'approve') {
+        localDb.profiles = (localDb.profiles || []).map((item: any) =>
+          item.id === member.id ? { ...item, branch_id: transfer.to_branch_id, updated_at: now } : item
+        );
+      }
+      localDb.member_transfers = (localDb.member_transfers || []).map((item: any) => item.id === transfer.id ? updated : item);
+      saveLocalDatabase(localDb);
+      return { data: updated, error: null };
+    }
+
     if (functionName === 'manage_ministry_member') {
       const {
         p_action,
