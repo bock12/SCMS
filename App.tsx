@@ -2634,6 +2634,9 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
                         <option key={branch.id} value={branch.id}>{branch.name}</option>
                       ))}
                     </select>
+                    {memberModalMode === 'edit' && (
+                      <p className="text-[10px] text-slate-500 mt-1">Branch changes are processed through the Member Transfer workflow.</p>
+                    )}
                   </div>
                   <div>
                     <label className="font-bold text-slate-600 uppercase block mb-1">Membership Status</label>
