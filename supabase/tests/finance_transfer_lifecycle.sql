@@ -279,7 +279,7 @@ BEGIN
     RAISE EXCEPTION 'One branch approval must not approve the complete cross-branch transfer';
   END IF;
 
-  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+  PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
   BEGIN
     PERFORM public.post_financial_transfer(v_transfer_id);
     RAISE EXCEPTION 'FIN_INT_004_EXPECTED_PARTIAL_APPROVAL_POST_DENIAL';
@@ -294,7 +294,7 @@ BEGIN
     RAISE EXCEPTION 'Transfer must become approved only after both branch approval requests are complete';
   END IF;
 
-  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+  PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
 
   -- A caller cannot post just one transfer journal through the generic API.
   BEGIN
@@ -349,7 +349,7 @@ BEGIN
         AND status='draft')<>2 THEN
     RAISE EXCEPTION 'Rejected transfer must leave both branch journals unposted';
   END IF;
-  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+  PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
   BEGIN
     PERFORM public.post_financial_transfer(v_rejected_id);
     RAISE EXCEPTION 'FIN_INT_004_EXPECTED_REJECTED_POST_DENIAL';
