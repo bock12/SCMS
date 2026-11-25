@@ -718,6 +718,38 @@ begin
     'destination_approval_request_id',ft.destination_approval_request_id,
     'source_approval_status',sar.status,
     'destination_approval_status',dar.status,
+    'source_actor_approval_step_id',(
+      select s.id from public.approval_request_steps s
+      where s.approval_request_id=ft.source_approval_request_id and s.status='pending'
+        and (not s.prohibit_submitter_approval or sar.submitted_by_profile_id<>private.current_profile_id())
+        and not exists(select 1 from public.approval_decisions d
+          where d.approval_request_step_id=s.id and d.approver_profile_id=private.current_profile_id())
+        and not exists(select 1 from public.approval_request_steps prior
+          where prior.approval_request_id=s.approval_request_id
+            and prior.step_number<s.step_number and prior.status<>'approved')
+        and not exists(select 1 from public.approval_decisions d
+          join public.approval_request_steps other_step on other_step.id=d.approval_request_step_id
+          where other_step.approval_request_id=s.approval_request_id
+            and other_step.id<>s.id and d.approver_profile_id=private.current_profile_id())
+        and private.has_permission(s.required_permission_key,ft.source_branch_id)
+      order by s.step_number limit 1
+    ),
+    'destination_actor_approval_step_id',(
+      select s.id from public.approval_request_steps s
+      where s.approval_request_id=ft.destination_approval_request_id and s.status='pending'
+        and (not s.prohibit_submitter_approval or dar.submitted_by_profile_id<>private.current_profile_id())
+        and not exists(select 1 from public.approval_decisions d
+          where d.approval_request_step_id=s.id and d.approver_profile_id=private.current_profile_id())
+        and not exists(select 1 from public.approval_request_steps prior
+          where prior.approval_request_id=s.approval_request_id
+            and prior.step_number<s.step_number and prior.status<>'approved')
+        and not exists(select 1 from public.approval_decisions d
+          join public.approval_request_steps other_step on other_step.id=d.approval_request_step_id
+          where other_step.approval_request_id=s.approval_request_id
+            and other_step.id<>s.id and d.approver_profile_id=private.current_profile_id())
+        and private.has_permission(s.required_permission_key,ft.destination_branch_id)
+      order by s.step_number limit 1
+    ),
     'source_journal_entry_id',ft.source_journal_entry_id,
     'destination_journal_entry_id',ft.destination_journal_entry_id,
     'created_at',ft.created_at
