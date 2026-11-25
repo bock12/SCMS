@@ -1127,6 +1127,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               <FinanceDocumentWorkflowWorkspace
                 branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
                 scope={selectedFinanceScope}
+                scopeOptions={availableFinanceScopes}
               />
               <FinanceJournalWorkspace
                 branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
