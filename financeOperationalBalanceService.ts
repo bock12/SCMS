@@ -9,6 +9,7 @@ export interface FinanceOperationalBalanceAccount {
   branch_id: string | null;
   district_id: string | null;
   account_name: string;
+  is_active: boolean;
   operational_account_type: FinanceOperationalBalanceAccountType;
   currency_code: string;
   provider_name: string | null;
