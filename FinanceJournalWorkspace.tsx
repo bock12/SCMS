@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod, serializeFinanceCsv, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 import { getFinanceOperationalBalances, type FinanceOperationalBalanceReport } from './financeOperationalBalanceService';
 
@@ -104,14 +104,13 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
 
   const downloadPostedCsv = () => {
     if (!report) return;
-    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const headers = ['Journal ID', 'Entry Number', 'Date', 'Description', 'Reference', 'Transaction Currency', 'Base Currency', 'Account Code', 'Account Name', 'Account Type', 'Debit', 'Credit', 'Base Debit', 'Base Credit'];
     const rows = report.lines.map(line => [
       line.journal_id, line.entry_number ?? '', line.entry_date, line.description, line.reference ?? '',
       line.currency_code, line.base_currency_code, line.account_code ?? '', line.account_name,
       line.account_type ?? '', line.debit_amount, line.credit_amount, line.base_debit_amount, line.base_credit_amount
-    ].map(quote).join(','));
-    const csv = [headers.map(quote).join(','), ...rows].join('\r\n');
+    ]);
+    const csv = serializeFinanceCsv(headers, rows);
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');
     link.href = url;
@@ -124,7 +123,6 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
 
   const downloadTransferReconciliationCsv = () => {
     if (!transferOutstandingRows.length) return;
-    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const headers = [
       'Transfer Number', 'Date', 'Source Branch', 'Destination Branch', 'Base Currency',
       'Reconciliation Status', 'Due From', 'Due To', 'Eliminated Due From',
@@ -135,12 +133,52 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
       item.destination_branch_name, item.base_currency_code, item.reconciliation_status,
       item.due_from_balance, item.due_to_balance, item.eliminated_due_from,
       item.eliminated_due_to, item.outstanding_due_from, item.outstanding_due_to
-    ].map(quote).join(','));
-    const csv = [headers.map(quote).join(','), ...rows].join('\\r\\n');
+    ]);
+    const csv = serializeFinanceCsv(headers, rows);
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');
     link.href = url;
     link.download = `scms_inter_branch_reconciliation_${reportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadConsolidatedPositionCsv = () => {
+    if (!consolidatedPosition.length) return;
+    const headers = ['Base Currency', 'Total Assets', 'Total Liabilities', 'Recorded Equity', 'Accumulated Surplus', 'Total Equity', 'Net Assets', 'Balance Check Difference'];
+    const rows = consolidatedPosition.map(row => [
+      row.base_currency_code, row.total_assets, row.total_liabilities, row.recorded_equity,
+      row.accumulated_surplus, row.total_equity, row.net_assets, row.balance_check_difference
+    ]);
+    const csv = serializeFinanceCsv(headers, rows);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scms_consolidated_financial_position_as_of_latest_posting_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadOrganizationalPerformanceCsv = () => {
+    if (!organizationalPerformance || (!organizationalPerformance.branches.length && !organizationalPerformance.districts.length)) return;
+    const headers = ['Scope Type', 'Scope Name', 'Base Currency', 'Revenue', 'Expenditure', 'Net Operating Position', 'Posted Journal Count'];
+    const branchRows = organizationalPerformance.branches.map(row => [
+      'Branch', scopeLabel('branch', row.scope_id), row.base_currency_code,
+      row.revenue, row.expenses, row.net_operating_position, row.posted_journal_count
+    ]);
+    const districtRows = organizationalPerformance.districts.map(row => [
+      'District', scopeLabel('district', row.scope_id), row.base_currency_code,
+      row.revenue, row.expenses, row.net_operating_position, row.posted_journal_count
+    ]);
+    const csv = serializeFinanceCsv(headers, [...branchRows, ...districtRows]);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scms_branch_district_performance_${reportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -157,6 +195,15 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
     const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[char] || char));
+    const positionRows = consolidatedPosition.map(item => `
+      <tr><td>${escapeHtml(item.base_currency_code)}</td><td>${item.total_assets.toFixed(2)}</td><td>${item.total_liabilities.toFixed(2)}</td><td>${item.recorded_equity.toFixed(2)}</td><td>${item.accumulated_surplus.toFixed(2)}</td><td>${item.total_equity.toFixed(2)}</td><td>${item.net_assets.toFixed(2)}</td><td>${item.balance_check_difference.toFixed(2)}</td></tr>
+    `).join('');
+    const branchPerformanceRows = (organizationalPerformance?.branches || []).map(item => `
+      <tr><td>${escapeHtml(scopeLabel('branch', item.scope_id))}</td><td>${escapeHtml(item.base_currency_code)}</td><td>${item.revenue.toFixed(2)}</td><td>${item.expenses.toFixed(2)}</td><td>${item.net_operating_position.toFixed(2)}</td><td>${item.posted_journal_count}</td></tr>
+    `).join('');
+    const districtPerformanceRows = (organizationalPerformance?.districts || []).map(item => `
+      <tr><td>${escapeHtml(scopeLabel('district', item.scope_id))}</td><td>${escapeHtml(item.base_currency_code)}</td><td>${item.revenue.toFixed(2)}</td><td>${item.expenses.toFixed(2)}</td><td>${item.net_operating_position.toFixed(2)}</td><td>${item.posted_journal_count}</td></tr>
+    `).join('');
     const summaries = report.currency_summaries.map(item => `
       <tr><td>${escapeHtml(item.base_currency_code)}</td><td>${item.revenue.toFixed(2)}</td><td>${item.expenses.toFixed(2)}</td><td>${item.net_operating_position.toFixed(2)}</td></tr>
     `).join('');
@@ -181,6 +228,9 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
       <p>Period: ${escapeHtml(reportPeriod)} · Generated: ${escapeHtml(new Date().toLocaleString())}</p>
       <p class="note">This report includes posted journal entries only. Draft, pending approval, approved-but-unposted and rejected entries are excluded.</p>
       <h2>Operating summary by base currency</h2><table><thead><tr><th>Currency</th><th>Revenue</th><th>Expenses</th><th>Net operating position</th></tr></thead><tbody>${summaries || '<tr><td colspan="4">No posted transactions in this period.</td></tr>'}</tbody></table>
+      <h2>Consolidated financial position — cumulative posted balances</h2><table><thead><tr><th>Currency</th><th>Assets</th><th>Liabilities</th><th>Recorded equity</th><th>Accumulated surplus</th><th>Total equity</th><th>Net assets</th><th>Balance check</th></tr></thead><tbody>${positionRows || '<tr><td colspan="8">No consolidated financial position is available.</td></tr>'}</tbody></table>
+      <h2>Branch performance — selected period</h2><table><thead><tr><th>Branch</th><th>Currency</th><th>Revenue</th><th>Expenditure</th><th>Net position</th><th>Posted journals</th></tr></thead><tbody>${branchPerformanceRows || '<tr><td colspan="6">No branch performance data in this scope and period.</td></tr>'}</tbody></table>
+      <h2>District performance — selected period</h2><table><thead><tr><th>District</th><th>Currency</th><th>Revenue</th><th>Expenditure</th><th>Net position</th><th>Posted journals</th></tr></thead><tbody>${districtPerformanceRows || '<tr><td colspan="6">No district performance data in this scope and period.</td></tr>'}</tbody></table>
       <h2>Posted account balances before consolidation eliminations</h2><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Currency</th><th>Debits</th><th>Credits</th><th>Balance</th></tr></thead><tbody>${accounts || '<tr><td colspan="7">No posted account balances.</td></tr>'}</tbody></table>
       <h2>Inter-branch clearing reconciliation and eliminations</h2><table><thead><tr><th>Base currency</th><th>Due from</th><th>Due to</th><th>Eliminated</th><th>Remaining due from</th><th>Remaining due to</th></tr></thead><tbody>${clearingSummaries || '<tr><td colspan="6">No posted inter-branch clearing balances in this period.</td></tr>'}</tbody></table>
       <h3>Consolidated clearing-account balances</h3><table><thead><tr><th>Code</th><th>Account</th><th>Currency</th><th>Before elimination</th><th>Eliminated</th><th>After elimination</th></tr></thead><tbody>${clearingAccounts || '<tr><td colspan="6">No clearing balances require elimination.</td></tr>'}</tbody></table>
@@ -268,7 +318,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-black text-slate-900">Official financial reports</h4>
-            <p className="mt-1 text-xs text-slate-600">Journal exports contain posted journal lines only. Inter-branch reconciliation is exported separately and shows posted clearing exposure by branch side.</p>
+            <p className="mt-1 text-xs text-slate-600">Journal, financial-position, branch and district exports are available as CSV. The printable report includes the selected-period operating and organizational summaries plus the cumulative consolidated financial position.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <select aria-label="Report period" value={reportPeriod} onChange={event => setReportPeriod(event.target.value as FinanceReportPeriod)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">
@@ -276,6 +326,8 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
             </select>
             <button type="button" onClick={downloadPostedCsv} disabled={loading || !report?.lines.length} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Export posted CSV</button>
             <button type="button" onClick={downloadTransferReconciliationCsv} disabled={loading || !transferOutstandingRows.length} className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-40">Export transfer reconciliation CSV</button>
+            <button type="button" onClick={downloadConsolidatedPositionCsv} disabled={loading || !consolidatedPosition.length} className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-xs font-bold text-violet-700 disabled:opacity-40">Export financial position CSV</button>
+            <button type="button" onClick={downloadOrganizationalPerformanceCsv} disabled={loading || !(organizationalPerformance?.branches.length || organizationalPerformance?.districts.length)} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-40">Export branch / district CSV</button>
             <button type="button" onClick={printPostedReport} disabled={loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Print / PDF</button>
           </div>
         </div>
