@@ -131,6 +131,11 @@ begin
         or (p_scope_type = 'district' and je.district_id = p_scope_id)
         or (p_scope_type = 'branch' and je.branch_id = p_scope_id)
       )
+      -- Only journal movements belonging to this operational account's
+      -- ownership are attributed to it. Branch accounts must never absorb
+      -- another branch's movements in a church-wide report.
+      and (fa.branch_id is null or je.branch_id = fa.branch_id)
+      and (fa.district_id is null or je.district_id = fa.district_id)
       -- A journal movement is assigned to the most specific configured
       -- operational account for that chart account and currency. This avoids
       -- counting the same chart-account movement again through inherited
