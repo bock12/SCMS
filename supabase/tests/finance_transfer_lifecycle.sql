@@ -53,6 +53,8 @@ BEGIN
   CROSS JOIN (VALUES(v_branch_a),(v_branch_b)) AS b(branch_id)
   WHERE r.name='finance_officer' AND r.is_active;
 
+  PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
+
   IF NOT private.has_permission('manage_finances',v_branch_a)
      OR NOT private.has_permission('manage_finances',v_branch_b)
      OR NOT private.has_permission('post_journals',v_branch_a)
@@ -101,8 +103,6 @@ BEGIN
   VALUES
     (v_band_a,v_policy_a,0,NULL),
     (v_band_b,v_policy_b,0,NULL);
-
-  PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
 
   -- Same-branch Cash -> Bank is one balanced journal and does not require
   -- inter-branch clearing accounts to be consulted by the RPC.
