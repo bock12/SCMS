@@ -34,6 +34,7 @@ on:
       - "supabase/migrations/20261122000300_add_scoped_finance_resource_write_api.sql"
       - "supabase/migrations/20261123131354_scope_aware_finance_transactions_and_journals.sql"
       - "supabase/migrations/20261124100331_require_distinct_finance_approval_levels.sql"
+      - "supabase/migrations/20261125193500_create_secure_internal_financial_transfers.sql"
       - "supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql"
       - "supabase/migrations/20261124021521_complete_secure_member_portal_lifecycle.sql"
       - "supabase/migrations/20261124021623_scope_member_directory_and_role_reads.sql"
@@ -70,6 +71,7 @@ on:
       - "supabase/tests/event_budget_payment_integration.sql"
       - "supabase/tests/finance_organizational_scope.sql"
       - "supabase/tests/finance_transaction_lifecycle.sql"
+      - "supabase/tests/finance_transfer_lifecycle.sql"
       - "scripts/build-supabase-baseline.mjs"
       - "scripts/build-supabase-baseline.test.mjs"
       - ".github/workflows/test-supabase-baseline-postgres.yml"
@@ -1256,6 +1258,9 @@ jobs:
       - name: Require distinct approvers across finance approval levels
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124100331_require_distinct_finance_approval_levels.sql
 
+      - name: Apply secure internal financial transfer lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261125193500_create_secure_internal_financial_transfers.sql
+
       - name: Apply secure member directory write APIs
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261124014219_add_secure_member_directory_write_api.sql
 
@@ -1497,6 +1502,9 @@ jobs:
 
       - name: Verify hierarchical finance ownership and district isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_organizational_scope.sql
+
+      - name: Verify same-branch and cross-branch financial transfer lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/finance_transfer_lifecycle.sql
 
       - name: Verify event budget approval, payment linkage and posted actuals
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/event_budget_payment_integration.sql
