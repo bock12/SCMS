@@ -17,6 +17,7 @@ import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
+import { FinanceTransferWorkspace } from './FinanceTransferWorkspace';
 import { DepartmentRequisitionPaymentWorkspace } from './DepartmentRequisitionPaymentWorkspace';
 import { 
   DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
@@ -33,9 +34,9 @@ interface FinanceOfficerWorkspaceProps {
   financeScope?: FinanceOwnershipScope;
 }
 
-type FinanceWorkspaceTab = 'ledger' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
+type FinanceWorkspaceTab = 'ledger' | 'transfers' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
 
-const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'requisitions', 'event_budgets', 'gateways', 'setup'];
+const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'transfers', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
 const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId, databaseProfileId, financeScope }) => {
   const financeBranchId = databaseBranchId ?? profile?.branch_id ?? null;
@@ -916,6 +917,20 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
           </div>
 
           <button
+            {selectedFinanceScope?.type === 'branch' && (
+            <button
+              onClick={() => setWorkspaceTab('transfers')}
+              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                workspaceTab === 'transfers'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ArrowRightLeft size={15} />
+              <span>Internal Transfers</span>
+            </button>
+          )}
+
             onClick={() => setWorkspaceTab('requisitions')}
             className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all shrink-0 cursor-pointer"
           >
@@ -1062,7 +1077,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         )}
       </div>
 
-      {(workspaceTab === 'ledger' || workspaceTab === 'setup') && (
+      {(workspaceTab === 'ledger' || workspaceTab === 'setup' || workspaceTab === 'transfers') && (
         <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -1389,6 +1404,22 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
       )}
 
       {/* --- WORKSPACE TAB 2: ACCOUNTING SETUP --- */}
+      {workspaceTab === 'transfers' && (
+        <section className="space-y-4">
+          {selectedFinanceScope?.type === 'branch' ? (
+            <FinanceTransferWorkspace
+              branchId={selectedFinanceScope.id}
+              branchOptions={availableFinanceScopes}
+              canCreate={canCreateScopedTransactions}
+            />
+          ) : (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+              Internal transfers are managed from a branch finance scope. Select a branch scope to create, review or approve transfers.
+            </div>
+          )}
+        </section>
+      )}
+
       {workspaceTab === 'setup' && (
         <section className="space-y-4">
           {selectedFinanceScope ? (
