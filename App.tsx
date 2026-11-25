@@ -10,7 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import { resolveDataClient, supabaseAuthEnabled, supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
+import { resolveDataClient, resolveMemberDataClient, supabaseAuthEnabled, supabaseDataClient } from './supabaseIntegration';
 import { getMemberTransfers } from './memberTransferService';
 import type { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
@@ -245,7 +245,12 @@ const Navbar = ({
   const handleSignOut = async () => {
     try {
       setActiveMenu(null);
-      await supabase.auth.signOut();
+      if (supabaseAuthEnabled) {
+        if (!supabaseDataClient) throw new Error('Supabase Auth is enabled but the client is not configured.');
+        await supabaseDataClient.auth.signOut();
+      } else {
+        await supabase.auth.signOut();
+      }
       navigate('/');
     } catch (e) {
       console.error(e);
@@ -1829,7 +1834,7 @@ const DirectoryPage = ({ profile }: { profile: Profile | null }) => {
   const loadDirectory = async () => {
     setLoading(true);
     try {
-      const branchClient: any = resolveDataClient(supabase);
+      const branchClient: any = resolveMemberDataClient(supabase);
       const [directoryRows, branchRes, districtRes, affiliations] = await Promise.all([
         getMembers(),
         branchClient.from('church_branches').select('*').order('name', { ascending: true }),
@@ -2999,9 +3004,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
     setLoadingMinistries(true);
     setLoadError(null);
     try {
-      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
+      const readClient: any = resolveMemberDataClient(supabase);
       const [minList, { data: mmData, error: mmErr }, joinRequests] = await Promise.all([
         getMinistriesList(),
         readClient.from('ministry_members').select('*'),
@@ -3028,9 +3031,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
   const syncFreshProfile = async (memberId?: string) => {
     if (!memberId) return;
     try {
-      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
+      const readClient: any = resolveMemberDataClient(supabase);
       const { data } = await readClient.from('profiles').select('*').eq('id', memberId).maybeSingle();
       if (data) setFreshProfile(data as Profile);
     } catch {
@@ -3047,9 +3048,7 @@ const MinistriesPage = ({ profile }: { profile: Profile | null }) => {
 
   useEffect(() => {
     const handleSync = () => {
-      const readClient: any = supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
-        ? supabaseDataClient
-        : supabase;
+      const readClient: any = resolveMemberDataClient(supabase);
       if (profile?.id) {
         getJoinRequestsForMember(profile.id).then(setMyJoinRequests).catch(() => {});
         syncFreshProfile(profile.id);
@@ -11352,17 +11351,12 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
     };
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update(updatedProfileData)
-        .eq('id', profile.id);
-
-      if (error) {
-        console.error('Unable to update member profile:', error);
-        setSaveError('Could not save profile changes right now. Please try again.');
-        setSaving(false);
-        return;
-      }
+      await updateUnifiedMember(profile.id, {
+        ...updatedProfileData,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        is_baptized: Boolean(profile.is_baptized || bDateInput)
+      });
 
       window.dispatchEvent(new CustomEvent('profile-updated', {
         detail: { id: profile.id, ...updatedProfileData }
@@ -11390,21 +11384,14 @@ const ProfilePage = ({ profile }: { profile: Profile | null }) => {
 
     if (profile) {
       try {
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            baptism_date: nextMilestones.baptismDate,
-            baptized_by: nextMilestones.baptizedBy,
-            membership_date: nextMilestones.membershipDate
-          })
-          .eq('id', profile.id);
-
-        if (error) {
-          console.error('Unable to update milestones:', error);
-          setSaveError('Could not save spiritual milestones.');
-          setMilestonesSaving(false);
-          return;
-        }
+        await updateUnifiedMember(profile.id, {
+          first_name: profile.first_name,
+          last_name: profile.last_name,
+          is_baptized: Boolean(profile.is_baptized || nextMilestones.baptismDate),
+          baptism_date: nextMilestones.baptismDate || undefined,
+          baptized_by: nextMilestones.baptizedBy,
+          membership_date: nextMilestones.membershipDate
+        });
 
         window.dispatchEvent(new CustomEvent('profile-updated', {
           detail: {
