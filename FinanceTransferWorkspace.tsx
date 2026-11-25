@@ -125,12 +125,14 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
   useEffect(() => {
     if (sourceAccount) {
       setCurrencyCode(sourceAccount.currency_code);
-      setDestinationAccountId(current => destinationAccounts.some(account =>
-        account.id === current && account.currency_code === sourceAccount.currency_code)
+      const compatibleAccounts = destinationConfiguration.financialAccounts.filter(account =>
+        account.is_active && account.branch_id === destinationBranchId &&
+        account.currency_code === sourceAccount.currency_code);
+      setDestinationAccountId(current => compatibleAccounts.some(account => account.id === current)
         ? current
-        : destinationAccounts.find(account => account.currency_code === sourceAccount.currency_code)?.id || '');
+        : compatibleAccounts[0]?.id || '');
     }
-  }, [sourceAccountId, sourceConfiguration.financialAccounts]);
+  }, [sourceAccountId, sourceConfiguration.financialAccounts, destinationConfiguration.financialAccounts, destinationBranchId]);
 
   const updateDestinationBranch = (nextBranchId: string) => {
     setDestinationBranchId(nextBranchId);
