@@ -401,6 +401,7 @@ test.describe('SCMS finance browser smoke', () => {
     // a balance-sheet journal (not a receipt/payment or income/expense record)
     // and require the atomic transfer-posting action.
     await page.goto('/#/portal/finance?tab=transfers');
+    await page.getByRole('button', { name: 'Internal Transfers', exact: true }).click();
     await expect(page.getByText('Internal financial transfers')).toBeVisible();
     await expect(page.getByText('Record a transfer')).toBeVisible();
     await page.getByRole('spinbutton').first().fill('75');
