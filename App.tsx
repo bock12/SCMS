@@ -10,7 +10,7 @@ import {
   Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
-import { resolveDataClient, resolveMemberDataClient, supabaseAuthEnabled, supabaseDataClient } from './supabaseIntegration';
+import { resolveMemberDataClient, supabaseAuthEnabled, supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
 import { getMemberTransfers } from './memberTransferService';
 import type { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, Ministry, MinistryJoinRequest, MinistryMember, FinancialRecord, PrayerRequest, ChurchEvent, GivingConfig, DepartmentRequisition, RequisitionItem, MembershipStatus, PortalAccountStatus, AppRole } from './types';
 import AdminDashboard, { StreamDetailsPage } from './AdminDashboard';
