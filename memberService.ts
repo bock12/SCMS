@@ -1,7 +1,7 @@
 import type { AppRole, MembershipStatus, PortalAccountStatus, Profile } from './types';
 import { mapCanonicalProfileToProfile, mapProfileInputToCanonicalInsert, mapProfileInputToCanonicalUpdate } from './memberProfileMapper';
 import { supabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseMemberIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 
 function createUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -190,7 +190,7 @@ export function hasPortalAccess(person: Pick<Profile, 'auth_user_id'> | null | u
  * Includes all church members whether or not they have portal login access.
  */
 export async function getMembers(): Promise<Profile[]> {
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
     // Keep the live directory projection to the fields required by the
     // directory view model. RLS remains the authority for which rows are visible.
@@ -344,7 +344,7 @@ export async function registerUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const client = requireLiveMemberWriteClient();
     const canonical = mapProfileInputToCanonicalInsert({
       first_name: firstName,
@@ -538,7 +538,7 @@ export async function updateUnifiedMember(
     portal_status: input.portal_status
   });
 
-  const liveMemberDirectoryEnabled = supabaseIntegrationEnabled && supabaseAuthEnabled;
+  const liveMemberDirectoryEnabled = supabaseMemberIntegrationEnabled && supabaseAuthEnabled;
   const readClient = liveMemberDirectoryEnabled
     ? requireLiveMemberWriteClient()
     : supabase;
@@ -568,7 +568,7 @@ export async function updateUnifiedMember(
     throw new Error('A valid email address is required when Portal Access is enabled.');
   }
 
-  if (!(supabaseIntegrationEnabled && supabaseAuthEnabled) && input.branch_id) {
+  if (!(supabaseMemberIntegrationEnabled && supabaseAuthEnabled) && input.branch_id) {
     const { data: branch, error: branchError } = await supabase
       .from('church_branches')
       .select('id')
@@ -578,7 +578,7 @@ export async function updateUnifiedMember(
     if (!branch) throw new Error('The selected branch does not exist.');
   }
 
-  if (!(supabaseIntegrationEnabled && supabaseAuthEnabled)) {
+  if (!(supabaseMemberIntegrationEnabled && supabaseAuthEnabled)) {
     await assertUniqueContactDetails(email, phone, personId);
   }
 
@@ -604,7 +604,7 @@ export async function updateUnifiedMember(
     } : {})
   });
 
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const client = requireLiveMemberWriteClient();
     const memberPatch = Object.fromEntries(
       Object.entries(updates).filter(([key]) => key !== 'branch_id')
@@ -724,7 +724,7 @@ export async function updateMembershipStatus(
   membershipStatus: MembershipStatus
 ): Promise<Profile> {
   validateMemberAttributes({ membership_status: membershipStatus });
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const client = requireLiveMemberWriteClient();
     const { data, error } = await (client as any).rpc('update_member_profile', {
       p_profile_id: personId,
@@ -749,7 +749,7 @@ export async function updatePortalAccountStatus(
   portalStatus: PortalAccountStatus
 ): Promise<Profile> {
   validateMemberAttributes({ portal_status: portalStatus });
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const current = await getLiveMemberProfile(personId);
     const action: LivePortalAction =
       portalStatus === 'active' ? 'activate' :
@@ -791,7 +791,7 @@ export async function enablePortalAccess(
   personId: string,
   options?: { email?: string; primary_role?: AppRole }
 ): Promise<UnifiedMemberSaveResult> {
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const current = await getLiveMemberProfile(personId);
     const email = normalizeMemberEmail(options?.email ?? current.email);
     if (!email) throw new Error('A valid email address is required to enable portal access.');
@@ -850,7 +850,7 @@ export async function enablePortalAccess(
 
 /** Revokes portal login access (`auth_user_id = null`) while keeping the person's church membership record intact. */
 export async function disablePortalAccess(personId: string): Promise<Profile> {
-  if (supabaseIntegrationEnabled && supabaseAuthEnabled) {
+  if (supabaseMemberIntegrationEnabled && supabaseAuthEnabled) {
     const current = await getLiveMemberProfile(personId);
     const result = await invokeLivePortalAction(personId, 'revoke');
     return mergePortalActionResult(current, 'revoke', result);
