@@ -1,9 +1,9 @@
 import type { Ministry } from './types';
 import { supabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseMemberIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 
 function getMinistryDefinitionWriteClient(): any {
-  if (!supabaseIntegrationEnabled) return supabase;
+  if (!supabaseMemberIntegrationEnabled) return supabase;
   if (!supabaseAuthEnabled) {
     throw new Error('Ministry definition changes require a real Supabase Auth session.');
   }
