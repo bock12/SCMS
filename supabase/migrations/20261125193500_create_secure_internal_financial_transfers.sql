@@ -974,4 +974,44 @@ comment on function public.save_finance_scope_approval_policies(text,uuid,jsonb,
   'Creates immutable, versioned financial-document, budget and branch-level financial-transfer approval policies at authorized organizational scopes.';
 
 
+
+create or replace function public.get_finance_branch_clearing_accounts(p_branch_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_profile_id uuid;
+  v_result jsonb;
+begin
+  if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
+  v_profile_id:=private.current_profile_id();
+  if v_profile_id is null then raise exception 'No member profile is linked to this account'; end if;
+  if p_branch_id is null or not (
+    private.has_permission('view_finances',p_branch_id)
+    or private.has_permission('manage_finances',p_branch_id)
+  ) then raise exception 'Insufficient permission to view branch clearing-account configuration'; end if;
+
+  select jsonb_build_object(
+    'branch_id',c.branch_id,
+    'due_from_chart_account_id',c.due_from_chart_account_id,
+    'due_to_chart_account_id',c.due_to_chart_account_id,
+    'is_active',c.is_active,
+    'updated_at',c.updated_at
+  ) into v_result
+  from public.finance_branch_clearing_accounts c
+  where c.branch_id=p_branch_id;
+
+  return coalesce(v_result,'null'::jsonb);
+end;
+$$;
+
+revoke all on function public.get_finance_branch_clearing_accounts(uuid)
+  from public,anon,authenticated,service_role;
+grant execute on function public.get_finance_branch_clearing_accounts(uuid)
+  to authenticated;
+
+
 commit;
