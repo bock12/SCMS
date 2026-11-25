@@ -148,15 +148,19 @@ begin
           and more_specific.currency_code = fa.currency_code
           and more_specific.account_type = fa.account_type
           and (
-            more_specific.branch_id = je.branch_id
+            (fa.branch_id is null and more_specific.branch_id = je.branch_id)
             or (
               fa.branch_id is null
               and fa.district_id is null
               and more_specific.branch_id is null
               and more_specific.district_id = je.district_id
             )
+            or (
+              more_specific.branch_id is not distinct from fa.branch_id
+              and more_specific.district_id is not distinct from fa.district_id
+              and more_specific.id < fa.id
+            )
           )
-          and more_specific.id <> fa.id
       )
     where fa.is_active
       and fa.account_type in ('cash', 'bank', 'mobile_money')
