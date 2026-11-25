@@ -27,7 +27,7 @@ describe('finance report CSV serialization', () => {
   test('quotes fields and escapes embedded quotes, commas and line breaks', () => {
     expect(serializeFinanceCsv(['Account', 'Description'], [
       ['Cash, bank', 'Offering "Sunday"\nservice']
-    ])).toBe('"Account","Description"\\r\\n"Cash, bank","Offering ""Sunday""\nservice"');
+    ])).toBe('"Account","Description"\r\n"Cash, bank","Offering ""Sunday""\nservice"');
   });
 });
 
