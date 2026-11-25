@@ -2036,6 +2036,9 @@ export function createMockFinanceRpc(
       return success({ journal_entry_id: journal.id, status: 'posted', already_posted: true });
     }
     if (journal.status !== 'draft') return fail('Only draft journal entries can be posted');
+    if (journal.source_type === 'financial_transfer') {
+      return fail('Internal-transfer journals must be posted together through post_financial_transfer');
+    }
     if (journal.source_type === 'financial_document_pending') {
       return fail('A financial-document journal cannot be posted before approval and linkage');
     }
@@ -2671,6 +2674,11 @@ export function createMockFinanceRpc(
         if (name === 'decide_event_budget_approval') return decideEventBudgetApproval(args);
         if (name === 'create_event_budget_payment') return createEventBudgetPayment(args);
         if (name === 'get_event_budgets') return getEventBudgets(args);
+        if (name === 'set_finance_branch_clearing_accounts') return setFinanceBranchClearingAccounts(args);
+        if (name === 'create_financial_transfer') return createFinancialTransfer(args);
+        if (name === 'decide_financial_transfer_approval') return decideFinancialTransferApproval(args);
+        if (name === 'post_financial_transfer') return postFinancialTransfer(args);
+        if (name === 'get_financial_transfers') return getFinancialTransfers(args);
         if (name === 'get_finance_documents') return getFinanceDocuments(args);
         if (name === 'get_finance_scope_documents') return getFinanceScopeDocuments(args);
         if (name === 'get_finance_journals') return getFinanceJournals(args);
