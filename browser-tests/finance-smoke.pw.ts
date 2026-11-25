@@ -82,12 +82,19 @@ test.describe('SCMS finance browser smoke', () => {
           { profile_id: actor.id, permission: 'manage_finances', branch_id: null },
           { profile_id: actor.id, permission: 'post_journals', branch_id: null }
         ],
-        financialAccounts: [{
-          id: 'pw-cash-account', branch_id: actor.branch_id, name: 'Browser Test Cash',
-          account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'pw-cash-chart'
-        }],
+        financialAccounts: [
+          {
+            id: 'pw-cash-account', branch_id: actor.branch_id, name: 'Browser Test Cash',
+            account_type: 'cash', currency_code: 'SLL', is_active: true, chart_account_id: 'pw-cash-chart'
+          },
+          {
+            id: 'pw-bank-account', branch_id: actor.branch_id, name: 'Browser Test Bank',
+            account_type: 'bank', currency_code: 'SLL', is_active: true, chart_account_id: 'pw-bank-chart'
+          }
+        ],
         chartAccounts: [
           { id: 'pw-cash-chart', code: '1000', name: 'Cash', account_type: 'asset', is_active: true, is_control_account: false },
+          { id: 'pw-bank-chart', code: '1010', name: 'Bank', account_type: 'asset', is_active: true, is_control_account: false },
           { id: 'pw-income-chart', code: '4000', name: 'Offering Income', account_type: 'income', is_active: true, is_control_account: false },
           { id: 'pw-expense-chart', code: '5000', name: 'Operating Expense', account_type: 'expense', is_active: true, is_control_account: false }
         ],
@@ -98,15 +105,24 @@ test.describe('SCMS finance browser smoke', () => {
         financialYears: [{
           id: 'pw-year', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open'
         }],
-        approvalPolicyBands: [{ id: 'pw-band', policy_id: 'pw-policy', min_amount_base: 0, max_amount_base: null }],
+        approvalPolicyBands: [
+          { id: 'pw-band', policy_id: 'pw-policy', min_amount_base: 0, max_amount_base: null },
+          { id: 'pw-transfer-band', policy_id: 'pw-transfer-policy', min_amount_base: 0, max_amount_base: null }
+        ],
         approvalPolicySteps: [
           { id: 'pw-step-1', band_id: 'pw-band', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
           { id: 'pw-step-2', band_id: 'pw-band', step_number: 2, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
         ],
-        approvalPolicies: [{
-          id: 'pw-policy', name: 'Browser Test Approval', transaction_type: 'financial_document',
-          branch_id: actor.branch_id, version: 1, effective_from: '2026-01-01', is_active: true
-        }],
+        approvalPolicies: [
+          {
+            id: 'pw-policy', name: 'Browser Test Approval', transaction_type: 'financial_document',
+            branch_id: actor.branch_id, version: 1, effective_from: '2026-01-01', is_active: true
+          },
+          {
+            id: 'pw-transfer-policy', name: 'Browser Test Transfer Approval', transaction_type: 'financial_transfer',
+            branch_id: actor.branch_id, version: 1, effective_from: '2026-01-01', is_active: true
+          }
+        ],
         events: [], budgets: [], budgetLines: [], documents: [], journals: [],
         journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
       };
