@@ -8,6 +8,10 @@ DECLARE
   v_branch_b uuid := '98100000-0000-4000-8000-000000000002';
   v_auth uuid := '98200000-0000-4000-8000-000000000001';
   v_profile uuid := '98300000-0000-4000-8000-000000000001';
+  v_approver_a_auth uuid := '98200000-0000-4000-8000-000000000002';
+  v_approver_b_auth uuid := '98200000-0000-4000-8000-000000000003';
+  v_approver_a_profile uuid := '98300000-0000-4000-8000-000000000002';
+  v_approver_b_profile uuid := '98300000-0000-4000-8000-000000000003';
   v_asset_a uuid := '98400000-0000-4000-8000-000000000001';
   v_asset_b uuid := '98400000-0000-4000-8000-000000000002';
   v_due_from_a uuid := '98400000-0000-4000-8000-000000000003';
@@ -21,6 +25,16 @@ DECLARE
   v_policy_b uuid := '98700000-0000-4000-8000-000000000002';
   v_band_a uuid := '98700000-0000-4000-8000-000000000003';
   v_band_b uuid := '98700000-0000-4000-8000-000000000004';
+  v_policy_a_approval uuid := '98700000-0000-4000-8000-000000000005';
+  v_policy_b_approval uuid := '98700000-0000-4000-8000-000000000006';
+  v_band_a_approval uuid := '98700000-0000-4000-8000-000000000007';
+  v_band_b_approval uuid := '98700000-0000-4000-8000-000000000008';
+  v_transfer_step_a uuid;
+  v_transfer_step_b uuid;
+  v_rejected jsonb;
+  v_rejected_id uuid;
+  v_rejected_source_journal uuid;
+  v_rejected_destination_journal uuid;
   v_same jsonb;
   v_same_retry jsonb;
   v_cross jsonb;
@@ -159,6 +173,46 @@ BEGIN
     RAISE EXCEPTION 'Same-branch transfer did not post its journal and transfer state';
   END IF;
 
+  -- Install a second, versioned policy with one distinct approver per branch.
+  -- The transfer cannot be posted after only one branch has approved it.
+  INSERT INTO auth.users(id,email)
+  VALUES
+    (v_approver_a_auth,'fin-int-004-approver-a@example.invalid'),
+    (v_approver_b_auth,'fin-int-004-approver-b@example.invalid');
+  INSERT INTO public.profiles(id,auth_user_id,first_name,last_name,email)
+  VALUES
+    (v_approver_a_profile,v_approver_a_auth,'Branch A','Approver','fin-int-004-approver-a@example.invalid'),
+    (v_approver_b_profile,v_approver_b_auth,'Branch B','Approver','fin-int-004-approver-b@example.invalid');
+  UPDATE public.profiles SET portal_access_status='active'
+  WHERE id IN(v_approver_a_profile,v_approver_b_profile);
+
+  INSERT INTO public.profile_role_assignments(
+    profile_id,role_id,scope_type,branch_id,assigned_at,is_active
+  )
+  SELECT v_approver_a_profile,r.id,'branch',v_branch_a,now()-interval '1 day',true
+  FROM public.roles r WHERE r.name='finance_officer' AND r.is_active;
+  INSERT INTO public.profile_role_assignments(
+    profile_id,role_id,scope_type,branch_id,assigned_at,is_active
+  )
+  SELECT v_approver_b_profile,r.id,'branch',v_branch_b,now()-interval '1 day',true
+  FROM public.roles r WHERE r.name='finance_officer' AND r.is_active;
+
+  INSERT INTO public.approval_policies(
+    id,name,transaction_type,branch_id,district_id,version,effective_from,
+    is_active,created_by_profile_id
+  ) VALUES
+    (v_policy_a_approval,'FIN-INT-004 Branch A Transfer Approval','financial_transfer',v_branch_a,v_district,2,current_date,true,v_profile),
+    (v_policy_b_approval,'FIN-INT-004 Branch B Transfer Approval','financial_transfer',v_branch_b,v_district,2,current_date,true,v_profile);
+  INSERT INTO public.approval_policy_bands(id,policy_id,min_amount_base,max_amount_base)
+  VALUES
+    (v_band_a_approval,v_policy_a_approval,0,NULL),
+    (v_band_b_approval,v_policy_b_approval,0,NULL);
+  INSERT INTO public.approval_policy_steps(
+    band_id,step_number,required_permission_key,required_approvals,prohibit_submitter_approval
+  ) VALUES
+    (v_band_a_approval,1,'approve_finances',1,true),
+    (v_band_b_approval,1,'approve_finances',1,true);
+
   -- Cross-branch movement uses reciprocal branch-local clearing journals.
   v_cross:=public.create_financial_transfer(
     '2098-11-25',v_branch_a,v_financial_a,v_branch_b,v_financial_b,
@@ -169,7 +223,7 @@ BEGIN
   v_source_journal:=(v_cross->>'source_journal_entry_id')::uuid;
   v_destination_journal:=(v_cross->>'destination_journal_entry_id')::uuid;
 
-  IF v_cross->>'status'<>'approved'
+  IF v_cross->>'status'<>'pending_approval'
      OR v_source_journal IS NULL OR v_destination_journal IS NULL
      OR v_source_journal=v_destination_journal THEN
     RAISE EXCEPTION 'Cross-branch transfer did not create two approved branch-local journals';
@@ -207,6 +261,41 @@ BEGIN
     RAISE EXCEPTION 'Cross-branch reciprocal due-from/due-to journal orientation is incorrect';
   END IF;
 
+  IF (SELECT count(*) FROM public.approval_requests
+      WHERE transaction_type='financial_transfer' AND target_id=v_transfer_id
+        AND status='pending')<>2 THEN
+    RAISE EXCEPTION 'Cross-branch transfer must create two separate pending approval requests';
+  END IF;
+  SELECT s.id INTO v_transfer_step_a
+  FROM public.approval_request_steps s
+  WHERE s.approval_request_id=(SELECT source_approval_request_id FROM public.financial_transfers WHERE id=v_transfer_id);
+  SELECT s.id INTO v_transfer_step_b
+  FROM public.approval_request_steps s
+  WHERE s.approval_request_id=(SELECT destination_approval_request_id FROM public.financial_transfers WHERE id=v_transfer_id);
+
+  PERFORM set_config('request.jwt.claim.sub',v_approver_a_auth::text,true);
+  PERFORM public.decide_financial_transfer_approval(v_transfer_step_a,'approved','Sending branch reviewed');
+  IF (SELECT status FROM public.financial_transfers WHERE id=v_transfer_id)<>'pending_approval' THEN
+    RAISE EXCEPTION 'One branch approval must not approve the complete cross-branch transfer';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+  BEGIN
+    PERFORM public.post_financial_transfer(v_transfer_id);
+    RAISE EXCEPTION 'FIN_INT_004_EXPECTED_PARTIAL_APPROVAL_POST_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='FIN_INT_004_EXPECTED_PARTIAL_APPROVAL_POST_DENIAL' THEN RAISE; END IF;
+    IF position('approval workflows' in lower(SQLERRM))=0 THEN RAISE; END IF;
+  END;
+
+  PERFORM set_config('request.jwt.claim.sub',v_approver_b_auth::text,true);
+  PERFORM public.decide_financial_transfer_approval(v_transfer_step_b,'approved','Receiving branch reviewed');
+  IF (SELECT status FROM public.financial_transfers WHERE id=v_transfer_id)<>'approved' THEN
+    RAISE EXCEPTION 'Transfer must become approved only after both branch approval requests are complete';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+
   -- A caller cannot post just one transfer journal through the generic API.
   BEGIN
     PERFORM public.post_finance_journal_entry(v_source_journal);
@@ -236,6 +325,38 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Cross-branch transfer did not finalize with both journal links';
   END IF;
+
+  -- A rejection by either branch rejects the whole transfer and leaves both
+  -- journals as drafts; it must never create a one-sided ledger movement.
+  v_rejected:=public.create_financial_transfer(
+    '2098-11-25',v_branch_a,v_financial_a,v_branch_b,v_financial_b,
+    90,'SLE',1,'Rejected branch transfer','FININT4-REJECT',
+    '98000000-0000-4000-8000-000000000103'
+  );
+  v_rejected_id:=(v_rejected->>'transfer_id')::uuid;
+  v_rejected_source_journal:=(v_rejected->>'source_journal_entry_id')::uuid;
+  v_rejected_destination_journal:=(v_rejected->>'destination_journal_entry_id')::uuid;
+  SELECT s.id INTO v_transfer_step_a
+  FROM public.approval_request_steps s
+  WHERE s.approval_request_id=(SELECT source_approval_request_id FROM public.financial_transfers WHERE id=v_rejected_id);
+  PERFORM set_config('request.jwt.claim.sub',v_approver_a_auth::text,true);
+  PERFORM public.decide_financial_transfer_approval(v_transfer_step_a,'rejected','Sending branch rejected transfer');
+  IF (SELECT status FROM public.financial_transfers WHERE id=v_rejected_id)<>'rejected' THEN
+    RAISE EXCEPTION 'A branch rejection must reject the complete transfer';
+  END IF;
+  IF (SELECT count(*) FROM public.journal_entries
+      WHERE id IN(v_rejected_source_journal,v_rejected_destination_journal)
+        AND status='draft')<>2 THEN
+    RAISE EXCEPTION 'Rejected transfer must leave both branch journals unposted';
+  END IF;
+  PERFORM set_config('request.jwt.claim.sub',v_profile::text,true);
+  BEGIN
+    PERFORM public.post_financial_transfer(v_rejected_id);
+    RAISE EXCEPTION 'FIN_INT_004_EXPECTED_REJECTED_POST_DENIAL';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM='FIN_INT_004_EXPECTED_REJECTED_POST_DENIAL' THEN RAISE; END IF;
+    IF position('must be approved' in lower(SQLERRM))=0 THEN RAISE; END IF;
+  END;
 
   IF (SELECT count(*) FROM public.journal_lines
       WHERE journal_entry_id IN(v_source_journal,v_destination_journal)
