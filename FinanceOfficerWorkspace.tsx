@@ -1677,7 +1677,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
       {/* MOBILE & TABLET BOTTOM NAV BAR (Fixed at bottom on < lg screens) */}
       <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
         {canViewFinance ? (
-          <div className="grid grid-cols-5 gap-1 max-w-2xl mx-auto">
+          <div className={`grid ${selectedFinanceScope?.type === 'branch' ? 'grid-cols-6' : 'grid-cols-5'} gap-1 max-w-2xl mx-auto`}>
             <button
               onClick={() => setWorkspaceTab('ledger')}
               className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
@@ -1690,6 +1690,20 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               <span className="mt-0.5 truncate w-full text-center">Ledger</span>
             </button>
   
+            {selectedFinanceScope?.type === 'branch' && (
+              <button
+                onClick={() => setWorkspaceTab('transfers')}
+                className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                  workspaceTab === 'transfers'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <ArrowRightLeft size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Transfers</span>
+              </button>
+            )}
+
             <button
               onClick={() => setWorkspaceTab('requisitions')}
               className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
