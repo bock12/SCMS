@@ -84,6 +84,7 @@ begin
     'branch_id', account_row.branch_id,
     'district_id', account_row.district_id,
     'account_name', account_row.account_name,
+    'is_active', account_row.is_active,
     'operational_account_type', account_row.operational_account_type,
     'currency_code', account_row.currency_code,
     'provider_name', account_row.provider_name,
@@ -104,6 +105,7 @@ begin
       fa.branch_id,
       fa.district_id,
       fa.name as account_name,
+      fa.is_active,
       fa.account_type as operational_account_type,
       fa.currency_code,
       fa.provider_name,
@@ -143,8 +145,7 @@ begin
       and not exists (
         select 1
         from public.financial_accounts more_specific
-        where more_specific.is_active
-          and more_specific.chart_account_id = fa.chart_account_id
+        where more_specific.chart_account_id = fa.chart_account_id
           and more_specific.currency_code = fa.currency_code
           and more_specific.account_type = fa.account_type
           and (
@@ -162,9 +163,7 @@ begin
             )
           )
       )
-    where fa.is_active
-      and fa.account_type in ('cash', 'bank', 'mobile_money')
-      and coa.is_active
+    where fa.account_type in ('cash', 'bank', 'mobile_money')
       and coa.account_type = 'asset'
       and (
         p_scope_type = 'church'
@@ -179,7 +178,7 @@ begin
         ))
       )
     group by fa.id, fa.chart_account_id, fa.branch_id, fa.district_id,
-      fa.name, fa.account_type, fa.currency_code, fa.provider_name,
+      fa.name, fa.is_active, fa.account_type, fa.currency_code, fa.provider_name,
       fa.account_reference, coa.code, coa.name, coa.normal_balance,
       cs.base_currency_code
   ) account_row;
