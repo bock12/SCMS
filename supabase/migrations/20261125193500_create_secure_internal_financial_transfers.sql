@@ -69,12 +69,11 @@ create table public.financial_transfers (
       and destination_journal_entry_id is null)
     or
     (source_branch_id <> destination_branch_id
-      and destination_approval_request_id is not null
-      and destination_journal_entry_id is not null)
-  ),
-  constraint financial_transfers_journal_linked check (
-    source_journal_entry_id is not null
-    and (source_branch_id = destination_branch_id or destination_journal_entry_id is not null)
+      and (
+        (destination_approval_request_id is null and destination_journal_entry_id is null)
+        or
+        (destination_approval_request_id is not null and destination_journal_entry_id is not null)
+      ))
   )
 );
 
