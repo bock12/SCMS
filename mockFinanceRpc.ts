@@ -22,11 +22,13 @@ export interface MockFinanceState {
   budgets: Array<Record<string, any>>;
   budgetLines: Array<Record<string, any>>;
   approvalPolicies: Array<{
-    id: string; is_active: boolean; transaction_type: 'financial_document' | 'budget' | 'requisition';
+    id: string; is_active: boolean; transaction_type: 'financial_document' | 'budget' | 'requisition' | 'financial_transfer';
     branch_id: string | null; district_id?: string | null; min_amount: number; max_amount: number | null;
     approver_profile_ids: string[]; [key: string]: any;
   }>;
   documents: Array<Record<string, any>>;
+  transfers: Array<Record<string, any>>;
+  branchClearingAccounts: Array<Record<string, any>>;
   journals: Array<Record<string, any>>;
   journalLines: Array<Record<string, any>>;
   approvalRequests: Array<Record<string, any>>;
@@ -69,6 +71,8 @@ export function createBrowserMockFinanceStorage(
         throw new Error('Stored mock finance data is invalid; reset the mock finance store before continuing.');
       }
       parsed.approvalDecisions = Array.isArray(parsed.approvalDecisions) ? parsed.approvalDecisions : [];
+      parsed.transfers = Array.isArray(parsed.transfers) ? parsed.transfers : [];
+      parsed.branchClearingAccounts = Array.isArray(parsed.branchClearingAccounts) ? parsed.branchClearingAccounts : [];
       parsed.branches = Array.isArray(parsed.branches) ? parsed.branches : [];
       parsed.districts = Array.isArray(parsed.districts) ? parsed.districts : [];
       parsed.ministries = Array.isArray(parsed.ministries) ? parsed.ministries : [];
@@ -114,7 +118,7 @@ export function createEmptyMockFinanceState(): MockFinanceState {
     profiles: [], permissions: [], branches: [], districts: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
     financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
-    documents: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
+    documents: [], transfers: [], branchClearingAccounts: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
   };
 }
 
