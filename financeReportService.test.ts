@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyFinanceTransferEliminations, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
 import type { FinanceJournal, FinanceJournalLedger } from './financeJournalService';
 
 function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
@@ -229,5 +229,57 @@ describe('branch and district financial performance', () => {
     expect(buildFinanceOrganizationalPerformanceReport(
       ledger(payment), 'month', new Date('2026-12-25T12:00:00')
     ).branches).toEqual([]);
+  });
+});
+
+
+describe('consolidated financial position', () => {
+  test('eliminates matched inter-branch clearing and includes accumulated surplus in equity', () => {
+    const balances = [
+      { account_id: 'cash', account_code: '1000', account_name: 'Cash', account_type: 'asset', normal_balance: 'debit', base_currency_code: 'SLE', debit_total: 400, credit_total: 0, balance: 400 },
+      { account_id: 'due-from', account_code: '1200', account_name: 'Due from branches', account_type: 'asset', normal_balance: 'debit', base_currency_code: 'SLE', debit_total: 100, credit_total: 0, balance: 100 },
+      { account_id: 'due-to', account_code: '2200', account_name: 'Due to branches', account_type: 'liability', normal_balance: 'credit', base_currency_code: 'SLE', debit_total: 0, credit_total: 100, balance: 100 },
+      { account_id: 'loan', account_code: '2300', account_name: 'Loan payable', account_type: 'liability', normal_balance: 'credit', base_currency_code: 'SLE', debit_total: 0, credit_total: 150, balance: 150 },
+      { account_id: 'capital', account_code: '3000', account_name: 'Capital', account_type: 'equity', normal_balance: 'credit', base_currency_code: 'SLE', debit_total: 0, credit_total: 200, balance: 200 },
+      { account_id: 'income', account_code: '4000', account_name: 'Income', account_type: 'income', normal_balance: 'credit', base_currency_code: 'SLE', debit_total: 0, credit_total: 100, balance: 100 },
+      { account_id: 'expense', account_code: '6000', account_name: 'Expense', account_type: 'expense', normal_balance: 'debit', base_currency_code: 'SLE', debit_total: 50, credit_total: 0, balance: 50 }
+    ];
+    const transfers = [{
+      transfer_id: 'transfer-1', transfer_number: 1, transaction_date: '2026-11-20',
+      source_branch_id: 'branch-a', source_branch_name: 'Branch A',
+      destination_branch_id: 'branch-b', destination_branch_name: 'Branch B',
+      amount: 100, currency_code: 'SLE', base_currency_code: 'SLE',
+      status: 'posted' as const, description: 'Inter-branch transfer', external_reference: null,
+      source_journal_entry_id: 'source-je', source_journal_status: 'posted' as const,
+      source_entry_number: 1, source_posted_at: null,
+      destination_journal_entry_id: 'destination-je', destination_journal_status: 'posted' as const,
+      destination_entry_number: 2, destination_posted_at: null,
+      source_due_from_base_amount: 100, destination_due_to_base_amount: 100,
+      source_clearing_account_id: 'due-from', destination_clearing_account_id: 'due-to',
+      both_sides_in_scope: true, source_in_scope: true, destination_in_scope: true,
+      reconciliation_status: 'matched' as const, elimination_base_amount: 100
+    }];
+
+    expect(buildFinanceConsolidatedPositionReport(balances, transfers)).toEqual([{
+      base_currency_code: 'SLE',
+      total_assets: 400,
+      total_liabilities: 150,
+      recorded_equity: 200,
+      accumulated_surplus: 50,
+      total_equity: 250,
+      net_assets: 250,
+      balance_check_difference: 0
+    }]);
+  });
+
+  test('keeps currencies separate and does not eliminate unmatched transfers', () => {
+    const balances = [
+      { account_id: 'cash-sle', account_code: '1000', account_name: 'Cash SLE', account_type: 'asset', normal_balance: 'debit', base_currency_code: 'SLE', debit_total: 100, credit_total: 0, balance: 100 },
+      { account_id: 'cash-usd', account_code: '1001', account_name: 'Cash USD', account_type: 'asset', normal_balance: 'debit', base_currency_code: 'USD', debit_total: 50, credit_total: 0, balance: 50 }
+    ];
+    expect(buildFinanceConsolidatedPositionReport(balances, [])).toMatchObject([
+      { base_currency_code: 'SLE', total_assets: 100 },
+      { base_currency_code: 'USD', total_assets: 50 }
+    ]);
   });
 });
