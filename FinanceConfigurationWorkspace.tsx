@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
 import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, saveFinanceScopeApprovalPolicies, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type FinanceOwnershipScope, type RequisitionApprovalConfiguration } from './financeConfigurationService';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
+import { getFinanceBranchClearingAccounts, setFinanceBranchClearingAccounts } from './financeTransferService';
 
 interface FinanceConfigurationWorkspaceProps {
   branchId: string | null;
@@ -56,6 +57,9 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [requisitionPolicyMax, setRequisitionPolicyMax] = useState('');
   const [requisitionSteps, setRequisitionSteps] = useState(['1', '1']);
   const [savingRequisitionPolicy, setSavingRequisitionPolicy] = useState(false);
+  const [dueFromChartAccountId, setDueFromChartAccountId] = useState('');
+  const [dueToChartAccountId, setDueToChartAccountId] = useState('');
+  const [savingClearingAccounts, setSavingClearingAccounts] = useState(false);
 
   const assetAccounts = useMemo(
     () => configuration.chartAccounts.filter(account => account.account_type === 'asset' && account.is_active),
@@ -70,11 +74,19 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     const requisitionRequest = scope?.type === 'district'
       ? Promise.resolve({ data: { policies: [], bands: [], steps: [] }, error: null })
       : getRequisitionApprovalConfiguration(effectiveBranchId);
-    const [configResult, requisitionResult] = await Promise.all([configRequest, requisitionRequest]);
+    const clearingRequest = scope?.type === 'branch'
+      ? getFinanceBranchClearingAccounts(scope.id)
+      : Promise.resolve({ data: null, error: null });
+    const [configResult, requisitionResult, clearingResult] = await Promise.all([configRequest, requisitionRequest, clearingRequest]);
     if (configResult.error) setError(configResult.error.message);
     else setConfiguration({ ...emptyConfiguration(), ...(configResult.data || {}) });
     if (requisitionResult.error) setError(current => current || requisitionResult.error!.message);
     else setRequisitionConfiguration(requisitionResult.data || { policies: [], bands: [], steps: [] });
+    if (clearingResult.error) setError(current => current || clearingResult.error!.message);
+    else {
+      setDueFromChartAccountId(clearingResult.data?.due_from_chart_account_id || '');
+      setDueToChartAccountId(clearingResult.data?.due_to_chart_account_id || '');
+    }
     setLoading(false);
   };
 
@@ -386,6 +398,28 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
     setSavingRequisitionPolicy(false);
   };
 
+  const saveClearingAccounts = async () => {
+    if (scope?.type !== 'branch') return;
+    if (!dueFromChartAccountId || !dueToChartAccountId || dueFromChartAccountId === dueToChartAccountId) {
+      setError('Select distinct due-from asset and due-to liability chart accounts.');
+      return;
+    }
+    setSavingClearingAccounts(true);
+    setError(null);
+    setNotice(null);
+    const result = await setFinanceBranchClearingAccounts({
+      branchId: scope.id,
+      dueFromChartAccountId,
+      dueToChartAccountId
+    });
+    if (result.error) setError(result.error.message);
+    else {
+      setNotice('Branch clearing accounts saved. Cross-branch transfers can now use these reciprocal accounts.');
+      window.dispatchEvent(new Event('finance_configuration_updated'));
+    }
+    setSavingClearingAccounts(false);
+  };
+
   const save = async () => {
     setSaving(true); setError(null); setNotice(null);
     if (scope && scope.type !== 'church') {
@@ -507,7 +541,42 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
         <ul className="mt-3 space-y-2 text-sm">{configuration.financialAccounts.map(account => <li key={account.id} className="rounded-lg bg-slate-50 px-3 py-2">{account.name} · {account.account_type} · {account.currency_code}{account.provider_name ? ' · ' + account.provider_name : ''}{account.account_reference ? ' · ' + account.account_reference : ''}</li>)}</ul>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+{scope?.type === 'branch' && (
+        <section className="rounded-2xl border border-amber-200 bg-white p-5 space-y-3">
+          <div>
+            <h3 className="font-black text-slate-900">Inter-branch clearing accounts</h3>
+            <p className="mt-1 text-xs text-slate-500">Required before this branch can send or receive cross-branch transfers. Due-from must be an asset; due-to must be a liability. Configure reciprocal accounts in every participating branch.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className={labelClass}>Due-from branch (asset)</label>
+              <select className={fieldClass} value={dueFromChartAccountId} onChange={event => setDueFromChartAccountId(event.target.value)}>
+                <option value="">Select due-from asset account</option>
+                {configuration.chartAccounts.filter(account => account.account_type === 'asset' && account.is_active).map(account =>
+                  <option key={account.id} value={account.id}>{account.code} — {account.name}</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Due-to branch (liability)</label>
+              <select className={fieldClass} value={dueToChartAccountId} onChange={event => setDueToChartAccountId(event.target.value)}>
+                <option value="">Select due-to liability account</option>
+                {configuration.chartAccounts.filter(account => account.account_type === 'liability' && account.is_active).map(account =>
+                  <option key={account.id} value={account.id}>{account.code} — {account.name}</option>
+                )}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">Same-branch transfers do not use clearing accounts.</p>
+            <button type="button" className={buttonClass} onClick={() => void saveClearingAccounts()} disabled={savingClearingAccounts}>
+              <Save size={14} /> {savingClearingAccounts ? 'Saving clearing accounts…' : 'Save clearing accounts'}
+            </button>
+          </div>
+        </section>
+      )}
+
+            <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 lg:col-span-2">
           <h3 className="font-black text-slate-900">Approval policies</h3>
           <p className="mt-1 text-xs text-slate-500">Configure scope-owned approval rules with one or more non-overlapping base-currency amount bands and ordered approval steps. Policies are persisted when you click Save configuration. Internal-transfer policies are branch-specific because both branches must approve a cross-branch movement.</p>
