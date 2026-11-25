@@ -45,7 +45,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
   const [periodYearId, setPeriodYearId] = useState('');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
-  const [policyType, setPolicyType] = useState<'financial_document' | 'budget'>('financial_document');
+  const [policyType, setPolicyType] = useState<'financial_document' | 'budget' | 'financial_transfer'>('financial_document');
   const [policyName, setPolicyName] = useState('Financial Document Approval');
   const [policyBands, setPolicyBands] = useState<Array<{ min: string; max: string; steps: string[] }>>([
     { min: '0', max: '', steps: ['1'] }
@@ -257,6 +257,10 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
 
   const addApprovalPolicy = () => {
     setError(null);
+    if (policyType === 'financial_transfer' && scope?.type !== 'branch') {
+      setError('Internal financial-transfer approval policies must be configured for an individual branch.');
+      return;
+    }
     if (!policyName.trim() || policyBands.length === 0) {
       setError('Enter a policy name and at least one amount band.');
       return;
@@ -342,7 +346,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       ]
     });
 
-    setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
+    setPolicyName(policyType === 'budget' ? 'Event Budget Approval' : policyType === 'financial_transfer' ? 'Internal Transfer Approval' : 'Financial Document Approval');
     setPolicyBands([{ min: '0', max: '', steps: ['1'] }]);
   };
 
@@ -506,7 +510,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 lg:col-span-2">
           <h3 className="font-black text-slate-900">Approval policies</h3>
-          <p className="mt-1 text-xs text-slate-500">Configure scope-owned approval rules with one or more non-overlapping base-currency amount bands and ordered approval steps. Policies are persisted when you click Save configuration.</p>
+          <p className="mt-1 text-xs text-slate-500">Configure scope-owned approval rules with one or more non-overlapping base-currency amount bands and ordered approval steps. Policies are persisted when you click Save configuration. Internal-transfer policies are branch-specific because both branches must approve a cross-branch movement.</p>
           <div className="mt-3 space-y-3">
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
@@ -514,10 +518,11 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
                 <select className={fieldClass} value={policyType} onChange={e => {
                   const next = e.target.value as typeof policyType;
                   setPolicyType(next);
-                  setPolicyName(next === 'budget' ? 'Event Budget Approval' : 'Financial Document Approval');
+                  setPolicyName(next === 'budget' ? 'Event Budget Approval' : next === 'financial_transfer' ? 'Internal Transfer Approval' : 'Financial Document Approval');
                 }}>
                   <option value="financial_document">Receipts and payments</option>
                   <option value="budget">Event budget approval</option>
+                  {scope?.type === 'branch' && <option value="financial_transfer">Internal transfer approval</option>}
                 </select>
               </div>
               <div>
