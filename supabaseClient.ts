@@ -2188,6 +2188,12 @@ export const supabase = {
         functionName === 'get_finance_scope_transaction_options' ||
         functionName === 'save_finance_scope_resources' ||
         functionName === 'save_finance_scope_approval_policies' ||
+        functionName === 'set_finance_branch_clearing_accounts' ||
+        functionName === 'get_finance_branch_clearing_accounts' ||
+        functionName === 'create_financial_transfer' ||
+        functionName === 'decide_financial_transfer_approval' ||
+        functionName === 'post_financial_transfer' ||
+        functionName === 'get_financial_transfers' ||
         functionName === 'get_finance_scope_documents' ||
         functionName === 'get_finance_scope_journals' ||
         functionName === 'create_finance_scope_document_transaction' ||
