@@ -401,6 +401,434 @@ export function createMockFinanceRpc(
     return createScopedTransaction(args, true);
   }
 
+
+  function setFinanceBranchClearingAccounts(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = String(args.p_branch_id || '');
+    if (!branchId || !hasPermission(state, actor.id, 'manage_finances', branchId)) {
+      return fail('Insufficient permission to configure branch clearing accounts', '42501');
+    }
+    if (!state.branches.some(branch => branch.id === branchId && branch.status !== 'inactive' && branch.status !== 'archived')) {
+      return fail('Branch does not exist or is inactive');
+    }
+    const dueFrom = state.chartAccounts.find(account =>
+      account.id === args.p_due_from_chart_account_id && account.is_active && account.account_type === 'asset');
+    const dueTo = state.chartAccounts.find(account =>
+      account.id === args.p_due_to_chart_account_id && account.is_active && account.account_type === 'liability');
+    if (!dueFrom || !dueTo || dueFrom.id === dueTo.id) {
+      return fail('Distinct active due-from asset and due-to liability chart accounts are required');
+    }
+    const existing = state.branchClearingAccounts.find(item => item.branch_id === branchId);
+    const record = {
+      branch_id: branchId,
+      due_from_chart_account_id: dueFrom.id,
+      due_to_chart_account_id: dueTo.id,
+      is_active: true,
+      configured_by_profile_id: actor.id,
+      updated_at: new Date().toISOString()
+    };
+    if (existing) Object.assign(existing, record);
+    else state.branchClearingAccounts.push(record);
+    storage.save(state);
+    return success({ saved: true, branch_id: branchId });
+  }
+
+  function createTransferApprovalRequest(
+    state: MockFinanceState,
+    transferId: string,
+    branchId: string,
+    districtId: string | null,
+    actorId: string,
+    baseAmount: number
+  ) {
+    const today = new Date().toISOString().slice(0, 10);
+    const policy = state.approvalPolicies
+      .filter(item => item.transaction_type === 'financial_transfer' && item.is_active &&
+        item.branch_id === branchId && (item.district_id ?? null) === districtId &&
+        (!item.effective_from || item.effective_from <= today) &&
+        (!item.effective_to || item.effective_to >= today))
+      .sort((a: any, b: any) => Number(b.version || 0) - Number(a.version || 0))[0];
+    if (!policy) return { error: `No active financial-transfer approval policy is configured for branch ${branchId}` };
+    const band = state.approvalPolicyBands.find(item => item.policy_id === policy.id &&
+      baseAmount >= Number(item.min_amount_base) &&
+      (item.max_amount_base == null || baseAmount < Number(item.max_amount_base)));
+    if (!band) return { error: `No financial-transfer approval threshold band covers this amount for branch ${branchId}` };
+    const policySteps = state.approvalPolicySteps
+      .filter(item => item.band_id === band.id)
+      .sort((a, b) => Number(a.step_number) - Number(b.step_number));
+    if (policySteps.some((step, index) => Number(step.step_number) !== index + 1 ||
+      !Number.isInteger(Number(step.required_approvals)) || Number(step.required_approvals) < 1 ||
+      step.required_permission_key !== 'approve_finances')) {
+      return { error: 'Financial-transfer approval policy steps are incomplete or incorrectly ordered' };
+    }
+    const requestId = id(state, 'approval');
+    const request = {
+      id: requestId, transaction_type: 'financial_transfer', target_id: transferId,
+      branch_id: branchId, district_id: districtId,
+      status: policySteps.length ? 'pending' : 'approved',
+      policy_id: policy.id, policy_version: policy.version,
+      band_id: band.id, amount_base: baseAmount,
+      submitted_by_profile_id: actorId,
+      completed_at: policySteps.length ? null : new Date().toISOString()
+    };
+    state.approvalRequests.push(request);
+    state.approvalSteps.push(...policySteps.map(step => ({
+      id: id(state, 'step'),
+      approval_request_id: requestId,
+      step_order: Number(step.step_number),
+      required_permission_key: step.required_permission_key,
+      required_approvals: Number(step.required_approvals),
+      prohibit_submitter_approval: step.prohibit_submitter_approval !== false,
+      status: 'pending'
+    })));
+    return { request, steps: policySteps };
+  }
+
+  function createFinancialTransfer(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const sourceBranchId = String(args.p_source_branch_id || '');
+    const destinationBranchId = String(args.p_destination_branch_id || '');
+    const sourceAccountId = String(args.p_source_financial_account_id || '');
+    const destinationAccountId = String(args.p_destination_financial_account_id || '');
+    const date = String(args.p_transaction_date || '');
+    const amount = Number(args.p_amount);
+    const currency = String(args.p_currency_code || '').trim().toUpperCase();
+    const rate = Number(args.p_exchange_rate_to_base);
+    const description = String(args.p_description || '').trim();
+    const externalReference = String(args.p_external_reference || '').trim() || null;
+    const idempotencyKey = String(args.p_idempotency_key || '').trim();
+    if (!idempotencyKey) return fail('A transfer idempotency key is required');
+    if (!sourceBranchId || !destinationBranchId || !sourceAccountId || !destinationAccountId ||
+        sourceAccountId === destinationAccountId || !date || !isValidIsoDate(date) ||
+        !Number.isFinite(amount) || amount <= 0 || !Number.isFinite(rate) || rate <= 0 ||
+        currency.length !== 3 || !state.currencies.includes(currency) || !description) {
+      return fail('A valid transfer date, distinct branch-owned accounts, positive amount/rate, currency and description are required');
+    }
+    if (!state.baseCurrencyCode) return fail('Church settings must be configured before financial operations');
+    if (currency === state.baseCurrencyCode && rate !== 1) return fail('Exchange rate must be 1 for the base currency');
+    if (!hasPermission(state, actor.id, 'manage_finances', sourceBranchId) ||
+        !hasPermission(state, actor.id, 'manage_finances', destinationBranchId)) {
+      return fail('The transfer creator must have manage-finances permission in both affected branches', '42501');
+    }
+    const sourceBranch = state.branches.find(branch => branch.id === sourceBranchId && branch.status !== 'inactive' && branch.status !== 'archived');
+    const destinationBranch = state.branches.find(branch => branch.id === destinationBranchId && branch.status !== 'inactive' && branch.status !== 'archived');
+    if (!sourceBranch || !destinationBranch) return fail('Both transfer branches must exist and be active');
+    const sourceDistrictId = sourceBranch.district_id ?? null;
+    const destinationDistrictId = destinationBranch.district_id ?? null;
+    const sourceAccount = state.financialAccounts.find(account =>
+      account.id === sourceAccountId && account.is_active && account.branch_id === sourceBranchId && account.currency_code === currency);
+    const destinationAccount = state.financialAccounts.find(account =>
+      account.id === destinationAccountId && account.is_active && account.branch_id === destinationBranchId && account.currency_code === currency);
+    if (!sourceAccount || !destinationAccount) return fail('Source and destination accounts must be active, branch-owned and use the same currency');
+    const sourceChart = state.chartAccounts.find(account => account.id === sourceAccount.chart_account_id && account.is_active && account.account_type === 'asset');
+    const destinationChart = state.chartAccounts.find(account => account.id === destinationAccount.chart_account_id && account.is_active && account.account_type === 'asset');
+    if (!sourceChart || !destinationChart) return fail('Both financial accounts must map to active asset chart accounts');
+
+    const fingerprint = JSON.stringify({
+      transaction_date: date, source_branch_id: sourceBranchId, source_financial_account_id: sourceAccountId,
+      destination_branch_id: destinationBranchId, destination_financial_account_id: destinationAccountId,
+      amount, currency_code: currency, exchange_rate_to_base: rate, description, external_reference: externalReference
+    });
+    const prior = state.transfers.find(item => item.created_by_profile_id === actor.id && item.idempotency_key === idempotencyKey);
+    if (prior) {
+      if (prior.idempotency_fingerprint !== fingerprint) return fail('This transfer idempotency key was already used with different details');
+      return success({
+        transfer_id: prior.id, transfer_number: prior.transfer_number,
+        source_approval_request_id: prior.source_approval_request_id,
+        destination_approval_request_id: prior.destination_approval_request_id,
+        source_journal_entry_id: prior.source_journal_entry_id,
+        destination_journal_entry_id: prior.destination_journal_entry_id,
+        status: prior.status, idempotent_replay: true
+      });
+    }
+
+    const period = state.periods.find(item => item.status === 'open' && item.year_status === 'open' &&
+      date >= item.start_date && date <= item.end_date);
+    if (!period) return fail('No open financial period and year exist for the transfer date');
+    const baseAmount = round4(amount * rate);
+    let sourceClearing: Record<string, any> | undefined;
+    let destinationClearing: Record<string, any> | undefined;
+    let dueFrom: Record<string, any> | undefined;
+    let dueTo: Record<string, any> | undefined;
+    if (sourceBranchId !== destinationBranchId) {
+      sourceClearing = state.branchClearingAccounts.find(item => item.branch_id === sourceBranchId && item.is_active);
+      destinationClearing = state.branchClearingAccounts.find(item => item.branch_id === destinationBranchId && item.is_active);
+      if (!sourceClearing || !destinationClearing) return fail('Configure active due-from and due-to clearing accounts for both branches first');
+      dueFrom = state.chartAccounts.find(account => account.id === sourceClearing!.due_from_chart_account_id && account.is_active && account.account_type === 'asset');
+      dueTo = state.chartAccounts.find(account => account.id === destinationClearing!.due_to_chart_account_id && account.is_active && account.account_type === 'liability');
+      if (!dueFrom || !dueTo) return fail('Both branches require an active due-from asset and due-to liability clearing account');
+    }
+
+    const transferId = id(state, 'transfer');
+    const sourceJournalId = id(state, 'journal');
+    const destinationJournalId = sourceBranchId === destinationBranchId ? null : id(state, 'journal');
+    const now = new Date().toISOString();
+    const transferNumber = state.transfers.reduce((max, item) => Math.max(max, Number(item.transfer_number) || 0), 0) + 1;
+    const transfer: Record<string, any> = {
+      id: transferId, transfer_number: transferNumber, transaction_date: date,
+      source_financial_account_id: sourceAccountId, destination_financial_account_id: destinationAccountId,
+      source_branch_id: sourceBranchId, destination_branch_id: destinationBranchId,
+      source_district_id: sourceDistrictId, destination_district_id: destinationDistrictId,
+      amount, currency_code: currency, exchange_rate_to_base: rate,
+      base_currency_code: state.baseCurrencyCode, external_reference: externalReference,
+      description, status: 'pending_approval', created_by_profile_id: actor.id,
+      idempotency_key: idempotencyKey, idempotency_fingerprint: fingerprint,
+      source_approval_request_id: null, destination_approval_request_id: null,
+      source_journal_entry_id: sourceJournalId, destination_journal_entry_id: destinationJournalId,
+      created_at: now, updated_at: now
+    };
+
+    const sourceJournal: Record<string, any> = {
+      id: sourceJournalId, period_id: period.id, branch_id: sourceBranchId, district_id: sourceDistrictId,
+      entry_date: date, description, reference: externalReference, currency_code: currency,
+      exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode,
+      source_type: 'financial_transfer', source_id: transferId, status: 'draft',
+      approval_checked_at: now, approved_at: null
+    };
+    state.journals.push(sourceJournal);
+    const sourceDebitAccount = sourceBranchId === destinationBranchId ? destinationChart.id : dueFrom!.id;
+    const sourceCreditAccount = sourceChart.id;
+    state.journalLines.push(
+      { id: id(state, 'line'), journal_entry_id: sourceJournalId, line_number: 1, account_id: sourceDebitAccount,
+        branch_id: sourceBranchId, description, debit_amount: amount, credit_amount: 0,
+        base_debit_amount: baseAmount, base_credit_amount: 0 },
+      { id: id(state, 'line'), journal_entry_id: sourceJournalId, line_number: 2, account_id: sourceCreditAccount,
+        branch_id: sourceBranchId, description, debit_amount: 0, credit_amount: amount,
+        base_debit_amount: 0, base_credit_amount: baseAmount }
+    );
+
+    if (destinationJournalId) {
+      state.journals.push({
+        id: destinationJournalId, period_id: period.id, branch_id: destinationBranchId, district_id: destinationDistrictId,
+        entry_date: date, description, reference: externalReference, currency_code: currency,
+        exchange_rate_to_base: rate, base_currency_code: state.baseCurrencyCode,
+        source_type: 'financial_transfer', source_id: transferId, status: 'draft',
+        approval_checked_at: now, approved_at: null
+      });
+      state.journalLines.push(
+        { id: id(state, 'line'), journal_entry_id: destinationJournalId, line_number: 1, account_id: destinationChart.id,
+          branch_id: destinationBranchId, description, debit_amount: amount, credit_amount: 0,
+          base_debit_amount: baseAmount, base_credit_amount: 0 },
+        { id: id(state, 'line'), journal_entry_id: destinationJournalId, line_number: 2, account_id: dueTo!.id,
+          branch_id: destinationBranchId, description, debit_amount: 0, credit_amount: amount,
+          base_debit_amount: 0, base_credit_amount: baseAmount }
+      );
+    }
+
+    const sourceApproval = createTransferApprovalRequest(state, transferId, sourceBranchId, sourceDistrictId, actor.id, baseAmount);
+    if (sourceApproval.error) return fail(sourceApproval.error);
+    transfer.source_approval_request_id = sourceApproval.request.id;
+    let destinationApproval: any = null;
+    if (destinationJournalId) {
+      destinationApproval = createTransferApprovalRequest(state, transferId, destinationBranchId, destinationDistrictId, actor.id, baseAmount);
+      if (destinationApproval.error) return fail(destinationApproval.error);
+      transfer.destination_approval_request_id = destinationApproval.request.id;
+    }
+    const fullyApproved = sourceApproval.request.status === 'approved' &&
+      (!destinationApproval || destinationApproval.request.status === 'approved');
+    transfer.status = fullyApproved ? 'approved' : 'pending_approval';
+    if (fullyApproved) {
+      sourceJournal.approved_at = now;
+      const destJournal = destinationJournalId ? state.journals.find(item => item.id === destinationJournalId) : null;
+      if (destJournal) destJournal.approved_at = now;
+    }
+    state.transfers.push(transfer);
+    storage.save(state);
+    return success({
+      transfer_id: transferId, transfer_number: transferNumber,
+      source_approval_request_id: transfer.source_approval_request_id,
+      destination_approval_request_id: transfer.destination_approval_request_id,
+      source_journal_entry_id: sourceJournalId, destination_journal_entry_id: destinationJournalId,
+      status: transfer.status, idempotent_replay: false
+    });
+  }
+
+  function decideFinancialTransferApproval(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const step = state.approvalSteps.find(item => item.id === args.p_request_step_id);
+    const request = step && state.approvalRequests.find(item => item.id === step.approval_request_id && item.transaction_type === 'financial_transfer');
+    const transfer = request && state.transfers.find(item => item.id === request.target_id);
+    if (!step || !request || !transfer) return fail('Approval step is not for an internal financial transfer');
+    if (transfer.status === 'rejected' || transfer.status === 'posted' || request.status !== 'pending' || step.status !== 'pending') {
+      return fail('This transfer is no longer open for approval');
+    }
+    if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
+    if (step.prohibit_submitter_approval && request.submitted_by_profile_id === actor.id) {
+      return fail('The submitter cannot approve this request', '42501');
+    }
+    if (!hasScopePermission(state, actor.id, step.required_permission_key || 'approve_finances', request.branch_id, request.district_id)) {
+      return fail('Approver does not have the required branch permission', '42501');
+    }
+    if (state.approvalDecisions.some(item => item.approval_request_step_id === step.id && item.approver_profile_id === actor.id)) {
+      return fail('This profile has already decided this approval step');
+    }
+    const otherSteps = state.approvalSteps.filter(item => item.approval_request_id === request.id && item.id !== step.id);
+    if (state.approvalDecisions.some(item => otherSteps.some(other => other.id === item.approval_request_step_id) &&
+      item.approver_profile_id === actor.id)) {
+      return fail('Each approval level requires a different approver');
+    }
+    state.approvalDecisions.push({
+      id: id(state, 'decision'), approval_request_step_id: step.id,
+      approver_profile_id: actor.id, decision: args.p_decision,
+      comments: String(args.p_comments || '').trim() || null, decided_at: new Date().toISOString()
+    });
+    if (args.p_decision === 'rejected') {
+      step.status = 'rejected';
+      request.status = 'rejected';
+      transfer.status = 'rejected';
+    } else {
+      const received = state.approvalDecisions.filter(item => item.approval_request_step_id === step.id && item.decision === 'approved').length;
+      if (received >= Number(step.required_approvals || 1)) step.status = 'approved';
+      const allSteps = state.approvalSteps.filter(item => item.approval_request_id === request.id);
+      if (allSteps.every(item => item.status === 'approved')) request.status = 'approved';
+      const requests = state.approvalRequests.filter(item =>
+        item.transaction_type === 'financial_transfer' && item.target_id === transfer.id);
+      if (requests.some(item => item.status === 'rejected')) transfer.status = 'rejected';
+      else if (requests.every(item => item.status === 'approved')) {
+        transfer.status = 'approved';
+        for (const journal of state.journals.filter(item =>
+          item.source_type === 'financial_transfer' && item.source_id === transfer.id && item.status === 'draft')) {
+          journal.approved_at = new Date().toISOString();
+        }
+      } else transfer.status = 'pending_approval';
+    }
+    transfer.updated_at = new Date().toISOString();
+    storage.save(state);
+    return success({
+      transfer_id: transfer.id, approval_request_id: request.id,
+      approval_status: request.status, status: transfer.status
+    });
+  }
+
+  function postFinancialTransfer(args: Record<string, any>) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const transfer = state.transfers.find(item => item.id === args.p_transfer_id);
+    if (!transfer) return fail('Financial transfer not found');
+    if (transfer.status === 'posted') return success({
+      transfer_id: transfer.id, status: 'posted', already_posted: true,
+      source_journal_entry_id: transfer.source_journal_entry_id,
+      destination_journal_entry_id: transfer.destination_journal_entry_id
+    });
+    if (transfer.status !== 'approved') return fail('Both affected branch approval workflows must be complete before posting');
+    if (!hasPermission(state, actor.id, 'post_journals', transfer.source_branch_id) ||
+        !hasPermission(state, actor.id, 'post_journals', transfer.destination_branch_id)) {
+      return fail('Posting actor must have post-journals permission in both affected branches', '42501');
+    }
+    const requests = state.approvalRequests.filter(item =>
+      item.transaction_type === 'financial_transfer' && item.target_id === transfer.id);
+    if (!requests.length || requests.some(item => item.status !== 'approved')) {
+      return fail('Both affected branch approval workflows must be approved');
+    }
+    const journalIds = [transfer.source_journal_entry_id, transfer.destination_journal_entry_id].filter(Boolean);
+    for (const journalId of journalIds) {
+      const journal = state.journals.find(item => item.id === journalId);
+      if (!journal || journal.status !== 'draft' || journal.source_type !== 'financial_transfer' ||
+          journal.source_id !== transfer.id || !journal.approved_at) {
+        return fail('Every transfer journal must be an approved draft before atomic posting');
+      }
+      const period = state.periods.find(item => item.id === journal.period_id);
+      if (!period || period.status !== 'open' || period.year_status !== 'open' ||
+          journal.entry_date < period.start_date || journal.entry_date > period.end_date) {
+        return fail('Transfer journal financial period or year is not open');
+      }
+      const lines = state.journalLines.filter(item => item.journal_entry_id === journal.id);
+      if (lines.length < 2) return fail('A transfer journal must contain at least two lines');
+      const debit = round4(lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0));
+      const credit = round4(lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0));
+      const baseDebit = round4(lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0));
+      const baseCredit = round4(lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0));
+      if (debit <= 0 || debit !== credit || baseDebit <= 0 || baseDebit !== baseCredit) {
+        return fail('Transfer journal must balance in transaction and base currency');
+      }
+      for (const line of lines) {
+        const account = state.chartAccounts.find(item => item.id === line.account_id && item.is_active);
+        if (!account) return fail('Transfer journal contains an inactive or missing chart account');
+        if (line.branch_id !== journal.branch_id) return fail('Transfer journal line is outside its branch scope');
+      }
+    }
+    for (const journalId of journalIds) {
+      const journal = state.journals.find(item => item.id === journalId)!;
+      journal.status = 'posted';
+      journal.posted_at = new Date().toISOString();
+    }
+    transfer.status = 'posted';
+    transfer.updated_at = new Date().toISOString();
+    storage.save(state);
+    return success({
+      transfer_id: transfer.id, status: 'posted', already_posted: false,
+      source_journal_entry_id: transfer.source_journal_entry_id,
+      destination_journal_entry_id: transfer.destination_journal_entry_id
+    });
+  }
+
+  function getFinancialTransfers(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = String(args.p_branch_id || '');
+    if (!branchId || !['view_finances','manage_finances','approve_finances'].some(permission =>
+      hasPermission(state, actor.id, permission, branchId))) {
+      return fail('Insufficient permission to view transfers for this branch', '42501');
+    }
+    const visible = state.transfers.filter(item =>
+      item.source_branch_id === branchId || item.destination_branch_id === branchId);
+    const mapApproval = (requestId: string | null) => {
+      const request = requestId ? state.approvalRequests.find(item => item.id === requestId) : null;
+      if (!request) return { status: null, steps: [], actorStepId: null };
+      const steps = state.approvalSteps.filter(item => item.approval_request_id === request.id)
+        .sort((a,b) => Number(a.step_order)-Number(b.step_order));
+      const actorStep = steps.find(step => step.status === 'pending' &&
+        (!step.prohibit_submitter_approval || request.submitted_by_profile_id !== actor.id) &&
+        !state.approvalDecisions.some(decision => decision.approval_request_step_id === step.id && decision.approver_profile_id === actor.id) &&
+        !steps.some(prior => prior.step_order < step.step_order && prior.status !== 'approved') &&
+        hasScopePermission(state, actor.id, step.required_permission_key || 'approve_finances', request.branch_id, request.district_id));
+      return {
+        status: request.status, actorStepId: actorStep?.id ?? null,
+        steps: steps.map(step => ({
+          id: step.id, step_order: step.step_order, required_approvals: step.required_approvals,
+          status: step.status,
+          approvals_received: state.approvalDecisions.filter(decision =>
+            decision.approval_request_step_id === step.id && decision.decision === 'approved').length
+        }))
+      };
+    };
+    return success({
+      actor_profile_id: actor.id,
+      transfers: visible.map(item => {
+        const source = mapApproval(item.source_approval_request_id);
+        const destination = mapApproval(item.destination_approval_request_id);
+        return {
+          ...clone(item),
+          source_approval_status: source.status,
+          destination_approval_status: destination.status,
+          source_approval_steps: source.steps,
+          destination_approval_steps: destination.steps,
+          source_actor_approval_step_id: source.actorStepId,
+          destination_actor_approval_step_id: destination.actorStepId
+        };
+      }).sort((a,b) => String(b.transaction_date).localeCompare(String(a.transaction_date)))
+    });
+  }
+
   function decideApproval(args: Record<string, any>) {
     const state = clone(storage.load());
     const auth = getAuth();
