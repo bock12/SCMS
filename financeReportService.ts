@@ -7,6 +7,8 @@ export interface FinanceReportLine {
   journal_id: string;
   entry_number: number | null;
   entry_date: string;
+  branch_id: string | null;
+  district_id: string | null;
   description: string;
   reference: string | null;
   currency_code: string;
@@ -105,6 +107,8 @@ export function buildPostedFinanceReport(
         journal_id: journal.id,
         entry_number: journal.entry_number,
         entry_date: journal.entry_date,
+        branch_id: journal.branch_id,
+        district_id: journal.district_id ?? null,
         description: journal.description,
         reference: journal.reference,
         currency_code: journal.currency_code,
@@ -235,4 +239,80 @@ export function buildFinanceTransferClearingSummary(
     remaining_due_from: summary.due_from_balance - summary.elimination_amount,
     remaining_due_to: summary.due_to_balance - summary.elimination_amount
   })).sort((a,b) => a.base_currency_code.localeCompare(b.base_currency_code));
+}
+
+
+export interface FinanceOrganizationalPerformanceSummary {
+  scope_id: string;
+  base_currency_code: string;
+  revenue: number;
+  expenses: number;
+  net_operating_position: number;
+  posted_journal_count: number;
+}
+
+export interface FinanceOrganizationalPerformanceReport {
+  branches: FinanceOrganizationalPerformanceSummary[];
+  districts: FinanceOrganizationalPerformanceSummary[];
+}
+
+/**
+ * Builds branch and district comparisons from posted journals in an already
+ * authorized ledger scope. Currency totals remain separate; unposted journals
+ * and journals without the relevant organizational scope are excluded.
+ */
+export function buildFinanceOrganizationalPerformanceReport(
+  ledger: FinanceJournalLedger,
+  period: FinanceReportPeriod = 'all',
+  now = new Date()
+): FinanceOrganizationalPerformanceReport {
+  type Bucket = FinanceOrganizationalPerformanceSummary & { journal_ids: Set<string> };
+  const branchBuckets = new Map<string, Bucket>();
+  const districtBuckets = new Map<string, Bucket>();
+
+  const addJournal = (
+    buckets: Map<string, Bucket>,
+    scopeId: string | null | undefined,
+    journal: FinanceJournal
+  ) => {
+    if (!scopeId) return;
+    const key = `${scopeId}:${journal.base_currency_code}`;
+    const bucket = buckets.get(key) ?? {
+      scope_id: scopeId,
+      base_currency_code: journal.base_currency_code,
+      revenue: 0,
+      expenses: 0,
+      net_operating_position: 0,
+      posted_journal_count: 0,
+      journal_ids: new Set<string>()
+    };
+    if (!bucket.journal_ids.has(journal.id)) {
+      bucket.journal_ids.add(journal.id);
+      bucket.posted_journal_count += 1;
+    }
+    for (const line of journal.lines) {
+      const debit = Number(line.base_debit_amount || 0);
+      const credit = Number(line.base_credit_amount || 0);
+      if (line.account_type === 'income') bucket.revenue += credit - debit;
+      if (line.account_type === 'expense') bucket.expenses += debit - credit;
+    }
+    bucket.net_operating_position = bucket.revenue - bucket.expenses;
+    buckets.set(key, bucket);
+  };
+
+  for (const journal of ledger.journals) {
+    if (journal.status !== 'posted' || !isWithinFinanceReportPeriod(journal.entry_date, period, now)) continue;
+    addJournal(branchBuckets, journal.branch_id, journal);
+    addJournal(districtBuckets, journal.district_id, journal);
+  }
+
+  const toRows = (buckets: Map<string, Bucket>) => [...buckets.values()]
+    .map(({ journal_ids: _journalIds, ...summary }) => summary)
+    .sort((a, b) => a.scope_id.localeCompare(b.scope_id)
+      || a.base_currency_code.localeCompare(b.base_currency_code));
+
+  return {
+    branches: toRows(branchBuckets),
+    districts: toRows(districtBuckets)
+  };
 }
