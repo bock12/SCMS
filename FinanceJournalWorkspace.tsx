@@ -4,6 +4,7 @@ import { type FinanceOwnershipScope, type FinanceScopeOption } from './financeCo
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
 import { applyFinanceTransferEliminations, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
+import { getFinanceOperationalBalances, type FinanceOperationalBalanceReport } from './financeOperationalBalanceService';
 
 interface Props {
   branchId: string | null;
@@ -32,6 +33,8 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [transferReconciliation, setTransferReconciliation] = useState<FinanceTransferReconciliation | null>(null);
+  const [operationalBalances, setOperationalBalances] = useState<FinanceOperationalBalanceReport | null>(null);
+  const [operationalBalanceError, setOperationalBalanceError] = useState<string | null>(null);
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
@@ -51,11 +54,15 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
     setLoading(true);
     setError(null);
     setReconciliationError(null);
+    setOperationalBalanceError(null);
     const reconciliationScope = scope || (branchId ? { type: 'branch' as const, id: branchId } : null);
-    const [result, reconciliationResult] = await Promise.all([
+    const [result, reconciliationResult, operationalBalanceResult] = await Promise.all([
       scope ? getScopedFinanceJournalLedger(scope) : getFinanceJournalLedger(branchId),
       reconciliationScope
         ? getFinanceTransferReconciliation(reconciliationScope)
+        : Promise.resolve({ data: null, error: null }),
+      reconciliationScope
+        ? getFinanceOperationalBalances(reconciliationScope)
         : Promise.resolve({ data: null, error: null })
     ]);
     if (result.error) {
@@ -69,6 +76,12 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
       setReconciliationError(reconciliationResult.error.message);
     } else {
       setTransferReconciliation(reconciliationResult.data);
+    }
+    if (operationalBalanceResult.error) {
+      setOperationalBalances(null);
+      setOperationalBalanceError(operationalBalanceResult.error.message);
+    } else {
+      setOperationalBalances(operationalBalanceResult.data);
     }
     setLoading(false);
   }, [branchId, scope?.type, scope?.id]);
@@ -179,6 +192,27 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertCircle size={17} />{error}</div>}
       {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 size={17} />{notice}</div>}
 
+      <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50/40 p-4">
+        <div>
+          <h4 className="text-sm font-black text-slate-900">Cash, bank and mobile-money balances</h4>
+          <p className="mt-1 text-xs text-slate-600">Current balances calculated from posted asset-account journal lines only. Pending, rejected and unposted entries are excluded. Amounts are shown in base currency.</p>
+        </div>
+        {operationalBalanceError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{operationalBalanceError}</p>}
+        {operationalBalances?.accounts.length ? <div className="overflow-x-auto">
+          <table aria-label="Cash bank and mobile money balances" className="w-full min-w-[620px] text-left text-xs">
+            <thead><tr className="border-b border-sky-200 text-slate-500"><th className="py-2">Account</th><th className="py-2">Type</th><th className="py-2">Ownership</th><th className="py-2">Base currency</th><th className="py-2 text-right">Debits</th><th className="py-2 text-right">Credits</th><th className="py-2 text-right">Balance</th></tr></thead>
+            <tbody>{operationalBalances.accounts.map(account => <tr key={account.financial_account_id + account.base_currency_code} className="border-b border-sky-100">
+              <td className="py-2"><div className="font-semibold text-slate-800">{account.account_name}</div><div className="text-[10px] text-slate-500">{account.chart_account_code} · {account.chart_account_name}</div></td>
+              <td className="py-2 capitalize">{account.operational_account_type.replace("_", " ")}</td>
+              <td className="py-2">{account.branch_id ? scopeLabel("branch", account.branch_id) : account.district_id ? scopeLabel("district", account.district_id) : "Church-wide"}</td>
+              <td className="py-2">{account.base_currency_code}</td>
+              <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.debit_total)}</td>
+              <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.credit_total)}</td>
+              <td className="py-2 text-right font-black tabular-nums">{money(account.base_currency_code, account.balance)}</td>
+            </tr>)}</tbody>
+          </table>
+        </div> : !operationalBalanceError && <p className="rounded-lg bg-white p-3 text-xs text-slate-500">No active cash, bank or mobile-money accounts are configured in this scope.</p>}
+      </div>
       <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
