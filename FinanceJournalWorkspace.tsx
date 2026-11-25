@@ -129,9 +129,9 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
     const lines = report.lines.map(line => `
       <tr><td>${escapeHtml(line.entry_date)}</td><td>${escapeHtml(line.entry_number ?? line.journal_id)}</td><td>${escapeHtml(line.description)}</td><td>${escapeHtml(line.account_code)} — ${escapeHtml(line.account_name)}</td><td>${escapeHtml(line.base_currency_code)}</td><td class="number">${line.base_debit_amount.toFixed(2)}</td><td class="number">${line.base_credit_amount.toFixed(2)}</td></tr>
     `).join('');
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>SCMS Posted Finance Report</title>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>SCMS Consolidated Posted Finance Report</title>
       <style>body{font:12px system-ui,sans-serif;color:#0f172a;padding:28px}h1{font-size:22px}h2{font-size:15px;margin-top:28px}p{color:#475569}.note{padding:10px;background:#ecfdf5;border:1px solid #a7f3d0}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{padding:7px;border:1px solid #e2e8f0;text-align:left}th{background:#f1f5f9}.number{text-align:right}@media print{body{padding:0}}</style>
-      </head><body><h1>SCMS — Posted Journal Financial Report</h1>
+      </head><body><h1>SCMS — Consolidated Posted Journal Financial Report</h1>
       <p>Period: ${escapeHtml(reportPeriod)} · Generated: ${escapeHtml(new Date().toLocaleString())}</p>
       <p class="note">This report includes posted journal entries only. Draft, pending approval, approved-but-unposted and rejected entries are excluded.</p>
       <h2>Operating summary by base currency</h2><table><thead><tr><th>Currency</th><th>Revenue</th><th>Expenses</th><th>Net operating position</th></tr></thead><tbody>${summaries || '<tr><td colspan="4">No posted transactions in this period.</td></tr>'}</tbody></table>
@@ -223,7 +223,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
             <div>
               <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Consolidated clearing-account balances after elimination</h6>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-left text-xs">
+                <table aria-label="Consolidated clearing-account balances after elimination" className="w-full min-w-[560px] text-left text-xs">
                   <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Account</th><th className="py-2 text-right">Pre-elimination</th><th className="py-2 text-right">Eliminated</th><th className="py-2 text-right">Consolidated</th></tr></thead>
                   <tbody>{consolidatedBalances.filter(item => item.elimination_amount > 0).map(item => <tr key={item.account_id + item.base_currency_code} className="border-b border-slate-100"><td className="py-2">{item.account_code} · {item.account_name}</td><td className="py-2 text-right">{money(item.base_currency_code, item.balance)}</td><td className="py-2 text-right">{money(item.base_currency_code, item.elimination_amount)}</td><td className="py-2 text-right font-black">{money(item.base_currency_code, item.consolidated_balance)}</td></tr>)}</tbody>
                 </table>
@@ -233,7 +233,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
           {periodTransfers.length ? (
             <div className="overflow-x-auto">
               <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Transfer-to-journal trace</h6>
-              <table className="w-full min-w-[850px] text-left text-xs">
+              <table aria-label="Internal transfer reconciliation and journal trace" className="w-full min-w-[850px] text-left text-xs">
                 <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Transfer</th><th className="py-2">Branch movement</th><th className="py-2">Amount</th><th className="py-2">Source journal</th><th className="py-2">Destination journal</th><th className="py-2">Reconciliation</th><th className="py-2 text-right">Elimination</th></tr></thead>
                 <tbody>{periodTransfers.map(item => <tr key={item.transfer_id} className="border-b border-slate-100">
                   <td className="py-2 font-bold">TR-{item.transfer_number}<div className="font-normal text-slate-500">{item.transaction_date}</div></td>
