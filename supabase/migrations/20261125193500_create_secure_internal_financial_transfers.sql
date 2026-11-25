@@ -22,6 +22,18 @@ alter table public.approval_requests
     'requisition'::text, 'financial_transfer'::text
   ]));
 
+-- A cross-branch transfer intentionally has one pending approval request per
+-- affected branch. Preserve the one-pending-request invariant within each
+-- organizational branch while allowing the same transfer target in two branches.
+drop index if exists public.uq_approval_request_one_pending_target;
+create unique index uq_approval_request_one_pending_target
+  on public.approval_requests(
+    transaction_type,
+    target_id,
+    coalesce(branch_id,'00000000-0000-0000-0000-000000000000'::uuid)
+  )
+  where status='pending';
+
 create table public.finance_branch_clearing_accounts (
   branch_id uuid primary key references public.church_branches(id) on delete restrict,
   due_from_chart_account_id uuid not null references public.chart_of_accounts(id) on delete restrict,
