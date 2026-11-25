@@ -396,5 +396,38 @@ test.describe('SCMS finance browser smoke', () => {
     });
     await detailDialog.getByRole('button', { name: 'Print' }).click();
     expect(await page.evaluate(() => (window as any).__financePrintCalled)).toBe(true);
+
+    // Exercise the dedicated same-branch transfer workspace. This must create
+    // a balance-sheet journal (not a receipt/payment or income/expense record)
+    // and require the atomic transfer-posting action.
+    await page.goto('/#/portal/finance?tab=transfers');
+    await expect(page.getByText('Internal financial transfers')).toBeVisible();
+    await expect(page.getByText('Record a transfer')).toBeVisible();
+    await page.getByRole('spinbutton').first().fill('75');
+    await page.getByPlaceholder('Reason for the internal transfer').fill('Move cash into the bank account');
+    await page.getByRole('button', { name: 'Submit transfer', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Transfer created and approved' })).toBeVisible();
+
+    const transferDraftState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    expect(transferDraftState.transfers).toHaveLength(1);
+    expect(transferDraftState.transfers[0].status).toBe('approved');
+    expect(transferDraftState.transfers[0].destination_journal_entry_id).toBeNull();
+    const transferJournal = transferDraftState.journals.find((journal: any) =>
+      journal.id === transferDraftState.transfers[0].source_journal_entry_id
+    );
+    const transferLines = transferDraftState.journalLines.filter((line: any) =>
+      line.journal_entry_id === transferJournal.id
+    );
+    expect(transferJournal.source_type).toBe('financial_transfer');
+    expect(transferLines).toHaveLength(2);
+    expect(transferLines.find((line: any) => line.account_id === 'pw-bank-chart')?.debit_amount).toBe(75);
+    expect(transferLines.find((line: any) => line.account_id === 'pw-cash-chart')?.credit_amount).toBe(75);
+
+    await page.getByRole('button', { name: 'Post transfer atomically' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Transfer posted' })).toBeVisible();
+    const transferPostedState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
+    expect(transferPostedState.transfers[0].status).toBe('posted');
+    expect(transferPostedState.journals.find((journal: any) => journal.id === transferJournal.id).status).toBe('posted');
+
   });
 });
