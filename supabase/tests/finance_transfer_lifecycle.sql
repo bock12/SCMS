@@ -420,6 +420,13 @@ BEGIN
     IF position('approval workflows' in lower(SQLERRM))=0 THEN RAISE; END IF;
   END;
 
+  -- The transfer reconciliation RPC is available only to authorized scopes.
+  IF NOT has_function_privilege('authenticated','public.get_finance_transfer_reconciliation(text,uuid)','EXECUTE')
+     OR has_function_privilege('anon','public.get_finance_transfer_reconciliation(text,uuid)','EXECUTE')
+     OR has_function_privilege('service_role','public.get_finance_transfer_reconciliation(text,uuid)','EXECUTE') THEN
+    RAISE EXCEPTION 'Transfer reconciliation RPC grants are not least-privilege';
+  END IF;
+
   IF (SELECT count(*) FROM public.journal_lines
       WHERE journal_entry_id IN(v_source_journal,v_destination_journal)
         AND ((debit_amount=250 AND credit_amount=0) OR (credit_amount=250 AND debit_amount=0)))<>4 THEN
