@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
-import { type FinanceOwnershipScope } from './financeConfigurationService';
+import { type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { applyFinanceTransferEliminations, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 
 interface Props {
   branchId: string | null;
   scope?: FinanceOwnershipScope;
+  scopeOptions?: FinanceScopeOption[];
 }
 
 const money = (currency: string, value: number) =>
@@ -24,7 +25,7 @@ const journalLabel = (journal: FinanceJournal) => {
   return 'Draft — not posted';
 };
 
-export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) => {
+export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scopeOptions = [] }) => {
   const [ledger, setLedger] = useState<Awaited<ReturnType<typeof getFinanceJournalLedger>>['data']>(null);
   const [loading, setLoading] = useState(true);
   const [postingId, setPostingId] = useState<string | null>(null);
@@ -34,6 +35,8 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
+  const organizationalPerformance = useMemo(() => ledger ? buildFinanceOrganizationalPerformanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
+  const scopeLabel = (type: 'branch' | 'district', id: string) => scopeOptions.find(option => option.scope_type === type && option.scope_id === id)?.scope_name || (type === 'branch' ? 'Branch ' : 'District ') + id.slice(0, 8);
   const periodTransfers = useMemo(() => (transferReconciliation?.transfers || [])
     .filter(item => isWithinFinanceReportPeriod(item.transaction_date, reportPeriod)),
   [transferReconciliation, reportPeriod]);
@@ -202,6 +205,35 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
           <div className="space-y-2">{report.account_balances.filter(item => item.account_type === 'expense' && item.balance !== 0).map(item => <div key={item.account_id + item.base_currency_code} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs"><span className="font-semibold text-slate-700">{item.account_code} · {item.account_name}</span><strong className="tabular-nums">{money(item.base_currency_code, item.balance)}</strong></div>)}</div>
         </div>}
 
+        {organizationalPerformance && (organizationalPerformance.branches.length > 0 || organizationalPerformance.districts.length > 0) && <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-3">
+          <div>
+            <h5 className="text-xs font-black uppercase tracking-wide text-slate-700">Branch performance comparison</h5>
+            <p className="mt-1 text-[11px] text-slate-500">Actual revenue and expenditure from posted journals, separated by base currency.</p>
+            {organizationalPerformance.branches.length ? <div className="mt-2 overflow-x-auto">
+              <table aria-label="Branch financial performance comparison" className="w-full min-w-[620px] text-left text-xs">
+                <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Branch</th><th className="py-2">Currency</th><th className="py-2 text-right">Revenue</th><th className="py-2 text-right">Expenditure</th><th className="py-2 text-right">Net position</th><th className="py-2 text-right">Posted journals</th></tr></thead>
+                <tbody>{organizationalPerformance.branches.map(row => <tr key={row.scope_id + row.base_currency_code} className="border-b border-slate-100">
+                  <td className="py-2 font-semibold">{scopeLabel('branch', row.scope_id)}</td><td className="py-2">{row.base_currency_code}</td>
+                  <td className="py-2 text-right">{money(row.base_currency_code, row.revenue)}</td><td className="py-2 text-right">{money(row.base_currency_code, row.expenses)}</td>
+                  <td className="py-2 text-right font-black">{money(row.base_currency_code, row.net_operating_position)}</td><td className="py-2 text-right">{row.posted_journal_count}</td>
+                </tr>)}</tbody>
+              </table>
+            </div> : <p className="mt-2 text-xs text-slate-500">No branch-level posted journals are available in this scope.</p>}
+          </div>
+          <div>
+            <h5 className="text-xs font-black uppercase tracking-wide text-slate-700">District performance summary</h5>
+            {organizationalPerformance.districts.length ? <div className="mt-2 overflow-x-auto">
+              <table aria-label="District financial performance summary" className="w-full min-w-[560px] text-left text-xs">
+                <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">District</th><th className="py-2">Currency</th><th className="py-2 text-right">Revenue</th><th className="py-2 text-right">Expenditure</th><th className="py-2 text-right">Net position</th></tr></thead>
+                <tbody>{organizationalPerformance.districts.map(row => <tr key={row.scope_id + row.base_currency_code} className="border-b border-slate-100">
+                  <td className="py-2 font-semibold">{scopeLabel('district', row.scope_id)}</td><td className="py-2">{row.base_currency_code}</td>
+                  <td className="py-2 text-right">{money(row.base_currency_code, row.revenue)}</td><td className="py-2 text-right">{money(row.base_currency_code, row.expenses)}</td>
+                  <td className="py-2 text-right font-black">{money(row.base_currency_code, row.net_operating_position)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div> : <p className="mt-2 text-xs text-slate-500">No district-level posted journals are available in this scope.</p>}
+          </div>
+        </div>}
         <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-3">
           <div className="flex items-center gap-2">
             <ArrowLeftRight size={17} className="text-indigo-600" />
