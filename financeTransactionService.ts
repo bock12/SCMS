@@ -49,7 +49,7 @@ export interface CreateScopedFinancialDocumentTransactionInput {
 export interface FinancialDocumentTransactionResult {
   document_id: string;
   document_number: number;
-  journal_entry_id: string;
+  journal_entry_id: string | null;
   approval_request_id: string | null;
   status: string;
   scope_type?: FinanceOwnershipScope['type'];
