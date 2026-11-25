@@ -205,6 +205,59 @@ export function applyFinanceTransferEliminations(
 }
 
 
+export interface FinanceTransferOutstandingRow {
+  transfer_id: string;
+  transfer_number: number;
+  transaction_date: string;
+  source_branch_name: string;
+  destination_branch_name: string;
+  base_currency_code: string;
+  reconciliation_status: FinanceTransferReconciliationRow['reconciliation_status'];
+  due_from_balance: number;
+  due_to_balance: number;
+  eliminated_due_from: number;
+  eliminated_due_to: number;
+  outstanding_due_from: number;
+  outstanding_due_to: number;
+}
+
+/**
+ * Shows posted clearing exposure per transfer and per visible branch side.
+ * Only matched transfers are eligible for reporting eliminations; an
+ * out-of-scope counterpart or an unposted journal remains outstanding.
+ */
+export function buildFinanceTransferOutstandingRows(
+  transfers: FinanceTransferReconciliationRow[]
+): FinanceTransferOutstandingRow[] {
+  return transfers
+    .filter(transfer => transfer.status === 'posted' && transfer.source_branch_id !== transfer.destination_branch_id)
+    .map(transfer => {
+      const due_from_balance = transfer.source_in_scope && transfer.source_journal_status === 'posted'
+        ? Number(transfer.source_due_from_base_amount || 0) : 0;
+      const due_to_balance = transfer.destination_in_scope && transfer.destination_journal_status === 'posted'
+        ? Number(transfer.destination_due_to_base_amount || 0) : 0;
+      const eligibleElimination = transfer.reconciliation_status === 'matched'
+        ? Number(transfer.elimination_base_amount || 0) : 0;
+      const eliminated_due_from = Math.min(due_from_balance, eligibleElimination);
+      const eliminated_due_to = Math.min(due_to_balance, eligibleElimination);
+      return {
+        transfer_id: transfer.transfer_id,
+        transfer_number: transfer.transfer_number,
+        transaction_date: transfer.transaction_date,
+        source_branch_name: transfer.source_branch_name,
+        destination_branch_name: transfer.destination_branch_name,
+        base_currency_code: transfer.base_currency_code,
+        reconciliation_status: transfer.reconciliation_status,
+        due_from_balance,
+        due_to_balance,
+        eliminated_due_from,
+        eliminated_due_to,
+        outstanding_due_from: due_from_balance - eliminated_due_from,
+        outstanding_due_to: due_to_balance - eliminated_due_to
+      };
+    });
+}
+
 /** Builds report-period clearing balances from the same posted transfer rows used for elimination. */
 export function buildFinanceTransferClearingSummary(
   transfers: FinanceTransferReconciliationRow[],
