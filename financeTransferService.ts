@@ -122,6 +122,21 @@ export async function postFinancialTransfer(
   return client.rpc('post_financial_transfer', { p_transfer_id: transferId });
 }
 
+export interface FinanceBranchClearingAccounts {
+  branch_id: string;
+  due_from_chart_account_id: string;
+  due_to_chart_account_id: string;
+  is_active: boolean;
+  updated_at?: string;
+}
+
+export async function getFinanceBranchClearingAccounts(
+  branchId: string,
+  client: RpcClient = defaultRpcClient
+): Promise<RpcResponse<FinanceBranchClearingAccounts | null>> {
+  return client.rpc('get_finance_branch_clearing_accounts', { p_branch_id: branchId });
+}
+
 export async function setFinanceBranchClearingAccounts(
   input: FinanceBranchClearingAccountsInput,
   client: RpcClient = defaultRpcClient
