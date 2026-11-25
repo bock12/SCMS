@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
 import type { FinanceJournal, FinanceJournalLedger } from './financeJournalService';
 
 function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
@@ -140,6 +140,72 @@ describe('consolidated transfer eliminations', () => {
       remaining_due_from: 250, remaining_due_to: 0
     });
     expect(buildFinanceTransferClearingSummary([base as any], 'month', new Date('2026-12-25T12:00:00'))).toEqual([]);
+  });
+
+  test('shows open due-from and due-to exposure by transfer without eliminating unmatched balances', () => {
+    const rows = [
+      {
+        transfer_id: 'outside-scope', transfer_number: 11, transaction_date: '2026-11-25',
+        source_branch_id: 'branch-a', source_branch_name: 'Branch A',
+        destination_branch_id: 'branch-b', destination_branch_name: 'Branch B',
+        amount: 300, currency_code: 'SLE', base_currency_code: 'SLE', status: 'posted' as const,
+        description: 'Counterpart outside scope', external_reference: null,
+        source_journal_entry_id: 'source-je', source_journal_status: 'posted' as const,
+        source_entry_number: 11, source_posted_at: null,
+        destination_journal_entry_id: 'destination-je', destination_journal_status: 'posted' as const,
+        destination_entry_number: 12, destination_posted_at: null,
+        source_due_from_base_amount: 300, destination_due_to_base_amount: 300,
+        source_clearing_account_id: 'due-from', destination_clearing_account_id: 'due-to',
+        both_sides_in_scope: false, source_in_scope: true, destination_in_scope: false,
+        reconciliation_status: 'counterpart_outside_scope' as const, elimination_base_amount: 0
+      },
+      {
+        transfer_id: 'mismatch', transfer_number: 12, transaction_date: '2026-11-25',
+        source_branch_id: 'branch-c', source_branch_name: 'Branch C',
+        destination_branch_id: 'branch-d', destination_branch_name: 'Branch D',
+        amount: 200, currency_code: 'SLE', base_currency_code: 'SLE', status: 'posted' as const,
+        description: 'Mismatched journals', external_reference: null,
+        source_journal_entry_id: 'source-je-2', source_journal_status: 'posted' as const,
+        source_entry_number: 13, source_posted_at: null,
+        destination_journal_entry_id: 'destination-je-2', destination_journal_status: 'posted' as const,
+        destination_entry_number: 14, destination_posted_at: null,
+        source_due_from_base_amount: 200, destination_due_to_base_amount: 175,
+        source_clearing_account_id: 'due-from-2', destination_clearing_account_id: 'due-to-2',
+        both_sides_in_scope: true, source_in_scope: true, destination_in_scope: true,
+        reconciliation_status: 'mismatch' as const, elimination_base_amount: 0
+      },
+      {
+        transfer_id: 'pending', transfer_number: 13, transaction_date: '2026-11-25',
+        source_branch_id: 'branch-e', source_branch_name: 'Branch E',
+        destination_branch_id: 'branch-f', destination_branch_name: 'Branch F',
+        amount: 100, currency_code: 'SLE', base_currency_code: 'SLE', status: 'approved' as const,
+        description: 'Not posted', external_reference: null,
+        source_journal_entry_id: null, source_journal_status: null,
+        source_entry_number: null, source_posted_at: null,
+        destination_journal_entry_id: null, destination_journal_status: null,
+        destination_entry_number: null, destination_posted_at: null,
+        source_due_from_base_amount: 0, destination_due_to_base_amount: 0,
+        source_clearing_account_id: null, destination_clearing_account_id: null,
+        both_sides_in_scope: true, source_in_scope: true, destination_in_scope: true,
+        reconciliation_status: 'not_posted' as const, elimination_base_amount: 0
+      }
+    ] as any;
+    expect(buildFinanceTransferOutstandingRows(rows)).toEqual([
+      {
+        transfer_id: 'outside-scope', transfer_number: 11, transaction_date: '2026-11-25',
+        source_branch_name: 'Branch A', destination_branch_name: 'Branch B',
+        base_currency_code: 'SLE', reconciliation_status: 'counterpart_outside_scope',
+        due_from_balance: 300, due_to_balance: 0, eliminated_due_from: 0, eliminated_due_to: 0,
+        outstanding_due_from: 300, outstanding_due_to: 0
+      },
+      {
+        transfer_id: 'mismatch', transfer_number: 12, transaction_date: '2026-11-25',
+        source_branch_name: 'Branch C', destination_branch_name: 'Branch D',
+        base_currency_code: 'SLE', reconciliation_status: 'mismatch',
+        due_from_balance: 200, due_to_balance: 175, eliminated_due_from: 0, eliminated_due_to: 0,
+        outstanding_due_from: 200, outstanding_due_to: 175
+      }
+    ]);
   });
 
   test('does not eliminate branch-only, unmatched or unposted transfer balances', () => {
