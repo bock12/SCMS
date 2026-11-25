@@ -1,6 +1,6 @@
 import type { Profile } from './types';
 import { supabase } from './supabaseClient';
-import { resolveDataClient } from './supabaseIntegration';
+import { resolveMemberDataClient } from './supabaseIntegration';
 import { mapCanonicalProfileToProfile } from './memberProfileMapper';
 
 export interface DirectoryMember extends Profile {
@@ -12,7 +12,7 @@ export interface DirectoryMember extends Profile {
  * Portal access is indicated strictly by a linked `auth_user_id`.
  */
 export async function getDirectoryMembers(): Promise<DirectoryMember[]> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client
     .from('profiles')
     .select('*')
