@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod, serializeFinanceCsv } from './financeReportService';
 import type { FinanceJournal, FinanceJournalLedger } from './financeJournalService';
 
 function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
@@ -21,6 +21,14 @@ function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
 
 const ledger = (...journals: FinanceJournal[]): FinanceJournalLedger => ({
   actor_profile_id: 'finance-user', journals, account_balances: []
+});
+
+describe('finance report CSV serialization', () => {
+  test('quotes fields and escapes embedded quotes, commas and line breaks', () => {
+    expect(serializeFinanceCsv(['Account', 'Description'], [
+      ['Cash, bank', 'Offering "Sunday"\nservice']
+    ])).toBe('"Account","Description"\\r\\n"Cash, bank","Offering ""Sunday""\nservice"');
+  });
 });
 
 describe('posted journal financial reports', () => {
