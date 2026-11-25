@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
+import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { type FinanceOwnershipScope } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { buildPostedFinanceReport, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildPostedFinanceReport, type FinanceReportPeriod } from './financeReportService';
+import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 
 interface Props {
   branchId: string | null;
@@ -29,20 +30,36 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
   const [postingId, setPostingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [transferReconciliation, setTransferReconciliation] = useState<FinanceTransferReconciliation | null>(null);
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
+  const consolidatedBalances = useMemo(() => report && transferReconciliation
+    ? applyFinanceTransferEliminations(report.account_balances, transferReconciliation.transfers)
+    : [], [report, transferReconciliation]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const result = scope
-      ? await getScopedFinanceJournalLedger(scope)
-      : await getFinanceJournalLedger(branchId);
+    setReconciliationError(null);
+    const reconciliationScope = scope || (branchId ? { type: 'branch' as const, id: branchId } : null);
+    const [result, reconciliationResult] = await Promise.all([
+      scope ? getScopedFinanceJournalLedger(scope) : getFinanceJournalLedger(branchId),
+      reconciliationScope
+        ? getFinanceTransferReconciliation(reconciliationScope)
+        : Promise.resolve({ data: null, error: null })
+    ]);
     if (result.error) {
       setLedger(null);
       setError(result.error.message);
     } else {
       setLedger(result.data);
+    }
+    if (reconciliationResult.error) {
+      setTransferReconciliation(null);
+      setReconciliationError(reconciliationResult.error.message);
+    } else {
+      setTransferReconciliation(reconciliationResult.data);
     }
     setLoading(false);
   }, [branchId, scope?.type, scope?.id]);
@@ -51,7 +68,11 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
     void reload();
     const handleDocumentsUpdated = () => { void reload(); };
     window.addEventListener('finance_documents_updated', handleDocumentsUpdated);
-    return () => window.removeEventListener('finance_documents_updated', handleDocumentsUpdated);
+    window.addEventListener('finance_transfers_updated', handleDocumentsUpdated);
+    return () => {
+      window.removeEventListener('finance_documents_updated', handleDocumentsUpdated);
+      window.removeEventListener('finance_transfers_updated', handleDocumentsUpdated);
+    }
   }, [reload]);
 
   const downloadPostedCsv = () => {
@@ -162,6 +183,53 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
           <h5 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Posted expenditure by expense account</h5>
           <div className="space-y-2">{report.account_balances.filter(item => item.account_type === 'expense' && item.balance !== 0).map(item => <div key={item.account_id + item.base_currency_code} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs"><span className="font-semibold text-slate-700">{item.account_code} · {item.account_name}</span><strong className="tabular-nums">{money(item.base_currency_code, item.balance)}</strong></div>)}</div>
         </div>}
+
+        <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ArrowLeftRight size={17} className="text-indigo-600" />
+            <h5 className="text-sm font-black text-slate-900">Internal transfer reconciliation</h5>
+          </div>
+          <p className="text-xs text-slate-500">Transfer journals are reconciled using their posted branch clearing lines. Consolidated eliminations are reporting-only and never modify either branch ledger.</p>
+          {reconciliationError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{reconciliationError}</p>}
+          {transferReconciliation?.clearing_summary.length ? (
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {transferReconciliation.clearing_summary.map(summary => <React.Fragment key={summary.base_currency_code}>
+                <article className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} Due from branches</p><p className="mt-1 text-sm font-black">{money(summary.base_currency_code, summary.due_from_balance)}</p></article>
+                <article className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} Due to branches</p><p className="mt-1 text-sm font-black">{money(summary.base_currency_code, summary.due_to_balance)}</p></article>
+                <article className="rounded-lg bg-emerald-50 p-3"><p className="text-[10px] font-bold uppercase text-emerald-700">{summary.base_currency_code} Eliminated</p><p className="mt-1 text-sm font-black text-emerald-800">{money(summary.base_currency_code, summary.elimination_amount)}</p></article>
+                <article className="rounded-lg bg-amber-50 p-3"><p className="text-[10px] font-bold uppercase text-amber-700">{summary.base_currency_code} Remaining due-from / due-to</p><p className="mt-1 text-sm font-black text-amber-800">{money(summary.base_currency_code, summary.remaining_due_from)} / {money(summary.base_currency_code, summary.remaining_due_to)}</p></article>
+              </React.Fragment>)}
+            </div>
+          ) : !reconciliationError ? <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No posted inter-branch clearing balances are available in this scope.</p> : null}
+          {consolidatedBalances.some(item => item.elimination_amount > 0) && (
+            <div>
+              <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Consolidated clearing-account balances after elimination</h6>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-xs">
+                  <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Account</th><th className="py-2 text-right">Pre-elimination</th><th className="py-2 text-right">Eliminated</th><th className="py-2 text-right">Consolidated</th></tr></thead>
+                  <tbody>{consolidatedBalances.filter(item => item.elimination_amount > 0).map(item => <tr key={item.account_id + item.base_currency_code} className="border-b border-slate-100"><td className="py-2">{item.account_code} · {item.account_name}</td><td className="py-2 text-right">{money(item.base_currency_code, item.balance)}</td><td className="py-2 text-right">{money(item.base_currency_code, item.elimination_amount)}</td><td className="py-2 text-right font-black">{money(item.base_currency_code, item.consolidated_balance)}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {transferReconciliation?.transfers.length ? (
+            <div className="overflow-x-auto">
+              <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Transfer-to-journal trace</h6>
+              <table className="w-full min-w-[850px] text-left text-xs">
+                <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Transfer</th><th className="py-2">Branch movement</th><th className="py-2">Amount</th><th className="py-2">Source journal</th><th className="py-2">Destination journal</th><th className="py-2">Reconciliation</th><th className="py-2 text-right">Elimination</th></tr></thead>
+                <tbody>{transferReconciliation.transfers.map(item => <tr key={item.transfer_id} className="border-b border-slate-100">
+                  <td className="py-2 font-bold">TR-{item.transfer_number}<div className="font-normal text-slate-500">{item.transaction_date}</div></td>
+                  <td className="py-2">{item.source_branch_name} → {item.destination_branch_name}</td>
+                  <td className="py-2">{money(item.currency_code, Number(item.amount))}</td>
+                  <td className="py-2">JE-{item.source_entry_number ?? '—'} · {item.source_journal_status || '—'}</td>
+                  <td className="py-2">{item.destination_journal_entry_id ? `JE-${item.destination_entry_number ?? '—'} · ${item.destination_journal_status || '—'}` : 'Same-branch journal'}</td>
+                  <td className="py-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.reconciliation_status === 'matched' || item.reconciliation_status === 'not_required' ? 'bg-emerald-100 text-emerald-800' : item.reconciliation_status === 'mismatch' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>{item.reconciliation_status.replaceAll('_', ' ')}</span></td>
+                  <td className="py-2 text-right">{money(item.base_currency_code, Number(item.elimination_base_amount))}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div>
