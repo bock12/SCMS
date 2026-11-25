@@ -1637,3 +1637,54 @@ describe('mock internal financial transfer RPC', () => {
   });
 });
 
+
+
+describe('mock consolidated finance and transfer reconciliation', () => {
+  test('includes descendant branch journals and eliminates reciprocal clearing only in consolidated scopes', async () => {
+    const ctx = transferFixture();
+    const created = await ctx.rpc.rpc('create_financial_transfer', transferArgs);
+    expect(created.error).toBeNull();
+    const posted = await ctx.rpc.rpc('post_financial_transfer', { p_transfer_id: created.data.transfer_id });
+    expect(posted.error).toBeNull();
+
+    const state = ctx.read();
+    state.permissions.push(
+      { profile_id: 'creator', permission: 'view_finances', branch_id: null },
+      { profile_id: 'creator', permission: 'view_finances', branch_id: null, district_id: 'district-a' }
+    );
+    ctx.write(state);
+
+    const churchJournals = await ctx.rpc.rpc('get_finance_scope_journals', { p_scope_type: 'church', p_scope_id: null });
+    expect(churchJournals.error).toBeNull();
+    expect(churchJournals.data.journals.map((item: any) => item.id)).toContain(created.data.source_journal_entry_id);
+    expect(churchJournals.data.journals.map((item: any) => item.id)).toContain(created.data.destination_journal_entry_id);
+
+    const districtJournals = await ctx.rpc.rpc('get_finance_scope_journals', { p_scope_type: 'district', p_scope_id: 'district-a' });
+    expect(districtJournals.error).toBeNull();
+    expect(districtJournals.data.journals.map((item: any) => item.id)).toContain(created.data.source_journal_entry_id);
+    expect(districtJournals.data.journals.map((item: any) => item.id)).toContain(created.data.destination_journal_entry_id);
+
+    const branchJournals = await ctx.rpc.rpc('get_finance_scope_journals', { p_scope_type: 'branch', p_scope_id: 'branch-a' });
+    expect(branchJournals.error).toBeNull();
+    expect(branchJournals.data.journals.map((item: any) => item.id)).toContain(created.data.source_journal_entry_id);
+    expect(branchJournals.data.journals.map((item: any) => item.id)).not.toContain(created.data.destination_journal_entry_id);
+
+    const churchReconciliation = await ctx.rpc.rpc('get_finance_transfer_reconciliation', {
+      p_scope_type: 'church', p_scope_id: null
+    });
+    expect(churchReconciliation.error).toBeNull();
+    expect(churchReconciliation.data.transfers[0].reconciliation_status).toBe('matched');
+    expect(churchReconciliation.data.transfers[0].elimination_base_amount).toBe(250);
+    expect(churchReconciliation.data.clearing_summary[0]).toMatchObject({
+      due_from_balance: 250, due_to_balance: 250, elimination_amount: 250,
+      remaining_due_from: 0, remaining_due_to: 0
+    });
+
+    const branchReconciliation = await ctx.rpc.rpc('get_finance_transfer_reconciliation', {
+      p_scope_type: 'branch', p_scope_id: 'branch-a'
+    });
+    expect(branchReconciliation.error).toBeNull();
+    expect(branchReconciliation.data.transfers[0].reconciliation_status).toBe('counterpart_outside_scope');
+    expect(branchReconciliation.data.transfers[0].elimination_base_amount).toBe(0);
+  });
+});
