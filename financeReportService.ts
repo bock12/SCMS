@@ -316,3 +316,60 @@ export function buildFinanceOrganizationalPerformanceReport(
     districts: toRows(districtBuckets)
   };
 }
+
+
+export interface FinanceConsolidatedPositionSummary {
+  base_currency_code: string;
+  total_assets: number;
+  total_liabilities: number;
+  recorded_equity: number;
+  accumulated_surplus: number;
+  total_equity: number;
+  net_assets: number;
+  balance_check_difference: number;
+}
+
+/**
+ * Builds an as-of-now financial position from cumulative posted balances.
+ * Matched inter-branch clearing balances are eliminated for presentation only.
+ * Accumulated surplus (income less expenses) is included in total equity so
+ * the balance check reflects unclosed operating results.
+ */
+export function buildFinanceConsolidatedPositionReport(
+  accountBalances: FinanceReportAccountBalance[],
+  transfers: FinanceTransferReconciliationRow[]
+): FinanceConsolidatedPositionSummary[] {
+  const consolidated = applyFinanceTransferEliminations(accountBalances, transfers, 'all');
+  const summaries = new Map<string, FinanceConsolidatedPositionSummary>();
+
+  for (const account of consolidated) {
+    const summary = summaries.get(account.base_currency_code) ?? {
+      base_currency_code: account.base_currency_code,
+      total_assets: 0,
+      total_liabilities: 0,
+      recorded_equity: 0,
+      accumulated_surplus: 0,
+      total_equity: 0,
+      net_assets: 0,
+      balance_check_difference: 0
+    };
+    const balance = Number(account.consolidated_balance || 0);
+    if (account.account_type === 'asset') summary.total_assets += balance;
+    if (account.account_type === 'liability') summary.total_liabilities += balance;
+    if (account.account_type === 'equity') summary.recorded_equity += balance;
+    if (account.account_type === 'income') summary.accumulated_surplus += balance;
+    if (account.account_type === 'expense') summary.accumulated_surplus -= balance;
+    summaries.set(account.base_currency_code, summary);
+  }
+
+  return [...summaries.values()].map(summary => {
+    const total_equity = summary.recorded_equity + summary.accumulated_surplus;
+    const net_assets = summary.total_assets - summary.total_liabilities;
+    return {
+      ...summary,
+      total_equity,
+      net_assets,
+      balance_check_difference: net_assets - total_equity
+    };
+  }).sort((a, b) => a.base_currency_code.localeCompare(b.base_currency_code));
+}
