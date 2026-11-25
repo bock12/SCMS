@@ -230,6 +230,16 @@ Deno.serve(async (request: Request) => {
         if (passwordError) throw passwordError;
       }
 
+      if (profile.portal_access_status !== "active" && authUser.email_confirmed_at) {
+        // Re-trigger the database email-confirmation lifecycle when recovering
+        // a partially provisioned development account.
+        const { error: resetConfirmationError } = await adminClient.auth.admin.updateUserById(
+          authUser.id,
+          { email_confirm: false },
+        );
+        if (resetConfirmationError) throw resetConfirmationError;
+      }
+
       if (!profile.auth_user_id) {
         const { error: linkError } = await adminClient.rpc("complete_member_portal_action", {
           p_actor_profile_id: actor.id,
