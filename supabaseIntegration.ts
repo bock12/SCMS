@@ -20,8 +20,8 @@ const integrationMode = import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowe
 const authMode = import.meta.env.VITE_SUPABASE_AUTH?.trim().toLowerCase() ?? '';
 const memberIntegrationMode = import.meta.env.VITE_SUPABASE_MEMBER_INTEGRATION?.trim().toLowerCase() ?? '';
 export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
-// Keep non-finance modules on the local mock adapter when VITE_SUPABASE_INTEGRATION=finance.
-// Full live integration across non-finance modules only activates when set to "enabled".
+// Finance and member data have independent integration switches. Other application modules
+// remain on the mock adapter until VITE_SUPABASE_INTEGRATION=enabled.
 export const supabaseIntegrationEnabled = integrationMode === 'enabled';
 export const supabaseAuthEnabled = authMode === 'enabled';
 /**
