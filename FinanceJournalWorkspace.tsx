@@ -35,7 +35,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
   const consolidatedBalances = useMemo(() => report && transferReconciliation
-    ? applyFinanceTransferEliminations(report.account_balances, transferReconciliation.transfers)
+    ? applyFinanceTransferEliminations(report.account_balances, transferReconciliation.transfers, reportPeriod)
     : [], [report, transferReconciliation]);
 
   const reload = useCallback(async () => {
