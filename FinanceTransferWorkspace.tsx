@@ -60,8 +60,9 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
 
   const destinationAccounts = useMemo(() => destinationConfiguration.financialAccounts.filter(account =>
     account.is_active && account.branch_id === destinationBranchId &&
+    !(destinationBranchId === branchId && account.id === sourceAccountId) &&
     (!currencyCode || account.currency_code === currencyCode)), [
-      destinationConfiguration.financialAccounts, destinationBranchId, currencyCode
+      destinationConfiguration.financialAccounts, destinationBranchId, currencyCode, branchId, sourceAccountId
     ]);
 
   const sourceAccount = sourceAccounts.find(account => account.id === sourceAccountId) || null;
@@ -127,12 +128,13 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
       setCurrencyCode(sourceAccount.currency_code);
       const compatibleAccounts = destinationConfiguration.financialAccounts.filter(account =>
         account.is_active && account.branch_id === destinationBranchId &&
+        !(destinationBranchId === branchId && account.id === sourceAccountId) &&
         account.currency_code === sourceAccount.currency_code);
       setDestinationAccountId(current => compatibleAccounts.some(account => account.id === current)
         ? current
         : compatibleAccounts[0]?.id || '');
     }
-  }, [sourceAccountId, sourceConfiguration.financialAccounts, destinationConfiguration.financialAccounts, destinationBranchId]);
+  }, [sourceAccountId, sourceConfiguration.financialAccounts, destinationConfiguration.financialAccounts, destinationBranchId, branchId]);
 
   const updateDestinationBranch = (nextBranchId: string) => {
     setDestinationBranchId(nextBranchId);
