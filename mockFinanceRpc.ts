@@ -437,6 +437,21 @@ export function createMockFinanceRpc(
     return success({ saved: true, branch_id: branchId });
   }
 
+
+  function getFinanceBranchClearingAccounts(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const branchId = String(args.p_branch_id || '');
+    if (!branchId || !(hasPermission(state, actor.id, 'view_finances', branchId) ||
+      hasPermission(state, actor.id, 'manage_finances', branchId))) {
+      return fail('Insufficient permission to view branch clearing-account configuration', '42501');
+    }
+    return success(clone(state.branchClearingAccounts.find(item => item.branch_id === branchId) ?? null));
+  }
+
   function createTransferApprovalRequest(
     state: MockFinanceState,
     transferId: string,
@@ -2336,9 +2351,12 @@ export function createMockFinanceRpc(
     const newBandIds: string[] = [];
     let policiesCreated = 0, bandsCreated = 0, stepsCreated = 0;
     for (const policy of args.p_policies) {
-      if (!policy?.id || !policy.name?.trim() || !['financial_document', 'budget'].includes(policy.transaction_type) ||
+      if (!policy?.id || !policy.name?.trim() || !['financial_document', 'budget', 'financial_transfer'].includes(policy.transaction_type) ||
           !policy.effective_from || (policy.effective_to && policy.effective_to < policy.effective_from)) {
         return fail('Approval policies require a name, transaction type and valid effective dates');
+      }
+      if (policy.transaction_type === 'financial_transfer' && scopeType !== 'branch') {
+        return fail('Internal financial-transfer approval policies must be configured at branch scope');
       }
       const existing = state.approvalPolicies.find(item => item.id === policy.id);
       if (existing) {
@@ -2675,6 +2693,7 @@ export function createMockFinanceRpc(
         if (name === 'create_event_budget_payment') return createEventBudgetPayment(args);
         if (name === 'get_event_budgets') return getEventBudgets(args);
         if (name === 'set_finance_branch_clearing_accounts') return setFinanceBranchClearingAccounts(args);
+        if (name === 'get_finance_branch_clearing_accounts') return getFinanceBranchClearingAccounts(args);
         if (name === 'create_financial_transfer') return createFinancialTransfer(args);
         if (name === 'decide_financial_transfer_approval') return decideFinancialTransferApproval(args);
         if (name === 'post_financial_transfer') return postFinancialTransfer(args);
