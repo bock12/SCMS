@@ -1,6 +1,6 @@
 import type { MemberTransfer } from './types';
 import { supabase } from './supabaseClient';
-import { resolveDataClient } from './supabaseIntegration';
+import { resolveMemberDataClient } from './supabaseIntegration';
 
 export interface RequestMemberTransferInput {
   /** Omit to request a transfer for the currently signed-in member. */
@@ -29,7 +29,7 @@ export async function getMemberTransferDirectory(): Promise<{
   members: MemberTransferDirectoryMember[];
   branches: MemberTransferDirectoryBranch[];
 }> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client.rpc('get_member_transfer_directory');
   if (error) throw error;
   const payload = (data || {}) as {
