@@ -1,6 +1,6 @@
 import type { Ministry, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseMemberIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 import { mapCanonicalProfileToProfile } from './memberProfileMapper';
 
 export interface MinistryRosterEntry extends MinistryMember {
@@ -26,13 +26,13 @@ export interface ResolvedMinistryMembership {
 }
 
 function getMinistryReadClient(): any {
-  return supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+  return supabaseMemberIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
     ? supabaseDataClient
     : supabase;
 }
 
 function requireMinistryWriteClient(): any {
-  if (!supabaseIntegrationEnabled) {
+  if (!supabaseMemberIntegrationEnabled) {
     return supabase;
   }
   if (!supabaseAuthEnabled) {
