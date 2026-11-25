@@ -278,13 +278,13 @@ begin
     left join public.financial_accounts sfa on sfa.id=ft.source_financial_account_id
     left join public.financial_accounts dfa on dfa.id=ft.destination_financial_account_id
     left join lateral (
-      select min(jl.account_id) as account_id,
+      select (array_agg(jl.account_id order by jl.line_number))[1] as account_id,
         sum(jl.base_debit_amount-jl.base_credit_amount) as amount
       from public.journal_lines jl where jl.journal_entry_id=ft.source_journal_entry_id
         and jl.account_id<>sfa.chart_account_id
     ) sc on true
     left join lateral (
-      select min(jl.account_id) as account_id,
+      select (array_agg(jl.account_id order by jl.line_number))[1] as account_id,
         sum(jl.base_credit_amount-jl.base_debit_amount) as amount
       from public.journal_lines jl where jl.journal_entry_id=ft.destination_journal_entry_id
         and jl.account_id<>dfa.chart_account_id
