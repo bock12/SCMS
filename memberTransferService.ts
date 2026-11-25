@@ -43,7 +43,7 @@ export async function getMemberTransferDirectory(): Promise<{
 }
 
 export async function getMemberTransfers(): Promise<MemberTransfer[]> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client
     .from('member_transfers')
     .select('*')
@@ -58,7 +58,7 @@ export async function requestMemberTransfer(
 ): Promise<MemberTransfer> {
   if (!input.toBranchId) throw new Error('Select the destination branch.');
 
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client.rpc('manage_member_transfer', {
     p_action: 'request',
     p_member_id: input.memberId || null,
@@ -77,7 +77,7 @@ export async function reviewMemberTransfer(
 ): Promise<MemberTransfer> {
   if (!transferId) throw new Error('A transfer request is required.');
 
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client.rpc('manage_member_transfer', {
     p_action: decision,
     p_transfer_id: transferId
@@ -91,7 +91,7 @@ export async function reviewMemberTransfer(
 export async function cancelMemberTransfer(transferId: string): Promise<MemberTransfer> {
   if (!transferId) throw new Error('A transfer request is required.');
 
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const { data, error } = await client.rpc('manage_member_transfer', {
     p_action: 'cancel',
     p_transfer_id: transferId
