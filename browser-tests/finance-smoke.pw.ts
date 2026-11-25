@@ -437,7 +437,7 @@ test.describe('SCMS finance browser smoke', () => {
     await page.getByRole('button', { name: 'Ledger', exact: true }).click();
     await expect(page.getByText('Internal transfer reconciliation')).toBeVisible();
     await expect(page.getByText('Transfer-to-journal trace')).toBeVisible();
-    await expect(page.getByText('matched', { exact: true })).toBeVisible();
+    await expect(page.getByText('counterpart outside scope', { exact: true })).toBeVisible();
 
 
   });
