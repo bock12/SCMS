@@ -1,15 +1,15 @@
 import type { Ministry, MinistryJoinRequest, MinistryMember, Profile } from './types';
 import { supabase } from './supabaseClient';
-import { supabaseDataClient, supabaseIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
+import { supabaseDataClient, supabaseMemberIntegrationEnabled, supabaseAuthEnabled } from './supabaseIntegration';
 import { removeMinistryMember } from './ministryMemberService';
 import { sendInAppNotification } from './inAppNotificationService';
 import { SYSTEM_NOTIFICATIONS_UPDATED_EVENT } from './systemNotificationService';
 
 const getReadClient = (): any =>
-  supabaseIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient ? supabaseDataClient : supabase;
+  supabaseMemberIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient ? supabaseDataClient : supabase;
 
 const getWriteClient = (): any => {
-  if (!supabaseIntegrationEnabled) return supabase;
+  if (!supabaseMemberIntegrationEnabled) return supabase;
   if (!supabaseAuthEnabled) throw new Error('Ministry requests require an active Supabase Auth session.');
   if (!supabaseDataClient) throw new Error('Supabase is enabled but its URL or publishable key is missing.');
   return supabaseDataClient;
