@@ -172,12 +172,15 @@ export interface FinanceConsolidatedAccountBalance extends FinanceReportAccountB
  */
 export function applyFinanceTransferEliminations(
   accountBalances: FinanceReportAccountBalance[],
-  transfers: FinanceTransferReconciliationRow[]
+  transfers: FinanceTransferReconciliationRow[],
+  period: FinanceReportPeriod = 'all',
+  now = new Date()
 ): FinanceConsolidatedAccountBalance[] {
   const eliminations = new Map<string, number>();
   for (const transfer of transfers) {
     const amount = Number(transfer.elimination_base_amount || 0);
-    if (transfer.reconciliation_status !== 'matched' || amount <= 0) continue;
+    if (transfer.reconciliation_status !== 'matched' || amount <= 0 ||
+        !isWithinFinanceReportPeriod(transfer.transaction_date, period, now)) continue;
     if (transfer.source_clearing_account_id) {
       const key = `${transfer.source_clearing_account_id}:${transfer.base_currency_code}`;
       eliminations.set(key, (eliminations.get(key) || 0) + amount);
