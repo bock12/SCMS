@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { resolveDataClient } from './supabaseIntegration';
+import { resolveMemberDataClient } from './supabaseIntegration';
 
 export interface LeadershipAppointment {
   id: string;
@@ -20,7 +20,7 @@ export interface LeadershipAppointment {
 }
 
 export async function getLeadershipAppointments(): Promise<LeadershipAppointment[]> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client
     .from('leadership_appointments')
     .select('*')
@@ -39,7 +39,7 @@ export async function createLeadershipAppointment(input: {
   responsibilities?: string | null;
   effective_from?: string;
 }): Promise<LeadershipAppointment> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('create_leadership_appointment', {
     p_profile_id: input.profile_id,
     p_scope_type: input.scope_type,
@@ -60,7 +60,7 @@ export async function endLeadershipAppointment(
   appointmentId: string,
   reason?: string | null
 ): Promise<LeadershipAppointment> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('end_leadership_appointment', {
     p_appointment_id: appointmentId,
     p_end_reason: reason ?? null
