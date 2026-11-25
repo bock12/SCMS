@@ -20,6 +20,7 @@ describe('financeOperationalBalanceService', () => {
               branch_id: 'branch-a',
               district_id: 'district-a',
               account_name: 'Main Bank',
+              is_active: true,
               operational_account_type: 'bank',
               currency_code: 'SLE',
               provider_name: 'Bank',
