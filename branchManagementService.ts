@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { resolveDataClient } from './supabaseIntegration';
+import { resolveMemberDataClient } from './supabaseIntegration';
 import type { ChurchBranch, District, Profile } from './types';
 import {
   getLeadershipAppointments,
@@ -58,7 +58,7 @@ export async function getBranchGovernanceData(): Promise<{
   branchMemberCounts: Record<string, BranchMemberCountSnapshot>;
   leadershipAppointments: LeadershipAppointment[];
 }> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const [districtsResult, branchesResult, profilesResult, summaryResult, leadershipAppointments] = await Promise.all([
     client.from('districts').select('*').order('name', { ascending: true }),
     client.from('church_branches').select('*').order('name', { ascending: true }),
@@ -98,7 +98,7 @@ export async function createDistrict(input: {
   country: string;
   description?: string;
 }): Promise<District> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('create_district', {
     p_name: input.name,
     p_region: input.region,
@@ -122,7 +122,7 @@ export async function updateDistrict(input: {
   hq_branch_id?: string | null;
   update_hq?: boolean;
 }): Promise<District> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('update_district', {
     p_district_id: input.id,
     p_name: input.name,
@@ -141,7 +141,7 @@ export async function updateDistrict(input: {
 }
 
 export async function deleteDistrict(districtId: string): Promise<boolean> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('delete_district', {
     p_district_id: districtId
   });
@@ -161,7 +161,7 @@ export async function createChurchBranch(input: {
   state: string;
   is_main_branch?: boolean;
 }): Promise<ChurchBranch> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('create_church_branch', {
     p_district_id: input.district_id || null,
     p_name: input.name,
@@ -187,7 +187,7 @@ export async function updateChurchBranch(input: {
   state: string;
   is_main_branch?: boolean;
 }): Promise<ChurchBranch> {
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const result = await client.rpc('update_church_branch', {
     p_branch_id: input.id,
     p_district_id: input.district_id || null,
@@ -221,7 +221,7 @@ export async function resolveActorBranchGovernanceScope(
     };
   }
 
-  const client = resolveDataClient(supabase);
+  const client = resolveMemberDataClient(supabase);
   const [assignmentsRes, rolesRes, permissionsRes, rolePermRes] = await Promise.all([
     client.from('profile_role_assignments').select('*').eq('profile_id', actorProfileId).eq('is_active', true),
     client.from('roles').select('id,is_active').eq('is_active', true),
