@@ -434,5 +434,11 @@ test.describe('SCMS finance browser smoke', () => {
     expect(transferPostedState.transfers[0].status).toBe('posted');
     expect(transferPostedState.journals.find((journal: any) => journal.id === transferJournal.id).status).toBe('posted');
 
+    await page.getByRole('button', { name: 'Ledger', exact: true }).click();
+    await expect(page.getByText('Internal transfer reconciliation')).toBeVisible();
+    await expect(page.getByText('Transfer-to-journal trace')).toBeVisible();
+    await expect(page.getByText('matched', { exact: true })).toBeVisible();
+
+
   });
 });
