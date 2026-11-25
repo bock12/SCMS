@@ -865,6 +865,8 @@ export function createMockFinanceRpc(
           source_clearing_account_id: sourceClearingAccountId,
           destination_clearing_account_id: destinationClearingAccountId,
           both_sides_in_scope: bothSidesInScope,
+          source_in_scope: inScope(item.source_branch_id),
+          destination_in_scope: inScope(item.destination_branch_id),
           reconciliation_status: reconciliationStatus, elimination_base_amount: eliminationAmount
         };
       }).sort((a,b) => String(b.transaction_date).localeCompare(String(a.transaction_date)) || Number(b.transfer_number)-Number(a.transfer_number));
