@@ -44,6 +44,10 @@ DECLARE
   v_line_count integer;
   v_debits numeric(20,4);
   v_credits numeric(20,4);
+  v_reconciliation jsonb;
+  v_reconciliation_row jsonb;
+  v_clearing_summary jsonb;
+  v_scoped_journals jsonb;
 BEGIN
   INSERT INTO public.districts(id,name,country)
   VALUES(v_district,'FIN-INT-004 Transfer District','Sierra Leone');
@@ -66,6 +70,14 @@ BEGIN
   FROM public.roles r
   CROSS JOIN (VALUES(v_branch_a),(v_branch_b)) AS b(branch_id)
   WHERE r.name='finance_officer' AND r.is_active;
+
+  -- Give the test operator an explicit church-level finance assignment so
+  -- consolidated reporting authorization is exercised independently of branch scope.
+  INSERT INTO public.profile_role_assignments(
+    profile_id,role_id,scope_type,assigned_at,is_active
+  )
+  SELECT v_profile,r.id,'church',now()-interval '1 day',true
+  FROM public.roles r WHERE r.name='finance_officer' AND r.is_active;
 
   PERFORM set_config('request.jwt.claim.sub',v_auth::text,true);
 
@@ -326,6 +338,56 @@ BEGIN
     RAISE EXCEPTION 'Cross-branch transfer did not finalize with both journal links';
   END IF;
 
+  -- District and church journal reports must include descendant branch journals;
+  -- a branch-only view must still exclude the other branch's journal.
+  v_scoped_journals:=public.get_finance_scope_journals('church',null)->'journals';
+  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_source_journal::text)
+     OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_destination_journal::text) THEN
+    RAISE EXCEPTION 'Church-wide journal report omitted branch-level transfer journals';
+  END IF;
+  v_scoped_journals:=public.get_finance_scope_journals('district',v_district)->'journals';
+  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_source_journal::text)
+     OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_destination_journal::text) THEN
+    RAISE EXCEPTION 'District journal report omitted descendant branch transfer journals';
+  END IF;
+  v_scoped_journals:=public.get_finance_scope_journals('branch',v_branch_a)->'journals';
+  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_source_journal::text)
+     OR EXISTS(SELECT 1 FROM jsonb_array_elements(v_scoped_journals) j WHERE j->>'id'=v_destination_journal::text) THEN
+    RAISE EXCEPTION 'Branch journal report did not preserve branch-only visibility';
+  END IF;
+
+  v_reconciliation:=public.get_finance_transfer_reconciliation('church',null);
+  SELECT value INTO v_reconciliation_row
+  FROM jsonb_array_elements(v_reconciliation->'transfers') value
+  WHERE value->>'transfer_id'=v_transfer_id::text;
+  IF v_reconciliation_row IS NULL
+     OR v_reconciliation_row->>'reconciliation_status'<>'matched'
+     OR (v_reconciliation_row->>'elimination_base_amount')::numeric<>250
+     OR (v_reconciliation_row->>'source_due_from_base_amount')::numeric<>250
+     OR (v_reconciliation_row->>'destination_due_to_base_amount')::numeric<>250 THEN
+    RAISE EXCEPTION 'Church-wide transfer reconciliation did not match reciprocal branch clearing journals';
+  END IF;
+  SELECT value INTO v_clearing_summary
+  FROM jsonb_array_elements(v_reconciliation->'clearing_summary') value
+  WHERE value->>'base_currency_code'='SLE';
+  IF v_clearing_summary IS NULL
+     OR (v_clearing_summary->>'due_from_balance')::numeric<>250
+     OR (v_clearing_summary->>'due_to_balance')::numeric<>250
+     OR (v_clearing_summary->>'elimination_amount')::numeric<>250
+     OR (v_clearing_summary->>'remaining_due_from')::numeric<>0
+     OR (v_clearing_summary->>'remaining_due_to')::numeric<>0 THEN
+    RAISE EXCEPTION 'Consolidated clearing summary did not eliminate equal due-from and due-to balances';
+  END IF;
+
+  v_reconciliation:=public.get_finance_transfer_reconciliation('branch',v_branch_a);
+  SELECT value INTO v_reconciliation_row
+  FROM jsonb_array_elements(v_reconciliation->'transfers') value
+  WHERE value->>'transfer_id'=v_transfer_id::text;
+  IF v_reconciliation_row->>'reconciliation_status'<>'counterpart_outside_scope'
+     OR (v_reconciliation_row->>'elimination_base_amount')::numeric<>0 THEN
+    RAISE EXCEPTION 'Branch-only reconciliation must not eliminate an out-of-scope counterpart';
+  END IF;
+
   -- A rejection by either branch rejects the whole transfer and leaves both
   -- journals as drafts; it must never create a one-sided ledger movement.
   v_rejected:=public.create_financial_transfer(
@@ -367,7 +429,8 @@ BEGIN
   IF NOT has_function_privilege('authenticated','public.create_financial_transfer(date,uuid,uuid,uuid,uuid,numeric,character,numeric,text,text,uuid)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.decide_financial_transfer_approval(uuid,text,text)','EXECUTE')
      OR NOT has_function_privilege('authenticated','public.post_financial_transfer(uuid)','EXECUTE')
-     OR NOT has_function_privilege('authenticated','public.get_financial_transfers(uuid)','EXECUTE') THEN
+     OR NOT has_function_privilege('authenticated','public.get_financial_transfers(uuid)','EXECUTE')
+     OR NOT has_function_privilege('authenticated','public.get_finance_transfer_reconciliation(text,uuid)','EXECUTE') THEN
     RAISE EXCEPTION 'Authenticated role is missing one or more transfer RPC grants';
   END IF;
   IF has_function_privilege('anon','public.create_financial_transfer(date,uuid,uuid,uuid,uuid,numeric,character,numeric,text,text,uuid)','EXECUTE')
