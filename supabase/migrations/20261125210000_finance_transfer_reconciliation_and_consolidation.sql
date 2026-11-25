@@ -262,8 +262,10 @@ begin
       sj.entry_number as source_entry_number,sj.posted_at as source_posted_at,
       ft.destination_journal_entry_id,dj.status as destination_journal_status,
       dj.entry_number as destination_entry_number,dj.posted_at as destination_posted_at,
-      coalesce(sc.amount,0)::numeric(20,4) as source_due_from_base_amount,
-      coalesce(dc.amount,0)::numeric(20,4) as destination_due_to_base_amount,
+      case when ft.source_branch_id<>ft.destination_branch_id then coalesce(sc.amount,0) else 0 end::numeric(20,4) as source_due_from_base_amount,
+      case when ft.source_branch_id<>ft.destination_branch_id then coalesce(dc.amount,0) else 0 end::numeric(20,4) as destination_due_to_base_amount,
+      sc.account_id as source_clearing_account_id,
+      dc.account_id as destination_clearing_account_id,
       (p_scope_type='church'
         or (p_scope_type='district' and ft.source_district_id=p_scope_id and ft.destination_district_id=p_scope_id)
         or (p_scope_type='branch' and ft.source_branch_id=p_scope_id and ft.destination_branch_id=p_scope_id)
@@ -276,12 +278,14 @@ begin
     left join public.financial_accounts sfa on sfa.id=ft.source_financial_account_id
     left join public.financial_accounts dfa on dfa.id=ft.destination_financial_account_id
     left join lateral (
-      select sum(jl.base_debit_amount-jl.base_credit_amount) as amount
+      select min(jl.account_id) as account_id,
+        sum(jl.base_debit_amount-jl.base_credit_amount) as amount
       from public.journal_lines jl where jl.journal_entry_id=ft.source_journal_entry_id
         and jl.account_id<>sfa.chart_account_id
     ) sc on true
     left join lateral (
-      select sum(jl.base_credit_amount-jl.base_debit_amount) as amount
+      select min(jl.account_id) as account_id,
+        sum(jl.base_credit_amount-jl.base_debit_amount) as amount
       from public.journal_lines jl where jl.journal_entry_id=ft.destination_journal_entry_id
         and jl.account_id<>dfa.chart_account_id
     ) dc on true
@@ -323,6 +327,8 @@ begin
     'destination_entry_number',e.destination_entry_number,'destination_posted_at',e.destination_posted_at,
     'source_due_from_base_amount',e.source_due_from_base_amount,
     'destination_due_to_base_amount',e.destination_due_to_base_amount,
+    'source_clearing_account_id',e.source_clearing_account_id,
+    'destination_clearing_account_id',e.destination_clearing_account_id,
     'both_sides_in_scope',e.both_sides_in_scope,
     'reconciliation_status',e.reconciliation_status,
     'elimination_base_amount',e.elimination_base_amount
