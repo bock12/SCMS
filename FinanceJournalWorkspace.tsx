@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { type FinanceOwnershipScope } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { applyFinanceTransferEliminations, buildPostedFinanceReport, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 
 interface Props {
@@ -34,9 +34,15 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
+  const periodTransfers = useMemo(() => (transferReconciliation?.transfers || [])
+    .filter(item => isWithinFinanceReportPeriod(item.transaction_date, reportPeriod)),
+  [transferReconciliation, reportPeriod]);
+  const periodClearingSummary = useMemo(() => buildFinanceTransferClearingSummary(
+    transferReconciliation?.transfers || [], reportPeriod
+  ), [transferReconciliation, reportPeriod]);
   const consolidatedBalances = useMemo(() => report && transferReconciliation
     ? applyFinanceTransferEliminations(report.account_balances, transferReconciliation.transfers, reportPeriod)
-    : [], [report, transferReconciliation]);
+    : [], [report, transferReconciliation, reportPeriod]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -111,6 +117,15 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
     const accounts = report.account_balances.map(item => `
       <tr><td>${escapeHtml(item.account_code)}</td><td>${escapeHtml(item.account_name)}</td><td>${escapeHtml(item.account_type)}</td><td>${escapeHtml(item.base_currency_code)}</td><td>${item.debit_total.toFixed(2)}</td><td>${item.credit_total.toFixed(2)}</td><td>${item.balance.toFixed(2)}</td></tr>
     `).join('');
+    const clearingSummaries = periodClearingSummary.map(item => `
+      <tr><td>${escapeHtml(item.base_currency_code)}</td><td>${item.due_from_balance.toFixed(2)}</td><td>${item.due_to_balance.toFixed(2)}</td><td>${item.elimination_amount.toFixed(2)}</td><td>${item.remaining_due_from.toFixed(2)}</td><td>${item.remaining_due_to.toFixed(2)}</td></tr>
+    `).join('');
+    const clearingAccounts = consolidatedBalances.filter(item => item.elimination_amount > 0).map(item => `
+      <tr><td>${escapeHtml(item.account_code)}</td><td>${escapeHtml(item.account_name)}</td><td>${escapeHtml(item.base_currency_code)}</td><td>${item.balance.toFixed(2)}</td><td>${item.elimination_amount.toFixed(2)}</td><td>${item.consolidated_balance.toFixed(2)}</td></tr>
+    `).join('');
+    const transferRows = periodTransfers.map(item => `
+      <tr><td>TR-${escapeHtml(item.transfer_number)}</td><td>${escapeHtml(item.transaction_date)}</td><td>${escapeHtml(item.source_branch_name)} → ${escapeHtml(item.destination_branch_name)}</td><td>${escapeHtml(item.currency_code)} ${Number(item.amount).toFixed(2)}</td><td>JE-${escapeHtml(item.source_entry_number ?? '—')} / ${escapeHtml(item.destination_entry_number ?? '—')}</td><td>${escapeHtml(item.reconciliation_status)}</td><td>${Number(item.elimination_base_amount).toFixed(2)} ${escapeHtml(item.base_currency_code)}</td></tr>
+    `).join('');
     const lines = report.lines.map(line => `
       <tr><td>${escapeHtml(line.entry_date)}</td><td>${escapeHtml(line.entry_number ?? line.journal_id)}</td><td>${escapeHtml(line.description)}</td><td>${escapeHtml(line.account_code)} — ${escapeHtml(line.account_name)}</td><td>${escapeHtml(line.base_currency_code)}</td><td class="number">${line.base_debit_amount.toFixed(2)}</td><td class="number">${line.base_credit_amount.toFixed(2)}</td></tr>
     `).join('');
@@ -120,7 +135,10 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
       <p>Period: ${escapeHtml(reportPeriod)} · Generated: ${escapeHtml(new Date().toLocaleString())}</p>
       <p class="note">This report includes posted journal entries only. Draft, pending approval, approved-but-unposted and rejected entries are excluded.</p>
       <h2>Operating summary by base currency</h2><table><thead><tr><th>Currency</th><th>Revenue</th><th>Expenses</th><th>Net operating position</th></tr></thead><tbody>${summaries || '<tr><td colspan="4">No posted transactions in this period.</td></tr>'}</tbody></table>
-      <h2>Posted account balances</h2><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Currency</th><th>Debits</th><th>Credits</th><th>Balance</th></tr></thead><tbody>${accounts || '<tr><td colspan="7">No posted account balances.</td></tr>'}</tbody></table>
+      <h2>Posted account balances before consolidation eliminations</h2><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Currency</th><th>Debits</th><th>Credits</th><th>Balance</th></tr></thead><tbody>${accounts || '<tr><td colspan="7">No posted account balances.</td></tr>'}</tbody></table>
+      <h2>Inter-branch clearing reconciliation and eliminations</h2><table><thead><tr><th>Base currency</th><th>Due from</th><th>Due to</th><th>Eliminated</th><th>Remaining due from</th><th>Remaining due to</th></tr></thead><tbody>${clearingSummaries || '<tr><td colspan="6">No posted inter-branch clearing balances in this period.</td></tr>'}</tbody></table>
+      <h3>Consolidated clearing-account balances</h3><table><thead><tr><th>Code</th><th>Account</th><th>Currency</th><th>Before elimination</th><th>Eliminated</th><th>After elimination</th></tr></thead><tbody>${clearingAccounts || '<tr><td colspan="6">No clearing balances require elimination.</td></tr>'}</tbody></table>
+      <h3>Transfer-to-journal trace</h3><table><thead><tr><th>Transfer</th><th>Date</th><th>Branch movement</th><th>Amount</th><th>Journal entries</th><th>Reconciliation</th><th>Elimination</th></tr></thead><tbody>${transferRows || '<tr><td colspan="7">No internal transfers in this period.</td></tr>'}</tbody></table>
       <h2>Posted journal lines (${report.lines.length})</h2><table><thead><tr><th>Date</th><th>Entry</th><th>Description</th><th>Account</th><th>Currency</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${lines || '<tr><td colspan="7">No posted journal lines.</td></tr>'}</tbody></table>
       <script>window.onload=()=>window.print()</script></body></html>`;
     printWindow.document.write(html);
@@ -191,9 +209,9 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
           </div>
           <p className="text-xs text-slate-500">Transfer journals are reconciled using their posted branch clearing lines. Consolidated eliminations are reporting-only and never modify either branch ledger.</p>
           {reconciliationError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{reconciliationError}</p>}
-          {transferReconciliation?.clearing_summary.length ? (
+          {periodClearingSummary.length ? (
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {transferReconciliation.clearing_summary.map(summary => <React.Fragment key={summary.base_currency_code}>
+              {periodClearingSummary.map(summary => <React.Fragment key={summary.base_currency_code}>
                 <article className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} Due from branches</p><p className="mt-1 text-sm font-black">{money(summary.base_currency_code, summary.due_from_balance)}</p></article>
                 <article className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase text-slate-500">{summary.base_currency_code} Due to branches</p><p className="mt-1 text-sm font-black">{money(summary.base_currency_code, summary.due_to_balance)}</p></article>
                 <article className="rounded-lg bg-emerald-50 p-3"><p className="text-[10px] font-bold uppercase text-emerald-700">{summary.base_currency_code} Eliminated</p><p className="mt-1 text-sm font-black text-emerald-800">{money(summary.base_currency_code, summary.elimination_amount)}</p></article>
@@ -212,12 +230,12 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
               </div>
             </div>
           )}
-          {transferReconciliation?.transfers.length ? (
+          {periodTransfers.length ? (
             <div className="overflow-x-auto">
               <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Transfer-to-journal trace</h6>
               <table className="w-full min-w-[850px] text-left text-xs">
                 <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Transfer</th><th className="py-2">Branch movement</th><th className="py-2">Amount</th><th className="py-2">Source journal</th><th className="py-2">Destination journal</th><th className="py-2">Reconciliation</th><th className="py-2 text-right">Elimination</th></tr></thead>
-                <tbody>{transferReconciliation.transfers.map(item => <tr key={item.transfer_id} className="border-b border-slate-100">
+                <tbody>{periodTransfers.map(item => <tr key={item.transfer_id} className="border-b border-slate-100">
                   <td className="py-2 font-bold">TR-{item.transfer_number}<div className="font-normal text-slate-500">{item.transaction_date}</div></td>
                   <td className="py-2">{item.source_branch_name} → {item.destination_branch_name}</td>
                   <td className="py-2">{money(item.currency_code, Number(item.amount))}</td>
