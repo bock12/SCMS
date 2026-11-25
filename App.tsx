@@ -95,6 +95,15 @@ import {
   withdrawMinistryJoinRequest
 } from './ministryJoinRequestService';
 
+type DevelopmentDemoAccount = {
+  email: string;
+  name: string;
+  role: string;
+  password: string;
+};
+
+const DEVELOPMENT_DEMO_ACCOUNTS_SESSION_KEY = 'scms_dev_demo_accounts';
+
 const renderStyledMainTitle = (titleStr?: string) => {
   const title = (titleStr || 'FaithConnect').trim();
   if (title === 'FaithConnect') {
@@ -203,6 +212,8 @@ const Navbar = ({
   const location = useLocation();
   const [churchProfile, setChurchProfile] = useState(() => getChurchProfile());
   const [activeMenu, setActiveMenu] = useState<'notifications' | 'user' | null>(null);
+  const [preparingDemoAccounts, setPreparingDemoAccounts] = useState(false);
+  const [demoProvisionNotice, setDemoProvisionNotice] = useState<string | null>(null);
   const menusContainerRef = useRef<HTMLDivElement>(null);
   const portalMeta = getPortalPageMeta(location.pathname, location.search);
   const resolvedConsole = activeConsole ?? getActiveConsoleForRoute(location.pathname, location.search);
@@ -254,6 +265,26 @@ const Navbar = ({
       navigate('/');
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handlePrepareDemoAccounts = async () => {
+    if (!import.meta.env.DEV || !supabaseAuthEnabled || profile?.primary_role !== 'super_admin') return;
+    setPreparingDemoAccounts(true);
+    setDemoProvisionNotice(null);
+    try {
+      if (!supabaseDataClient) throw new Error('Supabase is not configured for this development environment.');
+      const { data, error } = await supabaseDataClient.functions.invoke('scms-dev-demo-accounts', { body: {} });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const accounts = Array.isArray(data?.accounts) ? data.accounts : [];
+      if (accounts.length === 0) throw new Error('The provisioner did not return any demo accounts.');
+      sessionStorage.setItem(DEVELOPMENT_DEMO_ACCOUNTS_SESSION_KEY, JSON.stringify(accounts));
+      setDemoProvisionNotice(`${accounts.length} Supabase demo accounts are ready. Sign out to switch users.`);
+    } catch (error) {
+      setDemoProvisionNotice(error instanceof Error ? error.message : 'Unable to prepare development demo accounts.');
+    } finally {
+      setPreparingDemoAccounts(false);
     }
   };
 
@@ -342,6 +373,26 @@ const Navbar = ({
               onClose={() => setActiveMenu(null)}
               onRefresh={refreshNotifications}
             />
+
+            {import.meta.env.DEV && supabaseAuthEnabled && profile.primary_role === 'super_admin' && (
+              <div className="flex flex-col items-end gap-1">
+                <button
+                  type="button"
+                  onClick={handlePrepareDemoAccounts}
+                  disabled={preparingDemoAccounts}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-extrabold hover:bg-amber-100 disabled:opacity-50"
+                  title="Provision real Supabase demo users for this development project"
+                >
+                  <UserPlus size={14} />
+                  {preparingDemoAccounts ? 'Preparing demos…' : 'Prepare demo accounts'}
+                </button>
+                {demoProvisionNotice && (
+                  <span role="status" className="max-w-64 text-[10px] font-semibold text-slate-500 text-right">
+                    {demoProvisionNotice}
+                  </span>
+                )}
+              </div>
+            )}
 
             <HeaderUserMenu
               profile={profile}
@@ -690,6 +741,22 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [developmentDemoAccounts] = useState<DevelopmentDemoAccount[]>(() => {
+    if (!supabaseAuthEnabled || !import.meta.env.DEV || typeof window === 'undefined') return [];
+    try {
+      const parsed = JSON.parse(window.sessionStorage.getItem(DEVELOPMENT_DEMO_ACCOUNTS_SESSION_KEY) || '[]');
+      return Array.isArray(parsed)
+        ? parsed.filter((account: any) =>
+            typeof account?.email === 'string' &&
+            typeof account?.password === 'string' &&
+            typeof account?.name === 'string' &&
+            typeof account?.role === 'string'
+          )
+        : [];
+    } catch {
+      return [];
+    }
+  });
 
   const navigate = useNavigate();
 
@@ -789,17 +856,18 @@ export const AuthCard: React.FC<AuthCardProps> = ({
   };
 
   // Quick 1-click Demo Login
-  const handleQuickDemo = async (demoEmail: string) => {
-    if (supabaseAuthEnabled) {
-      setError('Demo accounts are only available in mock development mode.');
+  const handleQuickDemo = async (demoEmail: string, demoPassword?: string) => {
+    if (supabaseAuthEnabled && (!import.meta.env.DEV || !demoPassword)) {
+      setError('Live demo accounts are available only in development after a Super Admin provisions them.');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const { error: demoErr } = await supabase.auth.signInWithPassword({
+      const demoClient: any = supabaseAuthEnabled ? authClient : supabase;
+      const { error: demoErr } = await demoClient.auth.signInWithPassword({
         email: demoEmail,
-        password: 'password123'
+        password: supabaseAuthEnabled ? demoPassword : 'password123'
       });
       if (demoErr) throw demoErr;
       if (onClose) onClose();
@@ -1022,6 +1090,34 @@ export const AuthCard: React.FC<AuthCardProps> = ({
             ))}
           </div>
         </div>}
+
+        {supabaseAuthEnabled && import.meta.env.DEV && (
+          <div className="pt-3 border-t border-slate-100">
+            <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider mb-2 text-center">
+              Development Supabase Demo Accounts
+            </p>
+            {developmentDemoAccounts.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {developmentDemoAccounts.map(account => (
+                  <button
+                    key={account.email}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleQuickDemo(account.email, account.password)}
+                    className="p-2 text-left bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition-all disabled:opacity-50"
+                  >
+                    <div className="text-xs font-bold text-slate-800">{account.name}</div>
+                    <div className="text-[10px] text-slate-500 font-semibold capitalize">{account.role.replace(/_/g, ' ')}</div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] leading-relaxed text-slate-500 text-center">
+                Sign in with the development Super Admin account, then choose <strong>Prepare demo accounts</strong> in the portal header. The accounts will be available here for this browser session.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Back to Home Link */}
         <div className="text-center pt-2">
