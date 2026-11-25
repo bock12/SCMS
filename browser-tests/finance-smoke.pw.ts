@@ -406,6 +406,7 @@ test.describe('SCMS finance browser smoke', () => {
     await expect(page.getByText('Record a transfer')).toBeVisible();
     await page.getByRole('spinbutton').first().fill('75');
     await page.getByPlaceholder('Reason for the internal transfer').fill('Move cash into the bank account');
+    await expect(page.getByRole('button', { name: 'Submit transfer', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Submit transfer', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Transfer created and approved' })).toBeVisible();
 
