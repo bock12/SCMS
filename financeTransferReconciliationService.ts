@@ -28,6 +28,8 @@ export interface FinanceTransferReconciliationRow {
   source_clearing_account_id: string | null;
   destination_clearing_account_id: string | null;
   both_sides_in_scope: boolean;
+  source_in_scope: boolean;
+  destination_in_scope: boolean;
   reconciliation_status: 'rejected' | 'not_posted' | 'not_required' | 'counterpart_outside_scope' | 'matched' | 'mismatch';
   elimination_base_amount: number;
 }
