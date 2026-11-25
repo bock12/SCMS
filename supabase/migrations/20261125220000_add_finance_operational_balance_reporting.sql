@@ -148,7 +148,7 @@ begin
           and more_specific.currency_code = fa.currency_code
           and more_specific.account_type = fa.account_type
           and (
-            (fa.branch_id is null and more_specific.branch_id = je.branch_id)
+            (fa.branch_id is null and more_specific.branch_id is not null and more_specific.branch_id = je.branch_id)
             or (
               fa.branch_id is null
               and fa.district_id is null
