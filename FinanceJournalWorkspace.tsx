@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildFinanceTransferOutstandingRows, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 import { getFinanceOperationalBalances, type FinanceOperationalBalanceReport } from './financeOperationalBalanceService';
 
@@ -47,6 +47,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
   const periodTransfers = useMemo(() => (transferReconciliation?.transfers || [])
     .filter(item => isWithinFinanceReportPeriod(item.transaction_date, reportPeriod)),
   [transferReconciliation, reportPeriod]);
+  const transferOutstandingRows = useMemo(() => buildFinanceTransferOutstandingRows(periodTransfers), [periodTransfers]);
   const periodClearingSummary = useMemo(() => buildFinanceTransferClearingSummary(
     transferReconciliation?.transfers || [], reportPeriod
   ), [transferReconciliation, reportPeriod]);
@@ -115,6 +116,31 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
     const link = document.createElement('a');
     link.href = url;
     link.download = `scms_posted_finance_report_${reportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadTransferReconciliationCsv = () => {
+    if (!transferOutstandingRows.length) return;
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const headers = [
+      'Transfer Number', 'Date', 'Source Branch', 'Destination Branch', 'Base Currency',
+      'Reconciliation Status', 'Due From', 'Due To', 'Eliminated Due From',
+      'Eliminated Due To', 'Outstanding Due From', 'Outstanding Due To'
+    ];
+    const rows = transferOutstandingRows.map(item => [
+      item.transfer_number, item.transaction_date, item.source_branch_name,
+      item.destination_branch_name, item.base_currency_code, item.reconciliation_status,
+      item.due_from_balance, item.due_to_balance, item.eliminated_due_from,
+      item.eliminated_due_to, item.outstanding_due_from, item.outstanding_due_to
+    ].map(quote).join(','));
+    const csv = [headers.map(quote).join(','), ...rows].join('\\r\\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scms_inter_branch_reconciliation_${reportPeriod}_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -242,13 +268,14 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-black text-slate-900">Official financial reports</h4>
-            <p className="mt-1 text-xs text-slate-600">CSV and printable reports are generated from posted journal lines only. Approved budgets and unposted transactions are not reported as actual income or expenditure.</p>
+            <p className="mt-1 text-xs text-slate-600">Journal exports contain posted journal lines only. Inter-branch reconciliation is exported separately and shows posted clearing exposure by branch side.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <select aria-label="Report period" value={reportPeriod} onChange={event => setReportPeriod(event.target.value as FinanceReportPeriod)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">
               <option value="all">All time</option><option value="week">Last 7 days</option><option value="month">This month</option><option value="quarter">This quarter</option><option value="year">This year</option>
             </select>
             <button type="button" onClick={downloadPostedCsv} disabled={loading || !report?.lines.length} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Export posted CSV</button>
+            <button type="button" onClick={downloadTransferReconciliationCsv} disabled={loading || !transferOutstandingRows.length} className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-40">Export transfer reconciliation CSV</button>
             <button type="button" onClick={printPostedReport} disabled={loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Print / PDF</button>
           </div>
         </div>
@@ -324,8 +351,8 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
           {periodTransfers.length ? (
             <div className="overflow-x-auto">
               <h6 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-600">Transfer-to-journal trace</h6>
-              <table aria-label="Internal transfer reconciliation and journal trace" className="w-full min-w-[850px] text-left text-xs">
-                <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Transfer</th><th className="py-2">Branch movement</th><th className="py-2">Amount</th><th className="py-2">Source journal</th><th className="py-2">Destination journal</th><th className="py-2">Reconciliation</th><th className="py-2 text-right">Elimination</th></tr></thead>
+              <table aria-label="Internal transfer reconciliation and journal trace" className="w-full min-w-[1180px] text-left text-xs">
+                <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Transfer</th><th className="py-2">Branch movement</th><th className="py-2">Amount</th><th className="py-2">Source journal</th><th className="py-2">Destination journal</th><th className="py-2">Reconciliation</th><th className="py-2 text-right">Due from</th><th className="py-2 text-right">Due to</th><th className="py-2 text-right">Open due from</th><th className="py-2 text-right">Open due to</th><th className="py-2 text-right">Elimination</th></tr></thead>
                 <tbody>{periodTransfers.map(item => <tr key={item.transfer_id} className="border-b border-slate-100">
                   <td className="py-2 font-bold">TR-{item.transfer_number}<div className="font-normal text-slate-500">{item.transaction_date}</div></td>
                   <td className="py-2">{item.source_branch_name} → {item.destination_branch_name}</td>
@@ -333,6 +360,10 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
                   <td className="py-2">JE-{item.source_entry_number ?? '—'} · {item.source_journal_status || '—'}</td>
                   <td className="py-2">{item.destination_journal_entry_id ? `JE-${item.destination_entry_number ?? '—'} · ${item.destination_journal_status || '—'}` : 'Same-branch journal'}</td>
                   <td className="py-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.reconciliation_status === 'matched' || item.reconciliation_status === 'not_required' ? 'bg-emerald-100 text-emerald-800' : item.reconciliation_status === 'mismatch' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'}`}>{item.reconciliation_status.replaceAll('_', ' ')}</span></td>
+                  <td className="py-2 text-right tabular-nums">{money(item.base_currency_code, transferOutstandingRows.find(row => row.transfer_id === item.transfer_id)?.due_from_balance || 0)}</td>
+                  <td className="py-2 text-right tabular-nums">{money(item.base_currency_code, transferOutstandingRows.find(row => row.transfer_id === item.transfer_id)?.due_to_balance || 0)}</td>
+                  <td className="py-2 text-right font-semibold tabular-nums">{money(item.base_currency_code, transferOutstandingRows.find(row => row.transfer_id === item.transfer_id)?.outstanding_due_from || 0)}</td>
+                  <td className="py-2 text-right font-semibold tabular-nums">{money(item.base_currency_code, transferOutstandingRows.find(row => row.transfer_id === item.transfer_id)?.outstanding_due_to || 0)}</td>
                   <td className="py-2 text-right">{money(item.base_currency_code, Number(item.elimination_base_amount))}</td>
                 </tr>)}</tbody>
               </table>
