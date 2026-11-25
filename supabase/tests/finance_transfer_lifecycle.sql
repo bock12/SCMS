@@ -355,7 +355,7 @@ BEGIN
     RAISE EXCEPTION 'FIN_INT_004_EXPECTED_REJECTED_POST_DENIAL';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM='FIN_INT_004_EXPECTED_REJECTED_POST_DENIAL' THEN RAISE; END IF;
-    IF position('must be approved' in lower(SQLERRM))=0 THEN RAISE; END IF;
+    IF position('approval workflows' in lower(SQLERRM))=0 THEN RAISE; END IF;
   END;
 
   IF (SELECT count(*) FROM public.journal_lines
