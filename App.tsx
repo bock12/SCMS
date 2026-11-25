@@ -380,11 +380,11 @@ const Navbar = ({
                   type="button"
                   onClick={handlePrepareDemoAccounts}
                   disabled={preparingDemoAccounts}
-                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-extrabold hover:bg-amber-100 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-extrabold hover:bg-amber-100 disabled:opacity-50"
                   title="Provision real Supabase demo users for this development project"
                 >
                   <UserPlus size={14} />
-                  {preparingDemoAccounts ? 'Preparing demos…' : 'Prepare demo accounts'}
+                  {preparingDemoAccounts ? <span className="hidden sm:inline">Preparing demos…</span> : <span className="hidden sm:inline">Prepare demo accounts</span>}
                 </button>
                 {demoProvisionNotice && (
                   <span role="status" className="max-w-64 text-[10px] font-semibold text-slate-500 text-right">
