@@ -1,5 +1,5 @@
 import type { FinanceJournal, FinanceJournalLedger, FinanceJournalLine } from './financeJournalService';
-import type { FinanceTransferReconciliationRow } from './financeTransferReconciliationService';
+import type { FinanceTransferClearingSummary, FinanceTransferReconciliationRow } from './financeTransferReconciliationService';
 
 export type FinanceReportPeriod = 'all' | 'week' | 'month' | 'quarter' | 'year';
 
@@ -198,4 +198,41 @@ export function applyFinanceTransferEliminations(
       consolidated_balance: balance.balance - elimination_amount
     };
   });
+}
+
+
+/** Builds report-period clearing balances from the same posted transfer rows used for elimination. */
+export function buildFinanceTransferClearingSummary(
+  transfers: FinanceTransferReconciliationRow[],
+  period: FinanceReportPeriod = 'all',
+  now = new Date()
+): FinanceTransferClearingSummary[] {
+  const summaries = new Map<string, FinanceTransferClearingSummary>();
+  for (const transfer of transfers) {
+    if (transfer.status !== 'posted' || transfer.source_branch_id === transfer.destination_branch_id ||
+        !isWithinFinanceReportPeriod(transfer.transaction_date, period, now)) continue;
+    const summary = summaries.get(transfer.base_currency_code) || {
+      base_currency_code: transfer.base_currency_code,
+      due_from_balance: 0,
+      due_to_balance: 0,
+      elimination_amount: 0,
+      remaining_due_from: 0,
+      remaining_due_to: 0
+    };
+    if (transfer.source_in_scope && transfer.source_journal_status === 'posted') {
+      summary.due_from_balance += Number(transfer.source_due_from_base_amount || 0);
+    }
+    if (transfer.destination_in_scope && transfer.destination_journal_status === 'posted') {
+      summary.due_to_balance += Number(transfer.destination_due_to_base_amount || 0);
+    }
+    if (transfer.reconciliation_status === 'matched') {
+      summary.elimination_amount += Number(transfer.elimination_base_amount || 0);
+    }
+    summaries.set(transfer.base_currency_code, summary);
+  }
+  return [...summaries.values()].map(summary => ({
+    ...summary,
+    remaining_due_from: summary.due_from_balance - summary.elimination_amount,
+    remaining_due_to: summary.due_to_balance - summary.elimination_amount
+  })).sort((a,b) => a.base_currency_code.localeCompare(b.base_currency_code));
 }
