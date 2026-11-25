@@ -66,7 +66,6 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
 
   const sourceAccount = sourceAccounts.find(account => account.id === sourceAccountId) || null;
   const destinationAccount = destinationAccounts.find(account => account.id === destinationAccountId) || null;
-  const destinationBranch = availableBranches.find(item => item.scope_id === destinationBranchId);
 
   const reloadTransfers = useCallback(async () => {
     setLoading(true);
