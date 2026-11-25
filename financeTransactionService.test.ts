@@ -614,5 +614,109 @@ describe('scoped finance service contracts and lifecycle', () => {
     expect(churchLedger.data?.journals).toHaveLength(0);
     expect(churchLedger.data?.account_balances).toHaveLength(0);
   });
+
+  test('executes branch receipt and payment creation, approval, rejection, and posting through service wrappers', async () => {
+    const initial: MockFinanceState = {
+      ...createEmptyMockFinanceState(),
+      profiles: [
+        { id: 'officer', auth_user_id: 'user-officer', branch_id: 'branch-1' },
+        { id: 'approver', auth_user_id: 'user-approver', branch_id: 'branch-1' }
+      ],
+      permissions: [
+        { profile_id: 'officer', permission: 'manage_finances', branch_id: 'branch-1' },
+        { profile_id: 'officer', permission: 'view_finances', branch_id: 'branch-1' },
+        { profile_id: 'officer', permission: 'post_journals', branch_id: 'branch-1' },
+        { profile_id: 'approver', permission: 'approve_finances', branch_id: 'branch-1' }
+      ],
+      districts: [{ id: 'district-1', name: 'Western District', status: 'active' }],
+      branches: [{ id: 'branch-1', district_id: 'district-1', name: 'Main Branch', status: 'active' }],
+      currencies: ['SLE'],
+      baseCurrencyCode: 'SLE',
+      chartAccounts: [
+        { id: 'cash-chart', code: '1010', name: 'Cash on Hand', account_type: 'asset', normal_balance: 'debit', is_active: true },
+        { id: 'income-chart', code: '4000', name: 'Tithes & Offerings', account_type: 'income', normal_balance: 'credit', is_active: true },
+        { id: 'expense-chart', code: '5000', name: 'Utilities', account_type: 'expense', normal_balance: 'debit', is_active: true }
+      ],
+      financialAccounts: [
+        { id: 'cash-1', branch_id: 'branch-1', district_id: 'district-1', name: 'Main Cash', account_type: 'cash', currency_code: 'SLE', is_active: true, chart_account_id: 'cash-chart' }
+      ],
+      funds: [{ id: 'fund-1', code: 'GEN', name: 'General Fund', branch_id: 'branch-1', district_id: 'district-1', is_active: true }],
+      financialYears: [{ id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }],
+      periods: [{ id: 'period-1', financial_year_id: 'fy-2026', name: 'Nov 2026', start_date: '2026-11-01', end_date: '2026-11-30', status: 'open', year_status: 'open' }],
+      approvalPolicies: [
+        { id: 'policy-1', name: 'Branch Standard', transaction_type: 'financial_document', branch_id: 'branch-1', version: 1, effective_from: '2026-01-01', is_active: true }
+      ],
+      approvalPolicyBands: [{ id: 'band-1', policy_id: 'policy-1', min_amount_base: 0, max_amount_base: null }],
+      approvalPolicySteps: [
+        { id: 'step-1', band_id: 'band-1', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    };
+
+    let current = structuredClone(initial);
+    let authUserId: string | null = 'user-officer';
+    const client = createMockFinanceRpc({
+      load: () => structuredClone(current),
+      save: next => { current = structuredClone(next); }
+    }, () => ({ userId: authUserId }));
+
+    // 1. Create a receipt (450 SLE)
+    const receipt = await createScopedFinancialDocumentTransaction({
+      scope: { type: 'branch', id: 'branch-1' },
+      documentType: 'receipt',
+      transactionDate: '2026-11-22',
+      partyName: 'Sunday Congregation',
+      amount: 450,
+      currencyCode: 'SLE',
+      paymentMethod: 'cash',
+      financialAccountId: 'cash-1',
+      categoryAccountId: 'income-chart',
+      fundId: 'fund-1',
+      description: 'Sunday tithes and offerings',
+      idempotencyKey: '00000000-0000-4000-8000-000000000031'
+    }, client);
+    expect(receipt.error).toBeNull();
+    expect(receipt.data?.status).toBe('pending_approval');
+
+    // 2. Create a payment (150 SLE)
+    const payment = await createScopedFinancialDocumentTransaction({
+      scope: { type: 'branch', id: 'branch-1' },
+      documentType: 'payment',
+      transactionDate: '2026-11-22',
+      partyName: 'EDSA Power',
+      amount: 150,
+      currencyCode: 'SLE',
+      paymentMethod: 'cash',
+      financialAccountId: 'cash-1',
+      categoryAccountId: 'expense-chart',
+      fundId: 'fund-1',
+      description: 'Electricity bill',
+      idempotencyKey: '00000000-0000-4000-8000-000000000032'
+    }, client);
+    expect(payment.error).toBeNull();
+
+    // 3. Approve receipt, reject payment
+    authUserId = 'user-approver';
+    const docs = await getScopedFinanceWorkflowDocuments({ type: 'branch', id: 'branch-1' }, client);
+    expect(docs.data?.documents).toHaveLength(2);
+    const receiptDoc = docs.data!.documents.find(d => d.id === receipt.data!.document_id)!;
+    const paymentDoc = docs.data!.documents.find(d => d.id === payment.data!.document_id)!;
+
+    expect((await decideFinancialDocumentApproval({ requestStepId: receiptDoc.actor_approval_step_id!, decision: 'approved' }, client)).error).toBeNull();
+    expect((await decideFinancialDocumentApproval({ requestStepId: paymentDoc.actor_approval_step_id!, decision: 'rejected', comments: 'Missing invoice' }, client)).error).toBeNull();
+
+    // 4. Only receipt journal is postable; rejected payment journal cannot be posted
+    authUserId = 'user-officer';
+    const rejectedPost = await client.rpc('post_finance_journal_entry', { p_journal_entry_id: payment.data!.journal_entry_id });
+    expect(rejectedPost.error?.message).toContain('cannot be posted before approval');
+
+    const receiptPost = await client.rpc('post_finance_journal_entry', { p_journal_entry_id: receipt.data!.journal_entry_id });
+    expect(receiptPost.error).toBeNull();
+
+    const ledger = await getScopedFinanceJournalLedger({ type: 'branch', id: 'branch-1' }, client);
+    expect(ledger.data?.account_balances.find(b => b.account_id === 'cash-chart')?.debit_total).toBe(450);
+    expect(ledger.data?.account_balances.find(b => b.account_id === 'income-chart')?.credit_total).toBe(450);
+    expect(ledger.data?.account_balances.find(b => b.account_id === 'expense-chart')).toBeUndefined();
+  });
 });
+
 

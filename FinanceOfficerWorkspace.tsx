@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FinanceDatabaseSessionGate } from './FinanceDatabaseSessionGate';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { financeSupabase } from './financeSupabaseClient';
@@ -168,9 +168,9 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
 
-  // Ledger Modals
-  const [showIncomeModal, setShowIncomeModal] = useState(false);
-  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  // Canonical Transaction Entry Shortcut State
+  const [requestedEntryType, setRequestedEntryType] = useState<{ type: 'receipt' | 'payment'; nonce: number } | null>(null);
+  const transactionEntrySectionRef = useRef<HTMLDivElement | null>(null);
   const [showPrintModal, setShowPrintModal] = useState<FinancialRecord | null>(null);
 
   // Member Roster & Selection State for Contributor & Payee
@@ -290,6 +290,9 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     fetchRecords();
     fetchMembers();
     setGivingConfig(getGivingConfig());
+    const handleDocumentsUpdated = () => { void fetchRecords(); };
+    window.addEventListener('finance_documents_updated', handleDocumentsUpdated);
+    return () => window.removeEventListener('finance_documents_updated', handleDocumentsUpdated);
   }, []);
 
   const handlePersistConfig = (updated: GivingConfig) => {
@@ -297,25 +300,12 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     saveGivingConfig(updated);
   };
 
-  // --- RECORD VERIFICATION ACTIONS ---
-  const handleApproveRecord = async (_recordId: string) => {
-    alert('Finance approvals will be enabled after this workspace is connected to the database approval-decision workflow.');
-  };
-
-  const handleRejectRecord = async (_recordId: string) => {
-    alert('Finance rejections will be enabled after this workspace is connected to the database approval-decision workflow.');
-  };
-
-  // --- SAVE INCOME ENTRY ---
-  const handleSaveIncome = async (e: React.FormEvent) => {
-    e.preventDefault();
-    alert('Income entry is temporarily unavailable while the secure financial-document and journal creation workflow is being integrated.');
-  };
-
-  // --- SAVE EXPENSE ENTRY ---
-  const handleSaveExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    alert('Expense entry is temporarily unavailable while the secure financial-document and journal creation workflow is being integrated.');
+  const openCanonicalTransactionEntry = (type: 'receipt' | 'payment') => {
+    setRequestedEntryType({ type, nonce: Date.now() });
+    setWorkspaceTab('ledger');
+    window.requestAnimationFrame(() => {
+      transactionEntrySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   // Persist a disbursement ledger entry exactly once. Deterministic IDs make retries safe.
@@ -960,7 +950,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
               <button
                 title="Open canonical receipt entry"
-                onClick={() => setWorkspaceTab('setup')}
+                onClick={() => openCanonicalTransactionEntry('receipt')}
                 className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
               >
                 <Plus size={16} />
@@ -969,7 +959,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   
               <button
                 title="Open canonical payment entry"
-                onClick={() => setWorkspaceTab('setup')}
+                onClick={() => openCanonicalTransactionEntry('payment')}
                 className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
               >
                 <Plus size={16} />
@@ -1111,10 +1101,13 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
           {selectedFinanceScope ? (
             <>
               {canCreateScopedTransactions && (
-                <FinanceTransactionEntryWorkspace
-                  branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
-                  scope={selectedFinanceScope}
-                />
+                <div ref={transactionEntrySectionRef}>
+                  <FinanceTransactionEntryWorkspace
+                    branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+                    scope={selectedFinanceScope}
+                    requestedEntryType={requestedEntryType}
+                  />
+                </div>
               )}
               <FinanceDocumentWorkflowWorkspace
                 branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
@@ -1270,24 +1263,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
                         </div>
 
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {r.status === 'pending_verification' && (
-                            <>
-                              <button
-                                onClick={() => handleApproveRecord(r.id)}
-                                title="Verify & Confirm"
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 min-h-[38px]"
-                              >
-                                <Check size={14} /> Verify
-                              </button>
-                              <button
-                                onClick={() => handleRejectRecord(r.id)}
-                                title="Flag / Reject"
-                                className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 min-h-[38px]"
-                              >
-                                <X size={14} /> Reject
-                              </button>
-                            </>
-                          )}
 
                           <button
                             onClick={() => setShowPrintModal(r)}
@@ -1391,24 +1366,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
                             <td className="px-5 py-3.5 text-right">
                               <div className="flex items-center justify-end gap-1.5">
-                                {r.status === 'pending_verification' && (
-                                  <>
-                                    <button
-                                      onClick={() => handleApproveRecord(r.id)}
-                                      title="Verify & Confirm"
-                                      className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
-                                    >
-                                      <Check size={16} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleRejectRecord(r.id)}
-                                      title="Flag / Reject"
-                                      className="p-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
-                                    >
-                                      <X size={16} />
-                                    </button>
-                                  </>
-                                )}
 
                                 <button
                                   onClick={() => setShowPrintModal(r)}

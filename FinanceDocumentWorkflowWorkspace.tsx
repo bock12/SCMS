@@ -41,7 +41,12 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId, sc
     setLoading(false);
   }, [branchId, scope?.type, scope?.id]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    void reload();
+    const handleDocumentsUpdated = () => { void reload(); };
+    window.addEventListener('finance_documents_updated', handleDocumentsUpdated);
+    return () => window.removeEventListener('finance_documents_updated', handleDocumentsUpdated);
+  }, [reload]);
 
   const decide = async (document: FinanceWorkflowDocument, decision: 'approved' | 'rejected') => {
     if (!document.actor_approval_step_id) return;
@@ -56,11 +61,17 @@ export const FinanceDocumentWorkflowWorkspace: React.FC<Props> = ({ branchId, sc
     if (result.error) {
       setError(result.error.message);
     } else {
-      setNotice(decision === 'approved'
-        ? 'Approval decision recorded. The document remains pending if further approval steps are required.'
-        : 'Document rejected. Its draft journal remains unlinked and cannot be posted.');
+      const approvalStatus = result.data?.approval_status;
+      setNotice(
+        decision === 'rejected'
+          ? 'Document rejected. Its draft journal remains unlinked and cannot be posted.'
+          : approvalStatus === 'approved'
+            ? 'Document approved. Its balanced draft journal is now linked and ready to post in the Journal Register.'
+            : 'Approval decision recorded. The document remains pending until all remaining approval levels are completed.'
+      );
       setComments(current => ({ ...current, [document.id]: '' }));
       await reload();
+      window.dispatchEvent(new Event('finance_documents_updated'));
     }
     setBusyStepId(null);
   };

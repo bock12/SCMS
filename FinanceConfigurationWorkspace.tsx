@@ -399,6 +399,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       } else {
         setNotice('Financial accounts, funds and approval policies saved to the selected organizational scope.');
         await reload();
+        window.dispatchEvent(new Event('finance_configuration_updated'));
       }
     } else {
       const result = await saveFinanceConfiguration(configuration, scope?.type === 'church' ? null : branchId);
@@ -406,6 +407,7 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       else {
         setNotice('Canonical finance configuration saved. Receipt and payment entry can now validate against this setup.');
         await reload();
+        window.dispatchEvent(new Event('finance_configuration_updated'));
       }
     }
     setSaving(false);

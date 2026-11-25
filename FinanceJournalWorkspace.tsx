@@ -47,7 +47,12 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
     setLoading(false);
   }, [branchId, scope?.type, scope?.id]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    void reload();
+    const handleDocumentsUpdated = () => { void reload(); };
+    window.addEventListener('finance_documents_updated', handleDocumentsUpdated);
+    return () => window.removeEventListener('finance_documents_updated', handleDocumentsUpdated);
+  }, [reload]);
 
   const downloadPostedCsv = () => {
     if (!report) return;
@@ -114,6 +119,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope }) =>
         ? 'This journal was already posted; no duplicate posting was created.'
         : 'Journal posted successfully. Account balances now include its journal lines.');
       await reload();
+      window.dispatchEvent(new Event('finance_documents_updated'));
     }
     setPostingId(null);
   };

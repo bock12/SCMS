@@ -1280,3 +1280,202 @@ describe('mock scope-aware finance transactions, options and journals', () => {
   });
 });
 
+describe('finance transaction creation & posting hardening', () => {
+  test('enforces distinct approvers across approval levels and hides step 2 action from step 1 approver', async () => {
+    const ctx = fixture();
+    const created = await ctx.rpc.rpc('create_financial_document_transaction_idempotent', args);
+    expect(created.error).toBeNull();
+    const steps = ctx.read().approvalSteps.sort((a, b) => a.step_order - b.step_order);
+
+    ctx.setUser('user-approver-1');
+    const step1 = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[0].id, p_decision: 'approved'
+    });
+    expect(step1.error).toBeNull();
+    expect(step1.data.approval_status).toBe('pending');
+
+    // Step 1 approver must not see step 2 as actionable
+    const docsForApprover1 = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    expect(docsForApprover1.error).toBeNull();
+    expect(docsForApprover1.data.documents[0].actor_approval_step_id).toBeNull();
+
+    // Attempting to approve step 2 with same approver must fail
+    const sameApproverStep2 = await ctx.rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: steps[1].id, p_decision: 'approved'
+    });
+    expect(sameApproverStep2.error?.message).toContain('Each approval level requires a different approver');
+
+    // Step 2 approver sees step 2 and completes approval
+    ctx.setUser('user-approver-2');
+    const docsForApprover2 = await ctx.rpc.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    expect(docsForApprover2.data.documents[0].actor_approval_step_id).toBe(steps[1].id);
+  });
+
+  test('blocks submitter self-approval and unauthorized approvers without mutating approval state', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.permissions.push({ profile_id: 'creator', permission: 'approve_finances', branch_id: 'branch-a' });
+    let authUser: string | null = 'user-creator';
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: next => Object.assign(state, structuredClone(next))
+    }, () => ({ userId: authUser }));
+
+    const created = await rpc.rpc('create_financial_document_transaction_idempotent', args);
+    expect(created.error).toBeNull();
+    const stepId = state.approvalSteps[0].id;
+
+    const selfApprove = await rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: stepId, p_decision: 'approved'
+    });
+    expect(selfApprove.error?.code).toBe('42501');
+    expect(selfApprove.error?.message).toContain('submitter cannot approve');
+
+    authUser = 'user-member';
+    const memberApprove = await rpc.rpc('decide_financial_document_approval', {
+      p_request_step_id: stepId, p_decision: 'approved'
+    });
+    expect(memberApprove.error?.code).toBe('42501');
+    expect(state.approvalDecisions).toHaveLength(0);
+  });
+
+  test('validates amount, calendar date, currency, FX rate, category type, and counterparty/description', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.chartAccounts.push({
+      id: 'control-income', code: '4999', name: 'Control Income', normal_balance: 'credit',
+      is_active: true, account_type: 'income', is_control_account: true
+    });
+    state.financialAccounts.push({
+      id: 'usd-account', branch_id: 'branch-a', district_id: 'district-a', name: 'USD Cash',
+      account_type: 'cash', currency_code: 'USD', is_active: true, chart_account_id: 'cash-chart'
+    });
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: next => Object.assign(state, structuredClone(next))
+    }, () => ({ userId: 'user-creator' }));
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_amount: 0, p_idempotency_key: 'val-1'
+    })).error?.message).toContain('positive amount');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_amount: -50, p_idempotency_key: 'val-2'
+    })).error?.message).toContain('positive amount');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_transaction_date: '2026-02-30', p_idempotency_key: 'val-3'
+    })).error?.message).toContain('Transaction date');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_currency_code: 'EUR', p_idempotency_key: 'val-4'
+    })).error?.message).toContain('valid transaction currency');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_exchange_rate_to_base: 2, p_idempotency_key: 'val-5'
+    })).error?.message).toContain('Exchange rate must be 1');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_category_account_id: 'expense-chart', p_idempotency_key: 'val-6'
+    })).error?.message).toContain('non-control account of the correct type');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_category_account_id: 'control-income', p_idempotency_key: 'val-7'
+    })).error?.message).toContain('non-control account of the correct type');
+
+    expect((await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args, p_party_name: '   ', p_idempotency_key: 'val-8'
+    })).error?.message).toContain('Counterparty name and description');
+
+    expect(state.documents).toHaveLength(0);
+
+    // Valid FX receipt creates balanced lines in both USD and base SLL
+    const fxReceipt = await rpc.rpc('create_financial_document_transaction_idempotent', {
+      ...args,
+      p_currency_code: 'USD',
+      p_financial_account_id: 'usd-account',
+      p_amount: 100,
+      p_exchange_rate_to_base: 22.5,
+      p_idempotency_key: 'val-fx-ok'
+    });
+    expect(fxReceipt.error).toBeNull();
+    expect(state.journalLines).toHaveLength(2);
+    expect(state.journalLines.reduce((sum, l) => sum + l.debit_amount, 0)).toBe(100);
+    expect(state.journalLines.reduce((sum, l) => sum + l.credit_amount, 0)).toBe(100);
+    expect(state.journalLines.reduce((sum, l) => sum + l.base_debit_amount, 0)).toBe(2250);
+    expect(state.journalLines.reduce((sum, l) => sum + l.base_credit_amount, 0)).toBe(2250);
+  });
+
+  test('blocks posting unbalanced or single-line journals', async () => {
+    const ctx = fixture();
+    const state = ctx.read();
+    state.approvalPolicySteps = [];
+    const rpc = createMockFinanceRpc({
+      load: () => structuredClone(state),
+      save: next => Object.assign(state, structuredClone(next))
+    }, () => ({ userId: 'user-creator' }));
+
+    const created = await rpc.rpc('create_financial_document_transaction_idempotent', args);
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('approved');
+
+    // Corrupt a journal line to simulate an unbalanced journal
+    state.journalLines[0].debit_amount = 300;
+    state.journalLines[0].base_debit_amount = 300;
+    const unbalanced = await rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(unbalanced.error?.message).toContain('not balanced');
+    expect(state.journals[0].status).toBe('draft');
+
+    // Remove one line to simulate < 2 lines
+    state.journalLines.pop();
+    const tooFewLines = await rpc.rpc('post_finance_journal_entry', {
+      p_journal_entry_id: created.data.journal_entry_id
+    });
+    expect(tooFewLines.error?.message).toContain('at least two lines');
+  });
+
+  test('persists receipt and payment creation, approval, and posted balances across storage reloads', async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); }
+    };
+    const baseState = fixture().read();
+    createBrowserMockFinanceStorage(kv, 'reload-test').save(baseState);
+
+    // Session 1: Create receipt
+    let activeUser: string | null = 'user-creator';
+    const session1 = createMockFinanceRpc(createBrowserMockFinanceStorage(kv, 'reload-test'), () => ({ userId: activeUser }));
+    const created = await session1.rpc('create_financial_document_transaction_idempotent', args);
+    expect(created.error).toBeNull();
+
+    // Session 2 (fresh RPC instance loading from storage): Approve step 1 and step 2
+    const session2 = createMockFinanceRpc(createBrowserMockFinanceStorage(kv, 'reload-test'), () => ({ userId: activeUser }));
+    activeUser = 'user-approver-1';
+    const docs1 = await session2.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    const step1Id = docs1.data.documents[0].actor_approval_step_id;
+    expect((await session2.rpc('decide_financial_document_approval', { p_request_step_id: step1Id, p_decision: 'approved' })).error).toBeNull();
+
+    activeUser = 'user-approver-2';
+    const docs2 = await session2.rpc('get_finance_documents', { p_branch_id: 'branch-a' });
+    const step2Id = docs2.data.documents[0].actor_approval_step_id;
+    expect((await session2.rpc('decide_financial_document_approval', { p_request_step_id: step2Id, p_decision: 'approved' })).error).toBeNull();
+
+    // Session 3 (fresh RPC instance): Post journal and verify persisted posted ledger balances
+    activeUser = 'user-creator';
+    const session3 = createMockFinanceRpc(createBrowserMockFinanceStorage(kv, 'reload-test'), () => ({ userId: activeUser }));
+    const postResult = await session3.rpc('post_finance_journal_entry', { p_journal_entry_id: created.data.journal_entry_id });
+    expect(postResult.error).toBeNull();
+
+    const session4 = createMockFinanceRpc(createBrowserMockFinanceStorage(kv, 'reload-test'), () => ({ userId: activeUser }));
+    const journals = await session4.rpc('get_finance_journals', { p_branch_id: 'branch-a' });
+    expect(journals.error).toBeNull();
+    expect(journals.data.journals[0].status).toBe('posted');
+    expect(journals.data.account_balances.find((b: any) => b.account_id === 'cash-chart')?.debit_total).toBe(250);
+    expect(journals.data.account_balances.find((b: any) => b.account_id === 'income-chart')?.credit_total).toBe(250);
+  });
+});
+
+

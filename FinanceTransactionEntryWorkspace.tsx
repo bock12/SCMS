@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ReceiptText, Wallet } from 'lucide-react';
 import { financeSupabase } from './financeSupabaseClient';
 import { getFinanceConfiguration, getFinanceScopeTransactionOptions, type FinanceConfiguration, type FinanceOwnershipScope } from './financeConfigurationService';
@@ -7,6 +7,7 @@ import { createFinancialDocumentTransaction, createScopedFinancialDocumentTransa
 interface FinanceTransactionEntryWorkspaceProps {
   branchId: string | null;
   scope?: FinanceOwnershipScope;
+  requestedEntryType?: { type: 'receipt' | 'payment'; nonce: number } | null;
 }
 
 interface MemberOption {
@@ -24,12 +25,13 @@ const emptyConfiguration = (): FinanceConfiguration => ({
 const inputClass = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800';
 const labelClass = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500';
 
-export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryWorkspaceProps> = ({ branchId, scope }) => {
+export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryWorkspaceProps> = ({ branchId, scope, requestedEntryType }) => {
   const [configuration, setConfiguration] = useState<FinanceConfiguration>(emptyConfiguration);
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [entryType, setEntryType] = useState<EntryType>('receipt');
+  const submitInFlightRef = useRef(false);
+  const [entryType, setEntryType] = useState<EntryType>(requestedEntryType?.type ?? 'receipt');
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().slice(0, 10));
   const [partyName, setPartyName] = useState('');
   const [profileId, setProfileId] = useState('');
@@ -52,7 +54,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
 
   const effectiveBranchId = scope ? (scope.type === 'branch' ? scope.id : null) : branchId;
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     const [configResult, memberResult, districtBranchesResult] = await Promise.all([
@@ -86,14 +88,28 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
         })));
     }
     setLoading(false);
-  };
+  }, [branchId, effectiveBranchId, scope?.type, scope?.id]);
 
   useEffect(() => {
     setCreated(null);
     setError(null);
     setIdempotencyKey(crypto.randomUUID());
     void reload();
-  }, [branchId, scope?.type, scope?.id]);
+  }, [reload]);
+
+  useEffect(() => {
+    const handleConfigUpdated = () => { void reload(); };
+    window.addEventListener('finance_configuration_updated', handleConfigUpdated);
+    return () => window.removeEventListener('finance_configuration_updated', handleConfigUpdated);
+  }, [reload]);
+
+  useEffect(() => {
+    if (!requestedEntryType) return;
+    setEntryType(requestedEntryType.type);
+    setCreated(null);
+    setError(null);
+    setIdempotencyKey(crypto.randomUUID());
+  }, [requestedEntryType?.nonce, requestedEntryType?.type]);
 
   const isAccountInScope = (account: FinanceConfiguration['financialAccounts'][number]) => {
     if (!account.is_active) return false;
@@ -127,19 +143,36 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
     if (currencyCode && currencyCode === configuration.baseCurrencyCode) setExchangeRate('1');
   }, [currencyCode, configuration.baseCurrencyCode]);
 
+  const isValidIsoDate = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split('-').map(Number);
+    const utc = new Date(Date.UTC(year, month - 1, day));
+    return utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day;
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitInFlightRef.current) return;
     setError(null);
     setCreated(null);
     if (!scope && !branchId) {
       setError('The active profile is not assigned to a branch. A branch is required for transaction entry.');
       return;
     }
-    if (!partyName.trim() || !description.trim() || !transactionDate || !currencyCode ||
-        !financialAccountId || !categoryAccountId || Number(amount) <= 0 || Number(exchangeRate) <= 0) {
+    const parsedAmount = Number(amount);
+    const parsedRate = Number(exchangeRate);
+    if (!isValidIsoDate(transactionDate)) {
+      setError('Enter a valid transaction date in YYYY-MM-DD format.');
+      return;
+    }
+    if (!partyName.trim() || !description.trim() || !currencyCode ||
+        !financialAccountId || !categoryAccountId ||
+        !Number.isFinite(parsedAmount) || parsedAmount <= 0 ||
+        !Number.isFinite(parsedRate) || parsedRate <= 0) {
       setError('Complete all required fields and enter a positive amount and exchange rate.');
       return;
     }
+    submitInFlightRef.current = true;
     setSubmitting(true);
     try {
       const result = scope
@@ -149,7 +182,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
             transactionDate,
             profileId: profileId || null,
             partyName,
-            amount: Number(amount),
+            amount: parsedAmount,
             currencyCode,
             paymentMethod,
             financialAccountId,
@@ -157,7 +190,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
             fundId: fundId || null,
             externalReference,
             description,
-            exchangeRateToBase: Number(exchangeRate),
+            exchangeRateToBase: parsedRate,
             idempotencyKey
           })
         : await createFinancialDocumentTransaction({
@@ -166,7 +199,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
             branchId: branchId!,
             profileId: profileId || null,
             partyName,
-            amount: Number(amount),
+            amount: parsedAmount,
             currencyCode,
             paymentMethod,
             financialAccountId,
@@ -174,7 +207,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
             fundId: fundId || null,
             externalReference,
             description,
-            exchangeRateToBase: Number(exchangeRate),
+            exchangeRateToBase: parsedRate,
             idempotencyKey
           });
       if (result.error) {
@@ -187,10 +220,12 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
         setAmount('');
         setExternalReference('');
         setDescription('');
+        window.dispatchEvent(new Event('finance_documents_updated'));
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The transaction could not be created.');
     } finally {
+      submitInFlightRef.current = false;
       setSubmitting(false);
     }
   };
@@ -221,11 +256,14 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
     (enteredBaseAmount <= 0 || (enteredBaseAmount >= band.min_amount_base &&
       (band.max_amount_base === null || enteredBaseAmount < band.max_amount_base)))
   ));
-  const noSetup = !configuration.currencies.length ||
-    !configuration.financialAccounts.some(isAccountInScope) ||
-    !configuration.chartAccounts.some(account => account.is_active && account.account_type === 'income') ||
-    !configuration.chartAccounts.some(account => account.is_active && account.account_type === 'expense') ||
-    !hasOpenPeriodForDate || !hasApprovalBand;
+  const missingSetupReasons: string[] = [];
+  if (!configuration.currencies.length) missingSetupReasons.push('supported currencies');
+  if (!configuration.financialAccounts.some(isAccountInScope)) missingSetupReasons.push('an active scope-compatible financial account');
+  if (!configuration.chartAccounts.some(account => account.is_active && account.account_type === 'income')) missingSetupReasons.push('an active income chart account');
+  if (!configuration.chartAccounts.some(account => account.is_active && account.account_type === 'expense')) missingSetupReasons.push('an active expense chart account');
+  if (!hasOpenPeriodForDate) missingSetupReasons.push(`an open financial period covering ${transactionDate || 'the transaction date'}`);
+  if (!hasApprovalBand) missingSetupReasons.push('an active financial-document approval policy band covering this amount');
+  const noSetup = missingSetupReasons.length > 0;
 
   const scopeBadgeLabel = scope
     ? (scope.type === 'church' ? 'Church-wide scope' : scope.type === 'district' ? 'District scope' : 'Branch scope')
@@ -247,12 +285,12 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><AlertCircle size={17} />{error}</div>}
       {created && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
         <div className="flex items-center gap-2 font-bold"><CheckCircle2 size={17} /> Financial document created — {created.status === 'approved' ? 'approved' : created.status.replace('_', ' ')}</div>
-        <p className="mt-1 text-xs">Document number: <strong>{entryType === 'receipt' ? 'REC' : 'PAY'}-{String(created.document_number).padStart(6, '0')}</strong> · Approval request: <strong>{created.approval_request_id || 'Not returned'}</strong> · Status: <strong>{created.status}</strong></p>
-        <p className="mt-1 text-xs">{created.status === 'approved' ? 'The draft journal is linked and may be posted only through the controlled posting workflow.' : 'The draft journal is not yet a posted ledger entry. It becomes eligible for posting only after approval.'}</p>
+        <p className="mt-1 text-xs">Document number: <strong>{entryType === 'receipt' ? 'REC' : 'PAY'}-{String(created.document_number).padStart(6, '0')}</strong> · Approval: <strong>{created.approval_request_id || (created.status === 'approved' ? 'Auto-approved (zero-step policy)' : 'Pending')}</strong> · Status: <strong>{created.status}</strong></p>
+        <p className="mt-1 text-xs">{created.status === 'approved' ? 'The draft journal is linked and may be posted explicitly from the Journal Register.' : 'The draft journal is not yet a posted ledger entry. It becomes eligible for posting only after approval.'}</p>
       </div>}
 
       {noSetup && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-        Configure supported currencies, an active scope-compatible financial account, income and expense chart accounts, an open financial period covering the selected transaction date, and an active approval policy band covering the entered amount before submitting.
+        Configure {missingSetupReasons.join(', ')} before submitting.
       </div>}
 
       <div className="flex gap-2">

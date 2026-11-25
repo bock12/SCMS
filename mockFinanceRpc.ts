@@ -87,6 +87,12 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const fail = (message: string, code = '22023') => ({ data: null, error: { code, message } });
 const success = <T>(data: T) => ({ data, error: null });
 const round4 = (value: number) => Math.round((value + Number.EPSILON) * 10000) / 10000;
+const isValidIsoDate = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  return utc.getUTCFullYear() === year && utc.getUTCMonth() === month - 1 && utc.getUTCDate() === day;
+};
 
 /** Expand every effective role permission across its resolved branch scope.
  * The adapter consumes the same permission catalog as the role editor; keeping
@@ -263,7 +269,7 @@ export function createMockFinanceRpc(
     const description = String(args.p_description || '').trim();
     const method = args.p_payment_method;
     if (!['receipt', 'payment'].includes(type)) return fail('Only receipt and payment transactions can be created here');
-    if (!date || !Number.isFinite(Date.parse(date)) || !Number.isFinite(amount) || amount <= 0 ||
+    if (!isValidIsoDate(date) || !Number.isFinite(amount) || amount <= 0 ||
         !Number.isFinite(rate) || rate <= 0) return fail('Transaction date, positive amount and positive exchange rate are required');
     if (currency.length !== 3 || !state.currencies.includes(currency)) return fail('A valid transaction currency is required');
     if (!party || !description) return fail('Counterparty name and description are required');
@@ -416,6 +422,14 @@ export function createMockFinanceRpc(
     if (!['approved', 'rejected'].includes(args.p_decision)) return fail('Approval decision must be approved or rejected');
     if (state.approvalDecisions.some(d => d.approval_request_step_id === step.id && d.approver_profile_id === actor.id)) {
       return fail('This profile has already decided this approval step');
+    }
+    const otherStepIds = new Set(
+      state.approvalSteps
+        .filter(s => s.approval_request_id === request.id && s.id !== step.id)
+        .map(s => s.id)
+    );
+    if (state.approvalDecisions.some(d => otherStepIds.has(d.approval_request_step_id) && d.approver_profile_id === actor.id)) {
+      return fail('Each approval level requires a different approver');
     }
     state.approvalDecisions.push({
       id: id(state, 'decision'), approval_request_step_id: step.id,
@@ -639,6 +653,15 @@ export function createMockFinanceRpc(
     if (state.approvalDecisions.some(item =>
       item.approval_request_step_id === step.id && item.approver_profile_id === actor.id)) {
       return fail('This profile has already decided this approval step');
+    }
+    const otherBudgetStepIds = new Set(
+      state.approvalSteps
+        .filter(item => item.approval_request_id === request.id && item.id !== step.id)
+        .map(item => item.id)
+    );
+    if (state.approvalDecisions.some(item =>
+      otherBudgetStepIds.has(item.approval_request_step_id) && item.approver_profile_id === actor.id)) {
+      return fail('Each approval level requires a different approver');
     }
     state.approvalDecisions.push({
       id: id(state, 'decision'), approval_request_step_id: step.id,
@@ -1465,6 +1488,13 @@ export function createMockFinanceRpc(
       item.approval_request_step_id === step.id && item.approver_profile_id === actor.id)) {
       return fail('This profile has already decided this approval step');
     }
+    const otherReqStepIds = new Set(
+      steps.filter(item => item.id !== step.id).map(item => item.id)
+    );
+    if (state.approvalDecisions.some(item =>
+      otherReqStepIds.has(item.approval_request_step_id) && item.approver_profile_id === actor.id)) {
+      return fail('Each approval level requires a different approver');
+    }
 
     state.approvalDecisions.push({
       id: id(state, 'requisition-decision'),
@@ -1524,7 +1554,10 @@ export function createMockFinanceRpc(
         const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
         const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
           .sort((a, b) => Number(a.step_order) - Number(b.step_order));
-        const actorStep = steps.find(step => step.status === 'pending' &&
+        const hasDecidedRequest = steps.some(s =>
+          state.approvalDecisions.some(decision =>
+            decision.approval_request_step_id === s.id && decision.approver_profile_id === actor.id));
+        const actorStep = hasDecidedRequest ? undefined : steps.find(step => step.status === 'pending' &&
           (!step.prohibit_submitter_approval || request?.submitted_by_profile_id !== actor.id) &&
           !state.approvalDecisions.some(decision =>
             decision.approval_request_step_id === step.id && decision.approver_profile_id === actor.id) &&
@@ -1597,12 +1630,23 @@ export function createMockFinanceRpc(
 
     const lines = state.journalLines.filter(line => line.journal_entry_id === journal.id);
     if (lines.length < 2) return fail('A journal entry must contain at least two lines');
-    const debits = lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0);
-    const credits = lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0);
-    const baseDebits = lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0);
-    const baseCredits = lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0);
-    if (debits !== credits) return fail('Journal is not balanced in transaction currency');
-    if (baseDebits !== baseCredits) return fail('Journal is not balanced in base currency');
+    for (const line of lines) {
+      const debit = Number(line.debit_amount || 0);
+      const credit = Number(line.credit_amount || 0);
+      const baseDebit = Number(line.base_debit_amount || 0);
+      const baseCredit = Number(line.base_credit_amount || 0);
+      if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 ||
+          !Number.isFinite(baseDebit) || !Number.isFinite(baseCredit) || baseDebit < 0 || baseCredit < 0 ||
+          (debit > 0) === (credit > 0)) {
+        return fail('Each journal line must have a positive debit or positive credit amount, not both or zero');
+      }
+    }
+    const debits = round4(lines.reduce((sum, line) => sum + Number(line.debit_amount || 0), 0));
+    const credits = round4(lines.reduce((sum, line) => sum + Number(line.credit_amount || 0), 0));
+    const baseDebits = round4(lines.reduce((sum, line) => sum + Number(line.base_debit_amount || 0), 0));
+    const baseCredits = round4(lines.reduce((sum, line) => sum + Number(line.base_credit_amount || 0), 0));
+    if (debits <= 0 || debits !== credits) return fail('Journal is not balanced in transaction currency');
+    if (baseDebits <= 0 || baseDebits !== baseCredits) return fail('Journal is not balanced in base currency');
 
     for (const line of lines) {
       const account = state.chartAccounts.find(item => item.id === line.account_id);
@@ -1662,7 +1706,7 @@ export function createMockFinanceRpc(
           });
         const canPost = journal.status === 'draft'
           && journal.source_type !== 'financial_document_pending'
-          && hasPermission(state, actor.id, 'post_journals', journal.branch_id ?? null)
+          && hasScopePermission(state, actor.id, 'post_journals', journal.branch_id ?? null, journal.district_id ?? null)
           && (journal.source_type !== 'financial_document'
             || (document?.status === 'approved' && document.journal_entry_id === journal.id));
         return {
@@ -1723,7 +1767,10 @@ export function createMockFinanceRpc(
         const request = state.approvalRequests.find(item => item.id === document.approval_request_id);
         const steps = state.approvalSteps.filter(step => step.approval_request_id === request?.id)
           .sort((a, b) => Number(a.step_order) - Number(b.step_order));
-        const actorStep = steps.find(step => step.status === 'pending' &&
+        const hasDecidedRequest = steps.some(s =>
+          state.approvalDecisions.some(decision =>
+            decision.approval_request_step_id === s.id && decision.approver_profile_id === actor.id));
+        const actorStep = hasDecidedRequest ? undefined : steps.find(step => step.status === 'pending' &&
           (!step.prohibit_submitter_approval || request?.submitted_by_profile_id !== actor.id) &&
           !state.approvalDecisions.some(decision =>
             decision.approval_request_step_id === step.id && decision.approver_profile_id === actor.id) &&

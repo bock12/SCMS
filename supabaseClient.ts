@@ -1312,9 +1312,22 @@ const mockFinanceRpc = createMockFinanceRpc({
       entity_type: ministry.entity_type || 'ministry',
       status: ministry.status || 'active'
     }));
+    const districts = localDb.districts || [];
     const branches = localDb.church_branches || [];
+    state.districts = districts.map((district: any) => ({
+      id: district.id,
+      name: district.name || district.id,
+      status: district.status || 'active'
+    }));
+    state.branches = branches.map((branch: any) => ({
+      id: branch.id,
+      district_id: branch.district_id ?? null,
+      name: branch.name || branch.id,
+      code: branch.code,
+      status: branch.status || 'active'
+    }));
     const now = Date.now();
-    const resolved: Array<{ profile_id: string; permission: string; branch_id: string | null }> = [];
+    const resolved: Array<{ profile_id: string; permission: string; branch_id: string | null; district_id?: string | null }> = [];
     (localDb.profile_role_assignments || []).forEach((assignment: any) => {
       if (!assignment.is_active || new Date(assignment.assigned_at || 0).getTime() > now ||
           (assignment.expires_at && new Date(assignment.expires_at).getTime() <= now)) return;
@@ -1323,25 +1336,34 @@ const mockFinanceRpc = createMockFinanceRpc({
       const permissionIds = (localDb.role_permissions || [])
         .filter((link: any) => link.role_id === role.id)
         .map((link: any) => link.permission_id);
-      const permissionKeys = (localDb.permissions || [])
+      const permissionKeys: string[] = (localDb.permissions || [])
         .filter((permission: any) => permissionIds.includes(permission.id))
-        .map((permission: any) => permission.key);
+        .map((permission: any) => String(permission.key));
+      if (assignment.scope_type === 'district' && assignment.district_id) {
+        [...new Set<string>(permissionKeys)].forEach(permission => {
+          resolved.push({
+            profile_id: assignment.profile_id,
+            permission,
+            branch_id: null,
+            district_id: assignment.district_id
+          });
+        });
+        return;
+      }
       const scopedBranches = assignment.scope_type === 'church'
         ? [null]
         : assignment.scope_type === 'branch'
           ? branches.filter((branch: any) => branch.id === assignment.branch_id).map((branch: any) => branch.id)
-          : assignment.scope_type === 'district'
-            ? branches.filter((branch: any) => branch.district_id === assignment.district_id).map((branch: any) => branch.id)
-            : [];
+          : [];
       resolved.push(...expandMockFinancePermissions(assignment.profile_id, permissionKeys, scopedBranches));
     });
     state.permissions = resolved;
     return state;
   },
   save(state) {
-    // Profiles and permissions are authoritative in the shared mock directory;
+    // Profiles, branches, districts and permissions are authoritative in the shared mock directory;
     // only finance configuration and transaction state belong in this store.
-    persistedMockFinanceStorage.save({ ...state, profiles: [], permissions: [], ministries: [] });
+    persistedMockFinanceStorage.save({ ...state, profiles: [], permissions: [], ministries: [], branches: [], districts: [] });
   }
 }, () => ({ userId: getCurrentSession()?.user?.id || null }));
 
