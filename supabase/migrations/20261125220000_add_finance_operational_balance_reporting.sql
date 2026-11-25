@@ -131,6 +131,28 @@ begin
         or (p_scope_type = 'district' and je.district_id = p_scope_id)
         or (p_scope_type = 'branch' and je.branch_id = p_scope_id)
       )
+      -- A journal movement is assigned to the most specific configured
+      -- operational account for that chart account and currency. This avoids
+      -- counting the same chart-account movement again through inherited
+      -- district/church account mappings.
+      and not exists (
+        select 1
+        from public.financial_accounts more_specific
+        where more_specific.is_active
+          and more_specific.chart_account_id = fa.chart_account_id
+          and more_specific.currency_code = fa.currency_code
+          and more_specific.account_type = fa.account_type
+          and (
+            more_specific.branch_id = je.branch_id
+            or (
+              fa.branch_id is null
+              and fa.district_id is null
+              and more_specific.branch_id is null
+              and more_specific.district_id = je.district_id
+            )
+          )
+          and more_specific.id <> fa.id
+      )
     where fa.is_active
       and fa.account_type in ('cash', 'bank', 'mobile_money')
       and coa.is_active
