@@ -111,16 +111,17 @@ begin
       coa.code as chart_account_code,
       coa.name as chart_account_name,
       coa.normal_balance,
-      je.base_currency_code,
-      coalesce(sum(jl.base_debit_amount), 0)::numeric as debit_total,
-      coalesce(sum(jl.base_credit_amount), 0)::numeric as credit_total,
+      cs.base_currency_code,
+      coalesce(sum(case when je.id is not null then jl.base_debit_amount else 0 end), 0)::numeric as debit_total,
+      coalesce(sum(case when je.id is not null then jl.base_credit_amount else 0 end), 0)::numeric as credit_total,
       case when coa.normal_balance = 'credit'
-        then coalesce(sum(jl.base_credit_amount - jl.base_debit_amount), 0)
-        else coalesce(sum(jl.base_debit_amount - jl.base_credit_amount), 0)
+        then coalesce(sum(case when je.id is not null then jl.base_credit_amount - jl.base_debit_amount else 0 end), 0)
+        else coalesce(sum(case when je.id is not null then jl.base_debit_amount - jl.base_credit_amount else 0 end), 0)
       end::numeric as balance
     from public.financial_accounts fa
     join public.chart_of_accounts coa on coa.id = fa.chart_account_id
     left join public.journal_lines jl on jl.account_id = fa.chart_account_id
+    cross join public.church_settings cs
     left join public.journal_entries je
       on je.id = jl.journal_entry_id
       and je.status = 'posted'
@@ -149,7 +150,7 @@ begin
     group by fa.id, fa.chart_account_id, fa.branch_id, fa.district_id,
       fa.name, fa.account_type, fa.currency_code, fa.provider_name,
       fa.account_reference, coa.code, coa.name, coa.normal_balance,
-      je.base_currency_code
+      cs.base_currency_code
   ) account_row;
 
   return jsonb_build_object(
