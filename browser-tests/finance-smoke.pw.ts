@@ -292,7 +292,7 @@ test.describe('SCMS finance browser smoke', () => {
     const secondReceiptCard = page.locator('article').filter({ hasText: 'Browser Test Offering' }).first();
     await expect(secondReceiptCard.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
     await secondReceiptCard.getByRole('button', { name: 'Approve', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Approval decision recorded' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Document approved' })).toBeVisible();
     const approvedReceiptState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
     const approvedReceipt = approvedReceiptState.documents.find((document: any) => document.payee_or_payer_name === 'Browser Test Offering');
     const approvedReceiptJournal = approvedReceiptState.journals.find((journal: any) => journal.id === approvedReceipt.journal_entry_id);
