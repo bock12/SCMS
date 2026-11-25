@@ -196,6 +196,7 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
     if (result.error) setError(result.error.message);
     else {
       setNotice(decision === 'approved' ? 'Branch transfer approval recorded.' : 'Transfer rejected. Its draft journals remain unposted.');
+      window.dispatchEvent(new Event('finance_transfers_updated'));
       await reloadTransfers();
     }
     setActingOnTransfer(null);
@@ -209,6 +210,8 @@ export const FinanceTransferWorkspace: React.FC<FinanceTransferWorkspaceProps> =
     if (result.error) setError(result.error.message);
     else {
       setNotice('Transfer posted. All branch journals were posted together.');
+      window.dispatchEvent(new Event('finance_transfers_updated'));
+      window.dispatchEvent(new Event('finance_documents_updated'));
       await reloadTransfers();
     }
     setActingOnTransfer(null);
