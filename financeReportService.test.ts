@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyFinanceTransferEliminations, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
 import type { FinanceJournal, FinanceJournalLedger } from './financeJournalService';
 
 function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
@@ -164,5 +164,70 @@ describe('consolidated transfer eliminations', () => {
     const consolidated = applyFinanceTransferEliminations(balances, [transfer as any]);
     expect(consolidated.every(item => item.elimination_amount === 0)).toBe(true);
     expect(consolidated.find(item => item.account_id === 'due-from-a')?.consolidated_balance).toBe(250);
+  });
+});
+
+
+describe('branch and district financial performance', () => {
+  test('compares posted income and expenditure by branch and district without mixing currencies', () => {
+    const branchOne = journal({ district_id: 'district-1' });
+    const branchTwo = journal({
+      id: 'branch-two', branch_id: 'branch-2', district_id: 'district-1',
+      entry_number: 2,
+      lines: [
+        { id: 'cash-2', line_number: 1, account_id: 'cash', account_code: '1000', account_name: 'Cash', account_type: 'asset', normal_balance: 'debit', fund_id: null, branch_id: 'branch-2', profile_id: null, description: null, debit_amount: 70, credit_amount: 0, base_debit_amount: 70, base_credit_amount: 0 },
+        { id: 'income-2', line_number: 2, account_id: 'offering', account_code: '4000', account_name: 'Offering Income', account_type: 'income', normal_balance: 'credit', fund_id: null, branch_id: 'branch-2', profile_id: null, description: null, debit_amount: 0, credit_amount: 70, base_debit_amount: 0, base_credit_amount: 70 }
+      ]
+    });
+    const branchThree = journal({
+      id: 'branch-three', branch_id: 'branch-3', district_id: 'district-2',
+      entry_number: 3, base_currency_code: 'USD', currency_code: 'USD',
+      lines: [
+        { id: 'cash-3', line_number: 1, account_id: 'cash-usd', account_code: '1010', account_name: 'Cash USD', account_type: 'asset', normal_balance: 'debit', fund_id: null, branch_id: 'branch-3', profile_id: null, description: null, debit_amount: 50, credit_amount: 0, base_debit_amount: 50, base_credit_amount: 0 },
+        { id: 'income-3', line_number: 2, account_id: 'income-usd', account_code: '4010', account_name: 'Income USD', account_type: 'income', normal_balance: 'credit', fund_id: null, branch_id: 'branch-3', profile_id: null, description: null, debit_amount: 0, credit_amount: 50, base_debit_amount: 0, base_credit_amount: 50 }
+      ]
+    });
+    const unposted = journal({
+      id: 'branch-one-draft', status: 'draft', entry_number: 4,
+      district_id: 'district-1'
+    });
+
+    const report = buildFinanceOrganizationalPerformanceReport(
+      ledger(branchOne, branchTwo, branchThree, unposted)
+    );
+
+    expect(report.branches).toEqual([
+      { scope_id: 'branch-1', base_currency_code: 'SLE', revenue: 100, expenses: 0, net_operating_position: 100, posted_journal_count: 1 },
+      { scope_id: 'branch-2', base_currency_code: 'SLE', revenue: 70, expenses: 0, net_operating_position: 70, posted_journal_count: 1 },
+      { scope_id: 'branch-3', base_currency_code: 'USD', revenue: 50, expenses: 0, net_operating_position: 50, posted_journal_count: 1 }
+    ]);
+    expect(report.districts).toEqual([
+      { scope_id: 'district-1', base_currency_code: 'SLE', revenue: 170, expenses: 0, net_operating_position: 170, posted_journal_count: 2 },
+      { scope_id: 'district-2', base_currency_code: 'USD', revenue: 50, expenses: 0, net_operating_position: 50, posted_journal_count: 1 }
+    ]);
+  });
+
+  test('calculates expenditure and respects the selected reporting period', () => {
+    const payment = journal({
+      id: 'branch-one-payment', entry_number: 5, district_id: 'district-1',
+      entry_date: '2026-11-18',
+      lines: [
+        { id: 'utilities', line_number: 1, account_id: 'utilities', account_code: '6000', account_name: 'Utilities', account_type: 'expense', normal_balance: 'debit', fund_id: null, branch_id: 'branch-1', profile_id: null, description: null, debit_amount: 25, credit_amount: 0, base_debit_amount: 25, base_credit_amount: 0 },
+        { id: 'cash-out', line_number: 2, account_id: 'cash', account_code: '1000', account_name: 'Cash', account_type: 'asset', normal_balance: 'debit', fund_id: null, branch_id: 'branch-1', profile_id: null, description: null, debit_amount: 0, credit_amount: 25, base_debit_amount: 0, base_credit_amount: 25 }
+      ]
+    });
+    const report = buildFinanceOrganizationalPerformanceReport(
+      ledger(payment), 'month', new Date('2026-11-25T12:00:00')
+    );
+    expect(report.branches[0]).toMatchObject({
+      scope_id: 'branch-1', revenue: 0, expenses: 25,
+      net_operating_position: -25, posted_journal_count: 1
+    });
+    expect(report.districts[0]).toMatchObject({
+      scope_id: 'district-1', expenses: 25, net_operating_position: -25
+    });
+    expect(buildFinanceOrganizationalPerformanceReport(
+      ledger(payment), 'month', new Date('2026-12-25T12:00:00')
+    ).branches).toEqual([]);
   });
 });
