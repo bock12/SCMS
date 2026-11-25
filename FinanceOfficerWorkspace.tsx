@@ -917,20 +917,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
           </div>
 
           <button
-            {selectedFinanceScope?.type === 'branch' && (
-            <button
-              onClick={() => setWorkspaceTab('transfers')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
-                workspaceTab === 'transfers'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ArrowRightLeft size={15} />
-              <span>Internal Transfers</span>
-            </button>
-          )}
-
             onClick={() => setWorkspaceTab('requisitions')}
             className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all shrink-0 cursor-pointer"
           >
@@ -1007,6 +993,20 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
             </button>
   
+            {selectedFinanceScope?.type === 'branch' && (
+              <button
+                onClick={() => setWorkspaceTab('transfers')}
+                className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                  workspaceTab === 'transfers'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ArrowRightLeft size={15} />
+                <span>Internal Transfers</span>
+              </button>
+            )}
+
             <button
               onClick={() => setWorkspaceTab('requisitions')}
               className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
