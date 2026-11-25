@@ -18,13 +18,20 @@ const integrationMode = import.meta.env.VITE_SUPABASE_INTEGRATION?.trim().toLowe
 // Database integration and authentication are intentionally independent during development.
 // Mock login remains the default until real Supabase Auth is explicitly enabled.
 const authMode = import.meta.env.VITE_SUPABASE_AUTH?.trim().toLowerCase() ?? '';
+const memberIntegrationMode = import.meta.env.VITE_SUPABASE_MEMBER_INTEGRATION?.trim().toLowerCase() ?? '';
 export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
 // Keep non-finance modules on the local mock adapter when VITE_SUPABASE_INTEGRATION=finance.
 // Full live integration across non-finance modules only activates when set to "enabled".
 export const supabaseIntegrationEnabled = integrationMode === 'enabled';
 export const supabaseAuthEnabled = authMode === 'enabled';
+/**
+ * Congregation, member directory, transfers, ministry rosters and leadership
+ * use a separate switch so they can move to the live database without silently
+ * switching every other application module away from its mock adapter.
+ */
+export const supabaseMemberIntegrationEnabled = memberIntegrationMode === 'enabled';
 
-if ((supabaseIntegrationEnabled || integrationMode === 'finance') && !isSupabaseConfigured) {
+if ((supabaseIntegrationEnabled || integrationMode === 'finance' || supabaseMemberIntegrationEnabled) && !isSupabaseConfigured) {
   console.warn(
     'Supabase integration is enabled, but VITE_SUPABASE_URL or a publishable key is missing.'
   );
@@ -54,6 +61,12 @@ export function requireSupabaseDataClient() {
     );
   }
   return supabaseDataClient;
+}
+
+export function resolveMemberDataClient<T>(mockClient: T): T {
+  return (supabaseMemberIntegrationEnabled && supabaseAuthEnabled && supabaseDataClient
+    ? supabaseDataClient
+    : mockClient) as T;
 }
 
 export function resolveDataClient<T>(mockClient: T): T {
