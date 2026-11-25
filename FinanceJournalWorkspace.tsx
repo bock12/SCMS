@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, BookOpen, CheckCircle2, RefreshCw, UploadCloud } from 'lucide-react';
 import { type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { getFinanceJournalLedger, getScopedFinanceJournalLedger, postFinanceJournalEntry, type FinanceJournal } from './financeJournalService';
-import { applyFinanceTransferEliminations, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceConsolidatedPositionReport, buildFinanceOrganizationalPerformanceReport, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod, type FinanceReportPeriod } from './financeReportService';
 import { getFinanceTransferReconciliation, type FinanceTransferReconciliation } from './financeTransferReconciliationService';
 import { getFinanceOperationalBalances, type FinanceOperationalBalanceReport } from './financeOperationalBalanceService';
 
@@ -39,6 +39,10 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
   const [reportPeriod, setReportPeriod] = useState<FinanceReportPeriod>('all');
   const report = useMemo(() => ledger ? buildPostedFinanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
   const organizationalPerformance = useMemo(() => ledger ? buildFinanceOrganizationalPerformanceReport(ledger, reportPeriod) : null, [ledger, reportPeriod]);
+  const allTimeReport = useMemo(() => ledger ? buildPostedFinanceReport(ledger, 'all') : null, [ledger]);
+  const consolidatedPosition = useMemo(() => allTimeReport && transferReconciliation
+    ? buildFinanceConsolidatedPositionReport(allTimeReport.account_balances, transferReconciliation.transfers)
+    : [], [allTimeReport, transferReconciliation]);
   const scopeLabel = (type: 'branch' | 'district', id: string) => scopeOptions.find(option => option.scope_type === type && option.scope_id === id)?.scope_name || (type === 'branch' ? 'Branch ' : 'District ') + id.slice(0, 8);
   const periodTransfers = useMemo(() => (transferReconciliation?.transfers || [])
     .filter(item => isWithinFinanceReportPeriod(item.transaction_date, reportPeriod)),
@@ -212,6 +216,27 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
             </tr>)}</tbody>
           </table>
         </div> : !operationalBalanceError && <p className="rounded-lg bg-white p-3 text-xs text-slate-500">No active cash, bank or mobile-money accounts are configured in this scope.</p>}
+      </div>
+      <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+        <div>
+          <h4 className="text-sm font-black text-slate-900">Consolidated financial position</h4>
+          <p className="mt-1 text-xs text-slate-600">Cumulative posted balances as of the latest journal activity. Matched inter-branch due-from and due-to balances are eliminated for this report only; branch ledgers are unchanged. Accumulated surplus is included in equity.</p>
+        </div>
+        {consolidatedPosition.length ? <div className="overflow-x-auto">
+          <table aria-label="Consolidated financial position" className="w-full min-w-[820px] text-left text-xs">
+            <thead><tr className="border-b border-violet-200 text-slate-500"><th className="py-2">Base currency</th><th className="py-2 text-right">Assets</th><th className="py-2 text-right">Liabilities</th><th className="py-2 text-right">Recorded equity</th><th className="py-2 text-right">Accumulated surplus</th><th className="py-2 text-right">Total equity</th><th className="py-2 text-right">Net assets</th><th className="py-2 text-right">Check</th></tr></thead>
+            <tbody>{consolidatedPosition.map(row => <tr key={row.base_currency_code} className="border-b border-violet-100">
+              <td className="py-2 font-bold">{row.base_currency_code}</td>
+              <td className="py-2 text-right tabular-nums">{money(row.base_currency_code, row.total_assets)}</td>
+              <td className="py-2 text-right tabular-nums">{money(row.base_currency_code, row.total_liabilities)}</td>
+              <td className="py-2 text-right tabular-nums">{money(row.base_currency_code, row.recorded_equity)}</td>
+              <td className="py-2 text-right tabular-nums">{money(row.base_currency_code, row.accumulated_surplus)}</td>
+              <td className="py-2 text-right font-semibold tabular-nums">{money(row.base_currency_code, row.total_equity)}</td>
+              <td className="py-2 text-right font-semibold tabular-nums">{money(row.base_currency_code, row.net_assets)}</td>
+              <td className="py-2 text-right"><span className={Math.abs(row.balance_check_difference) <= 0.01 ? "rounded bg-emerald-100 px-2 py-1 font-bold text-emerald-800" : "rounded bg-amber-100 px-2 py-1 font-bold text-amber-800"}>{Math.abs(row.balance_check_difference) <= 0.01 ? "Balanced" : money(row.base_currency_code, row.balance_check_difference)}</span></td>
+            </tr>)}</tbody>
+          </table>
+        </div> : <p className="rounded-lg bg-white p-3 text-xs text-slate-500">The financial position will appear when posted ledger balances and transfer reconciliation are available.</p>}
       </div>
       <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
