@@ -269,7 +269,15 @@ begin
       (p_scope_type='church'
         or (p_scope_type='district' and ft.source_district_id=p_scope_id and ft.destination_district_id=p_scope_id)
         or (p_scope_type='branch' and ft.source_branch_id=p_scope_id and ft.destination_branch_id=p_scope_id)
-      ) as both_sides_in_scope
+      ) as both_sides_in_scope,
+      (p_scope_type='church'
+        or (p_scope_type='district' and ft.source_district_id=p_scope_id)
+        or (p_scope_type='branch' and ft.source_branch_id=p_scope_id)
+      ) as source_in_scope,
+      (p_scope_type='church'
+        or (p_scope_type='district' and ft.destination_district_id=p_scope_id)
+        or (p_scope_type='branch' and ft.destination_branch_id=p_scope_id)
+      ) as destination_in_scope
     from public.financial_transfers ft
     join public.church_branches sb on sb.id=ft.source_branch_id
     join public.church_branches db on db.id=ft.destination_branch_id
@@ -330,6 +338,8 @@ begin
     'source_clearing_account_id',e.source_clearing_account_id,
     'destination_clearing_account_id',e.destination_clearing_account_id,
     'both_sides_in_scope',e.both_sides_in_scope,
+    'source_in_scope',e.source_in_scope,
+    'destination_in_scope',e.destination_in_scope,
     'reconciliation_status',e.reconciliation_status,
     'elimination_base_amount',e.elimination_base_amount
   ) order by e.transaction_date desc,e.transfer_number desc),'[]'::jsonb)
