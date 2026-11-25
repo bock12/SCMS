@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyFinanceTransferEliminations, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
+import { applyFinanceTransferEliminations, buildFinanceTransferClearingSummary, buildPostedFinanceReport, isWithinFinanceReportPeriod } from './financeReportService';
 import type { FinanceJournal, FinanceJournalLedger } from './financeJournalService';
 
 function journal(overrides: Partial<FinanceJournal> = {}): FinanceJournal {
@@ -108,6 +108,38 @@ describe('consolidated transfer eliminations', () => {
     expect(consolidated.find(item => item.account_id === 'due-to-b')?.consolidated_balance).toBe(0);
     expect(consolidated.find(item => item.account_id === 'cash')?.consolidated_balance).toBe(250);
     expect(balances[0].balance).toBe(250);
+  });
+
+  test('builds clearing summaries within the selected report period and branch scope', () => {
+    const base = {
+      transfer_id: 'transfer-period', transfer_number: 2, transaction_date: '2026-11-20',
+      source_branch_id: 'branch-a', source_branch_name: 'Branch A',
+      destination_branch_id: 'branch-b', destination_branch_name: 'Branch B',
+      amount: 250, currency_code: 'SLE', base_currency_code: 'SLE', status: 'posted',
+      description: 'Branch transfer', external_reference: null,
+      source_journal_entry_id: 'journal-a', source_journal_status: 'posted',
+      source_entry_number: 1, source_posted_at: '2026-11-20T10:00:00Z',
+      destination_journal_entry_id: 'journal-b', destination_journal_status: 'posted',
+      destination_entry_number: 2, destination_posted_at: '2026-11-20T10:00:00Z',
+      source_due_from_base_amount: 250, destination_due_to_base_amount: 250,
+      source_clearing_account_id: 'due-from-a', destination_clearing_account_id: 'due-to-b',
+      both_sides_in_scope: true, source_in_scope: true, destination_in_scope: true,
+      reconciliation_status: 'matched', elimination_base_amount: 250
+    };
+    const inPeriod = buildFinanceTransferClearingSummary([base as any], 'month', new Date('2026-11-25T12:00:00'));
+    expect(inPeriod).toEqual([{
+      base_currency_code: 'SLE', due_from_balance: 250, due_to_balance: 250,
+      elimination_amount: 250, remaining_due_from: 0, remaining_due_to: 0
+    }]);
+    const branchOnly = buildFinanceTransferClearingSummary([{
+      ...base, both_sides_in_scope: false, destination_in_scope: false,
+      reconciliation_status: 'counterpart_outside_scope', elimination_base_amount: 0
+    } as any], 'month', new Date('2026-11-25T12:00:00'));
+    expect(branchOnly[0]).toMatchObject({
+      due_from_balance: 250, due_to_balance: 0, elimination_amount: 0,
+      remaining_due_from: 250, remaining_due_to: 0
+    });
+    expect(buildFinanceTransferClearingSummary([base as any], 'month', new Date('2026-12-25T12:00:00'))).toEqual([]);
   });
 
   test('does not eliminate branch-only, unmatched or unposted transfer balances', () => {
