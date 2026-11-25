@@ -5,6 +5,7 @@ import {
   decideFinancialTransferApproval,
   postFinancialTransfer,
   setFinanceBranchClearingAccounts,
+  getFinanceBranchClearingAccounts,
   type CreateFinancialTransferInput
 } from './financeTransferService';
 
@@ -93,6 +94,20 @@ describe('financeTransferService', () => {
     expect(args).toEqual({ p_transfer_id: 'transfer-1' });
     expect(result.data?.status).toBe('posted');
     expect(result.data?.already_posted).toBe(false);
+  });
+
+  test('loads branch clearing-account configuration', async () => {
+    const client = { rpc: async (name: string, args: Record<string, unknown>) => {
+      expect(name).toBe('get_finance_branch_clearing_accounts');
+      expect(args).toEqual({ p_branch_id: 'branch-a' });
+      return { data: {
+        branch_id: 'branch-a', due_from_chart_account_id: 'due-from',
+        due_to_chart_account_id: 'due-to', is_active: true
+      }, error: null };
+    } };
+    const result = await getFinanceBranchClearingAccounts('branch-a', client);
+    expect(result.data?.due_from_chart_account_id).toBe('due-from');
+    expect(result.data?.due_to_chart_account_id).toBe('due-to');
   });
 
   test('saves explicit due-from and due-to clearing-account configuration', async () => {
