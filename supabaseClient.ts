@@ -2194,6 +2194,7 @@ export const supabase = {
         functionName === 'decide_financial_transfer_approval' ||
         functionName === 'post_financial_transfer' ||
         functionName === 'get_financial_transfers' ||
+        functionName === 'get_finance_transfer_reconciliation' ||
         functionName === 'get_finance_scope_documents' ||
         functionName === 'get_finance_scope_journals' ||
         functionName === 'create_finance_scope_document_transaction' ||
