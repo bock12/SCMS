@@ -664,6 +664,10 @@ begin
     perform private.post_journal_entry(v_transfer.destination_journal_entry_id);
   end if;
 
+  -- Do not leave the internal trigger bypass enabled for later statements in
+  -- a caller-owned transaction after this atomic posting operation completes.
+  perform set_config('scms.finance_transfer_posting','off',true);
+
   update public.financial_transfers set status='posted',updated_at=now()
   where id=v_transfer.id;
 
