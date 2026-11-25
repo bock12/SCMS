@@ -607,12 +607,13 @@ describe('scoped finance service contracts and lifecycle', () => {
     expect(districtLedger.data?.journals).toHaveLength(1);
     expect(districtLedger.data?.account_balances.find(row => row.account_id === 'income-chart')?.credit_total).toBe(400);
 
-    // Church scope ledger must remain isolated from district transactions
+    // Church-wide consolidated ledger includes district and branch transactions.
     authUserId = 'user-church';
     const churchLedger = await getScopedFinanceJournalLedger({ type: 'church', id: null }, client);
     expect(churchLedger.error).toBeNull();
-    expect(churchLedger.data?.journals).toHaveLength(0);
-    expect(churchLedger.data?.account_balances).toHaveLength(0);
+    expect(churchLedger.data?.journals).toHaveLength(1);
+    expect(churchLedger.data?.journals[0].id).toBe(createdDistrictReceipt.data?.journal_entry_id);
+    expect(churchLedger.data?.account_balances.find(row => row.account_id === 'income-chart')?.credit_total).toBe(400);
   });
 
   test('executes branch receipt and payment creation, approval, rejection, and posting through service wrappers', async () => {
