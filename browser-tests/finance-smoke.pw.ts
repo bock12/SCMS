@@ -408,6 +408,8 @@ test.describe('SCMS finance browser smoke', () => {
     await page.getByPlaceholder('Reason for the internal transfer').fill('Move cash into the bank account');
     await expect(page.getByRole('button', { name: 'Submit transfer', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Submit transfer', exact: true }).click();
+    await page.waitForTimeout(300);
+    console.log('TRANSFER_SUBMIT_DEBUG:', await page.locator('body').innerText().slice(-2600), await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}')));
     await expect(page.getByRole('status').filter({ hasText: 'Transfer created and approved' })).toBeVisible();
 
     const transferDraftState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));
