@@ -1,4 +1,5 @@
 import type { FinanceJournal, FinanceJournalLedger, FinanceJournalLine } from './financeJournalService';
+import type { FinanceTransferReconciliationRow } from './financeTransferReconciliationService';
 
 export type FinanceReportPeriod = 'all' | 'week' | 'month' | 'quarter' | 'year';
 
@@ -158,4 +159,40 @@ export function buildPostedFinanceReport(
     account_balances: [...balances.values()].sort((a, b) => a.account_code.localeCompare(b.account_code)),
     currency_summaries
   };
+}
+
+export interface FinanceConsolidatedAccountBalance extends FinanceReportAccountBalance {
+  elimination_amount: number;
+  consolidated_balance: number;
+}
+
+/**
+ * Applies reporting-only reciprocal clearing eliminations to consolidated
+ * account balances. Source journals and branch ledgers remain unchanged.
+ */
+export function applyFinanceTransferEliminations(
+  accountBalances: FinanceReportAccountBalance[],
+  transfers: FinanceTransferReconciliationRow[]
+): FinanceConsolidatedAccountBalance[] {
+  const eliminations = new Map<string, number>();
+  for (const transfer of transfers) {
+    const amount = Number(transfer.elimination_base_amount || 0);
+    if (transfer.reconciliation_status !== 'matched' || amount <= 0) continue;
+    if (transfer.source_clearing_account_id) {
+      const key = `${transfer.source_clearing_account_id}:${transfer.base_currency_code}`;
+      eliminations.set(key, (eliminations.get(key) || 0) + amount);
+    }
+    if (transfer.destination_clearing_account_id) {
+      const key = `${transfer.destination_clearing_account_id}:${transfer.base_currency_code}`;
+      eliminations.set(key, (eliminations.get(key) || 0) + amount);
+    }
+  }
+  return accountBalances.map(balance => {
+    const elimination_amount = eliminations.get(`${balance.account_id}:${balance.base_currency_code}`) || 0;
+    return {
+      ...balance,
+      elimination_amount,
+      consolidated_balance: balance.balance - elimination_amount
+    };
+  });
 }
