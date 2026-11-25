@@ -6,7 +6,7 @@ export type FinanceReportPeriod = 'all' | 'week' | 'month' | 'quarter' | 'year';
 /** Serializes report rows as RFC-4180-style CSV with quoted and escaped fields. */
 export function serializeFinanceCsv(headers: string[], rows: unknown[][]): string {
   const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-  return [headers, ...rows].map(row => row.map(quote).join(',')).join('\\r\\n');
+  return [headers, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
 }
 
 export interface FinanceReportLine {
