@@ -874,7 +874,10 @@ const UsersTab = ({ canManageRoles }: { canManageRoles: boolean }) => {
         avatar_url: formAvatar || editingUser.avatar_url,
         membership_status: formMembershipStatus,
         membership_date: formMembershipDate,
-        portal_status: formStatus,
+        // Portal status is meaningful only for a linked portal account. Sending
+        // the default "active" value for directory-only members makes the service
+        // reject an otherwise valid profile edit.
+        portal_status: hasPortalAccess(editingUser) ? formStatus : undefined,
         is_baptized: formIsBaptized,
         baptism_date: formBaptismDate || undefined,
         baptized_by: formBaptizedBy || undefined,
