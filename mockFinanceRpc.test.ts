@@ -59,7 +59,8 @@ function fixture(options: { churchFinance?: boolean; districtFinance?: boolean; 
   const rpc = createMockFinanceRpc(storage, () => ({ userId: authUserId }));
   const setUser = (userId: string | null) => { authUserId = userId; };
   const read = () => structuredClone(current);
-  return { rpc, setUser, read };
+  const write = (next: MockFinanceState) => { current = structuredClone(next); };
+  return { rpc, setUser, read, write };
 }
 
 const args = {
@@ -69,6 +70,63 @@ const args = {
   p_category_account_id: 'income-chart', p_fund_id: 'fund-a',
   p_external_reference: ' RCPT-1 ', p_description: ' Sunday offering ', p_exchange_rate_to_base: 1,
   p_idempotency_key: '00000000-0000-4000-8000-000000000001'
+};
+
+
+function transferFixture(withApprovalSteps = false) {
+  const ctx = fixture();
+  const state = ctx.read();
+  state.branches.push({ id: 'branch-b', district_id: 'district-a', name: 'Branch B', status: 'active' });
+  state.permissions.push(
+    { profile_id: 'creator', permission: 'manage_finances', branch_id: 'branch-b' },
+    { profile_id: 'creator', permission: 'post_journals', branch_id: 'branch-b' },
+    { profile_id: 'approver-1', permission: 'approve_finances', branch_id: 'branch-a' },
+    { profile_id: 'approver-2', permission: 'approve_finances', branch_id: 'branch-b' }
+  );
+  state.chartAccounts.push(
+    { id: 'bank-chart-a', code: '1010', name: 'Branch A Bank', normal_balance: 'debit', is_active: true, account_type: 'asset', is_control_account: false },
+    { id: 'bank-chart-b', code: '1020', name: 'Branch B Bank', normal_balance: 'debit', is_active: true, account_type: 'asset', is_control_account: false },
+    { id: 'due-from-chart', code: '1300', name: 'Due From Branch', normal_balance: 'debit', is_active: true, account_type: 'asset', is_control_account: false },
+    { id: 'due-to-chart', code: '2300', name: 'Due To Branch', normal_balance: 'credit', is_active: true, account_type: 'liability', is_control_account: false }
+  );
+  state.financialAccounts.push(
+    { id: 'bank-account-a', branch_id: 'branch-a', district_id: 'district-a', name: 'Branch A Bank', account_type: 'bank', currency_code: 'SLL', is_active: true, chart_account_id: 'bank-chart-a' },
+    { id: 'bank-account-b', branch_id: 'branch-b', district_id: 'district-a', name: 'Branch B Bank', account_type: 'bank', currency_code: 'SLL', is_active: true, chart_account_id: 'bank-chart-b' }
+  );
+  state.branchClearingAccounts.push(
+    { branch_id: 'branch-a', due_from_chart_account_id: 'due-from-chart', due_to_chart_account_id: 'due-to-chart', is_active: true },
+    { branch_id: 'branch-b', due_from_chart_account_id: 'due-from-chart', due_to_chart_account_id: 'due-to-chart', is_active: true }
+  );
+  state.approvalPolicies.push(
+    { id: 'transfer-policy-a', name: 'Branch A Transfer Policy', is_active: true, transaction_type: 'financial_transfer', branch_id: 'branch-a', district_id: 'district-a', version: 1, effective_from: '2026-01-01' },
+    { id: 'transfer-policy-b', name: 'Branch B Transfer Policy', is_active: true, transaction_type: 'financial_transfer', branch_id: 'branch-b', district_id: 'district-a', version: 1, effective_from: '2026-01-01' }
+  );
+  state.approvalPolicyBands.push(
+    { id: 'transfer-band-a', policy_id: 'transfer-policy-a', min_amount_base: 0, max_amount_base: null },
+    { id: 'transfer-band-b', policy_id: 'transfer-policy-b', min_amount_base: 0, max_amount_base: null }
+  );
+  if (withApprovalSteps) {
+    state.approvalPolicySteps.push(
+      { id: 'transfer-policy-step-a', band_id: 'transfer-band-a', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true },
+      { id: 'transfer-policy-step-b', band_id: 'transfer-band-b', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+    );
+  }
+  ctx.write(state);
+  return ctx;
+}
+
+const transferArgs = {
+  p_transaction_date: '2026-06-10',
+  p_source_branch_id: 'branch-a',
+  p_source_financial_account_id: 'cash-account',
+  p_destination_branch_id: 'branch-b',
+  p_destination_financial_account_id: 'bank-account-b',
+  p_amount: 250,
+  p_currency_code: 'SLL',
+  p_exchange_rate_to_base: 1,
+  p_description: 'Internal branch transfer',
+  p_external_reference: 'TR-001',
+  p_idempotency_key: '00000000-0000-4000-8000-000000000101'
 };
 
 describe('mock finance permission scope bridge', () => {
@@ -1478,4 +1536,104 @@ describe('finance transaction creation & posting hardening', () => {
   });
 });
 
+
+
+
+describe('mock internal financial transfer RPC', () => {
+  test('creates and atomically posts a same-branch transfer as one balanced journal', async () => {
+    const ctx = transferFixture();
+    const result = await ctx.rpc.rpc('create_financial_transfer', {
+      ...transferArgs,
+      p_destination_branch_id: 'branch-a',
+      p_destination_financial_account_id: 'bank-account-a'
+    });
+    expect(result.error).toBeNull();
+    expect(result.data.status).toBe('approved');
+    expect(result.data.destination_journal_entry_id).toBeNull();
+    const state = ctx.read();
+    expect(state.transfers).toHaveLength(1);
+    const journal = state.journals.find(item => item.id === result.data.source_journal_entry_id)!;
+    const lines = state.journalLines.filter(item => item.journal_entry_id === journal.id);
+    expect(journal.source_type).toBe('financial_transfer');
+    expect(lines).toHaveLength(2);
+    expect(lines.find(item => item.account_id === 'bank-chart-a')?.debit_amount).toBe(250);
+    expect(lines.find(item => item.account_id === 'cash-chart')?.credit_amount).toBe(250);
+
+    const posted = await ctx.rpc.rpc('post_financial_transfer', { p_transfer_id: result.data.transfer_id });
+    expect(posted.error).toBeNull();
+    expect(ctx.read().transfers[0].status).toBe('posted');
+    expect(ctx.read().journals.find(item => item.id === journal.id)?.status).toBe('posted');
+  });
+
+  test('creates cross-branch reciprocal clearing journals and posts both atomically', async () => {
+    const ctx = transferFixture();
+    const result = await ctx.rpc.rpc('create_financial_transfer', transferArgs);
+    expect(result.error).toBeNull();
+    expect(result.data.status).toBe('approved');
+    expect(result.data.destination_journal_entry_id).toBeTruthy();
+    const state = ctx.read();
+    const sourceLines = state.journalLines.filter(item => item.journal_entry_id === result.data.source_journal_entry_id);
+    const destinationLines = state.journalLines.filter(item => item.journal_entry_id === result.data.destination_journal_entry_id);
+    expect(sourceLines.find(item => item.account_id === 'due-from-chart')?.debit_amount).toBe(250);
+    expect(sourceLines.find(item => item.account_id === 'cash-chart')?.credit_amount).toBe(250);
+    expect(destinationLines.find(item => item.account_id === 'bank-chart-b')?.debit_amount).toBe(250);
+    expect(destinationLines.find(item => item.account_id === 'due-to-chart')?.credit_amount).toBe(250);
+
+    const unilateral = await ctx.rpc.rpc('post_finance_journal_entry', { p_journal_entry_id: result.data.source_journal_entry_id });
+    expect(unilateral.error?.message).toContain('posted together');
+    expect(ctx.read().journals.filter(item => item.source_id === result.data.transfer_id).every(item => item.status === 'draft')).toBe(true);
+
+    const posted = await ctx.rpc.rpc('post_financial_transfer', { p_transfer_id: result.data.transfer_id });
+    expect(posted.error).toBeNull();
+    expect(ctx.read().journals.filter(item => item.source_id === result.data.transfer_id).every(item => item.status === 'posted')).toBe(true);
+  });
+
+  test('requires both branch approval workflows and rejects self-approval', async () => {
+    const ctx = transferFixture(true);
+    const created = await ctx.rpc.rpc('create_financial_transfer', transferArgs);
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('pending_approval');
+    const pending = ctx.read();
+    const sourceRequest = pending.approvalRequests.find(item => item.id === created.data.source_approval_request_id)!;
+    const destinationRequest = pending.approvalRequests.find(item => item.id === created.data.destination_approval_request_id)!;
+    const sourceStep = pending.approvalSteps.find(item => item.approval_request_id === sourceRequest.id)!;
+    const destinationStep = pending.approvalSteps.find(item => item.approval_request_id === destinationRequest.id)!;
+
+    const selfApproval = await ctx.rpc.rpc('decide_financial_transfer_approval', {
+      p_request_step_id: sourceStep.id, p_decision: 'approved'
+    });
+    expect(selfApproval.error?.message).toContain('submitter cannot approve');
+
+    ctx.setUser('user-approver-1');
+    const first = await ctx.rpc.rpc('decide_financial_transfer_approval', {
+      p_request_step_id: sourceStep.id, p_decision: 'approved'
+    });
+    expect(first.error).toBeNull();
+    expect(first.data.status).toBe('pending_approval');
+    const prematurePost = await ctx.rpc.rpc('post_financial_transfer', { p_transfer_id: created.data.transfer_id });
+    expect(prematurePost.error?.message).toContain('approval workflows');
+
+    ctx.setUser('user-approver-2');
+    const second = await ctx.rpc.rpc('decide_financial_transfer_approval', {
+      p_request_step_id: destinationStep.id, p_decision: 'approved'
+    });
+    expect(second.error).toBeNull();
+    expect(second.data.status).toBe('approved');
+  });
+
+  test('rejects cross-currency and missing clearing-account transfers', async () => {
+    const ctx = transferFixture();
+    const crossCurrency = await ctx.rpc.rpc('create_financial_transfer', {
+      ...transferArgs, p_currency_code: 'USD'
+    });
+    expect(crossCurrency.error?.message).toContain('same currency');
+    const state = ctx.read();
+    state.branchClearingAccounts = state.branchClearingAccounts.filter(item => item.branch_id !== 'branch-b');
+    ctx.write(state);
+    const missingClearing = await ctx.rpc.rpc('create_financial_transfer', {
+      ...transferArgs, p_idempotency_key: '00000000-0000-4000-8000-000000000102'
+    });
+    expect(missingClearing.error?.message).toContain('clearing accounts');
+  });
+});
 
