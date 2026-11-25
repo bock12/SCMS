@@ -793,6 +793,108 @@ export function createMockFinanceRpc(
     });
   }
 
+  function getFinanceTransferReconciliation(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+    const scopeType = String(args.p_scope_type || '');
+    const scopeId = args.p_scope_id ?? null;
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return fail(scope.error);
+    const canView = ['view_finances', 'manage_finances', 'approve_finances', 'post_journals'].some(permission =>
+      hasScopePermission(state, actor.id, permission, scope.branchId, scope.districtId));
+    if (!canView) return fail('Insufficient permission to view transfer reconciliation in this scope', '42501');
+
+    const branchById = new Map(state.branches.map(branch => [branch.id, branch]));
+    const inScope = (branchId: string) => {
+      if (scopeType === 'church') return true;
+      const branch = branchById.get(branchId);
+      if (scopeType === 'district') return (branch?.district_id ?? null) === scopeId;
+      return branchId === scopeId;
+    };
+    const transfers = state.transfers
+      .filter(item => inScope(item.source_branch_id) || inScope(item.destination_branch_id))
+      .map(item => {
+        const sourceBranch = branchById.get(item.source_branch_id);
+        const destinationBranch = branchById.get(item.destination_branch_id);
+        const sourceJournal = state.journals.find(journal => journal.id === item.source_journal_entry_id);
+        const destinationJournal = item.destination_journal_entry_id
+          ? state.journals.find(journal => journal.id === item.destination_journal_entry_id)
+          : null;
+        const sourceAccount = state.financialAccounts.find(account => account.id === item.source_financial_account_id);
+        const destinationAccount = state.financialAccounts.find(account => account.id === item.destination_financial_account_id);
+        const sourceClearingLines = item.source_branch_id === item.destination_branch_id ? [] :
+          state.journalLines.filter(line => line.journal_entry_id === item.source_journal_entry_id &&
+            line.account_id !== sourceAccount?.chart_account_id);
+        const destinationClearingLines = state.journalLines.filter(line =>
+          line.journal_entry_id === item.destination_journal_entry_id &&
+          line.account_id !== destinationAccount?.chart_account_id);
+        const sourceAmount = round4(sourceClearingLines.reduce((sum, line) =>
+          sum + Number(line.base_debit_amount || 0) - Number(line.base_credit_amount || 0), 0));
+        const destinationAmount = round4(destinationClearingLines.reduce((sum, line) =>
+          sum + Number(line.base_credit_amount || 0) - Number(line.base_debit_amount || 0), 0));
+        const sourceClearingAccountId = sourceClearingLines[0]?.account_id ?? null;
+        const destinationClearingAccountId = destinationClearingLines[0]?.account_id ?? null;
+        const bothSidesInScope = inScope(item.source_branch_id) && inScope(item.destination_branch_id);
+        let reconciliationStatus = 'not_posted';
+        if (item.status === 'rejected') reconciliationStatus = 'rejected';
+        else if (item.status === 'posted' && item.source_branch_id === item.destination_branch_id &&
+          sourceJournal?.status === 'posted') reconciliationStatus = 'not_required';
+        else if (item.status === 'posted' && !bothSidesInScope) reconciliationStatus = 'counterpart_outside_scope';
+        else if (item.status === 'posted' && sourceJournal?.status === 'posted' &&
+          destinationJournal?.status === 'posted' && Math.abs(sourceAmount - destinationAmount) <= 0.0001) {
+          reconciliationStatus = 'matched';
+        } else if (item.status === 'posted') reconciliationStatus = 'mismatch';
+        const eliminationAmount = reconciliationStatus === 'matched'
+          ? Math.min(Math.max(sourceAmount, 0), Math.max(destinationAmount, 0)) : 0;
+        return {
+          transfer_id: item.id, transfer_number: item.transfer_number, transaction_date: item.transaction_date,
+          source_branch_id: item.source_branch_id, source_branch_name: sourceBranch?.name || item.source_branch_id,
+          destination_branch_id: item.destination_branch_id, destination_branch_name: destinationBranch?.name || item.destination_branch_id,
+          amount: item.amount, currency_code: item.currency_code,
+          base_currency_code: sourceJournal?.base_currency_code || state.baseCurrencyCode || item.currency_code,
+          status: item.status, description: item.description, external_reference: item.external_reference ?? null,
+          source_journal_entry_id: item.source_journal_entry_id, source_journal_status: sourceJournal?.status ?? null,
+          source_entry_number: sourceJournal?.entry_number ?? null, source_posted_at: sourceJournal?.posted_at ?? null,
+          destination_journal_entry_id: item.destination_journal_entry_id ?? null,
+          destination_journal_status: destinationJournal?.status ?? null,
+          destination_entry_number: destinationJournal?.entry_number ?? null, destination_posted_at: destinationJournal?.posted_at ?? null,
+          source_due_from_base_amount: sourceAmount, destination_due_to_base_amount: destinationAmount,
+          source_clearing_account_id: sourceClearingAccountId,
+          destination_clearing_account_id: destinationClearingAccountId,
+          both_sides_in_scope: bothSidesInScope,
+          reconciliation_status: reconciliationStatus, elimination_base_amount: eliminationAmount
+        };
+      }).sort((a,b) => String(b.transaction_date).localeCompare(String(a.transaction_date)) || Number(b.transfer_number)-Number(a.transfer_number));
+
+    const summary = new Map<string, { base_currency_code: string; due_from_balance: number; due_to_balance: number; elimination_amount: number }>();
+    for (const transfer of transfers) {
+      if (transfer.status !== 'posted' || transfer.source_branch_id === transfer.destination_branch_id) continue;
+      const current = summary.get(transfer.base_currency_code) || {
+        base_currency_code: transfer.base_currency_code, due_from_balance: 0, due_to_balance: 0, elimination_amount: 0
+      };
+      if (inScope(transfer.source_branch_id) && transfer.source_journal_status === 'posted') {
+        current.due_from_balance += Number(transfer.source_due_from_base_amount || 0);
+      }
+      if (inScope(transfer.destination_branch_id) && transfer.destination_journal_status === 'posted') {
+        current.due_to_balance += Number(transfer.destination_due_to_base_amount || 0);
+      }
+      current.elimination_amount += Number(transfer.elimination_base_amount || 0);
+      summary.set(transfer.base_currency_code, current);
+    }
+    return success({
+      actor_profile_id: actor.id, scope_type: scopeType, scope_id: scopeId,
+      transfers,
+      clearing_summary: [...summary.values()].map(item => ({
+        ...item,
+        remaining_due_from: item.due_from_balance - item.elimination_amount,
+        remaining_due_to: item.due_to_balance - item.elimination_amount
+      })).sort((a,b) => a.base_currency_code.localeCompare(b.base_currency_code))
+    });
+  }
+
   function getFinancialTransfers(args: Record<string, any> = {}) {
     const state = storage.load();
     const auth = getAuth();
@@ -2267,8 +2369,13 @@ export function createMockFinanceRpc(
       hasScopePermission(state, actor.id, permission, scope.branchId, scope.districtId));
     if (!canView) return fail('Insufficient permission to view journal entries in this scope', '42501');
 
+    const matchesReportingScope = (journal: { branch_id?: string | null; district_id?: string | null }) => {
+      if (scopeType === 'church') return true;
+      if (scopeType === 'district') return (journal.district_id ?? null) === scopeId;
+      return (journal.branch_id ?? null) === scopeId;
+    };
     const journals = state.journals
-      .filter(journal => matchesExactScope(journal, scopeType, scope.branchId, scope.districtId))
+      .filter(matchesReportingScope)
       .map((journal): Record<string, any> => {
         const document = ['financial_document', 'financial_document_pending'].includes(journal.source_type)
           ? state.documents.find(item => item.id === journal.source_id)
@@ -2306,7 +2413,7 @@ export function createMockFinanceRpc(
 
     const balances = new Map<string, any>();
     for (const journal of state.journals.filter(item =>
-      item.status === 'posted' && matchesExactScope(item, scopeType, scope.branchId, scope.districtId))) {
+      item.status === 'posted' && matchesReportingScope(item))) {
       for (const line of state.journalLines.filter(item => item.journal_entry_id === journal.id)) {
         const account = state.chartAccounts.find(item => item.id === line.account_id);
         if (!account) continue;
@@ -2698,6 +2805,7 @@ export function createMockFinanceRpc(
         if (name === 'decide_financial_transfer_approval') return decideFinancialTransferApproval(args);
         if (name === 'post_financial_transfer') return postFinancialTransfer(args);
         if (name === 'get_financial_transfers') return getFinancialTransfers(args);
+        if (name === 'get_finance_transfer_reconciliation') return getFinanceTransferReconciliation(args);
         if (name === 'get_finance_documents') return getFinanceDocuments(args);
         if (name === 'get_finance_scope_documents') return getFinanceScopeDocuments(args);
         if (name === 'get_finance_journals') return getFinanceJournals(args);
