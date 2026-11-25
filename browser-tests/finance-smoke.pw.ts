@@ -120,7 +120,9 @@ test.describe('SCMS finance browser smoke', () => {
           },
           {
             id: 'pw-transfer-policy', name: 'Browser Test Transfer Approval', transaction_type: 'financial_transfer',
-            branch_id: actor.branch_id, version: 1, effective_from: '2026-01-01', is_active: true
+            branch_id: actor.branch_id,
+            district_id: (database.church_branches || []).find((branch: any) => branch.id === actor.branch_id)?.district_id ?? null,
+            version: 1, effective_from: '2026-01-01', is_active: true
           }
         ],
         events: [], budgets: [], budgetLines: [], documents: [], journals: [],
