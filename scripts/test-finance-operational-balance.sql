@@ -68,7 +68,7 @@ begin
     then raise exception 'inherited cash mapping double-counted branch A'; end if;
   select x into a from jsonb_array_elements(r->'accounts') x
     where x->>'financial_account_id'='20000000-0000-4000-8000-000000000006';
-  if (a->>'balance')::numeric <> 250 then raise exception 'base-currency USD conversion amount not used: %',a; end if;
+  if (a->>'balance')::numeric <> 50 then raise exception 'stored base-currency USD journal amount was not reported unchanged: %',a; end if;
 end $$;
 
 -- District scope requires district-level permission, and includes both
