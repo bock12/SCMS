@@ -37,6 +37,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Install isolated PostgreSQL fixture
         run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_test" -v ON_ERROR_STOP=1 -f scripts/finance-operational-balance-fixture.sql
 
