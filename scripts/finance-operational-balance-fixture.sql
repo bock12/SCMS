@@ -30,7 +30,7 @@ as $$
   select coalesce(current_setting('test.allow_church', true), 'false') = 'true'
       and p_scope_id is null
     or coalesce(current_setting('test.allowed_scope_id', true), '') <> ''
-      and p_scope_id = current_setting('test.allowed_scope_id', true)::uuid
+      and p_scope_id = nullif(current_setting('test.allowed_scope_id', true), '')::uuid
       and p_permission in ('view_finances','manage_finances','approve_finances','post_journals')
 $$;
 
@@ -39,7 +39,7 @@ returns boolean
 language sql stable
 as $$
   select coalesce(current_setting('test.allowed_district_id', true), '') <> ''
-     and p_district_id = current_setting('test.allowed_district_id', true)::uuid
+     and p_district_id = nullif(current_setting('test.allowed_district_id', true), '')::uuid
      and p_permission in ('view_finances','manage_finances','approve_finances','post_journals')
 $$;
 
