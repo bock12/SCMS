@@ -1,0 +1,44 @@
+name: SCMS Finance PostgreSQL Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scms-finance-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  operational-balance-postgres:
+    name: Operational balance RPC integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: scms_finance_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scms_finance_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install isolated PostgreSQL fixture
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_test" -v ON_ERROR_STOP=1 -f scripts/finance-operational-balance-fixture.sql
+
+      - name: Apply migration and run RPC integration assertions
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_test" -v ON_ERROR_STOP=1 -f scripts/test-finance-operational-balance.sql
