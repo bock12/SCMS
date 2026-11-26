@@ -289,7 +289,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
               <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.debit_total)}</td>
               <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.credit_total)}</td>
               <td className="py-2 text-right font-black tabular-nums">{money(account.base_currency_code, account.balance)}</td>
-              {account.mapping_is_ambiguous && <td className="py-2 text-left text-amber-800" role="alert"><span className="font-bold">Ambiguous mapping ({account.mapping_count})</span><div className="max-w-xs whitespace-normal">{account.mapping_warning || 'Multiple operational accounts share this chart account and ownership scope. The ledger balance cannot be reliably split between them.'}</div></td>}
+              <td className={account.mapping_is_ambiguous ? "py-2 text-left text-amber-800" : "py-2 text-left text-emerald-700"}>{account.mapping_is_ambiguous ? <div role="alert"><span className="font-bold">Ambiguous mapping ({account.mapping_count})</span><div className="max-w-xs whitespace-normal">{account.mapping_warning || 'Multiple operational accounts share this chart account and ownership scope. The ledger balance cannot be reliably split between them.'}</div></div> : <span>Unique mapping</span>}</td>
             </tr>)}</tbody>
           </table>
         </div> : !operationalBalanceError && <p className="rounded-lg bg-white p-3 text-xs text-slate-500">No active cash, bank or mobile-money accounts are configured in this scope.</p>}
