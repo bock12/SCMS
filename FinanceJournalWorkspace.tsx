@@ -280,7 +280,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
         {operationalBalanceError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{operationalBalanceError}</p>}
         {operationalBalances?.accounts.length ? <div className="overflow-x-auto">
           <table aria-label="Cash bank and mobile money balances" className="w-full min-w-[620px] text-left text-xs">
-            <thead><tr className="border-b border-sky-200 text-slate-500"><th className="py-2">Account</th><th className="py-2">Type</th><th className="py-2">Ownership</th><th className="py-2">Base currency</th><th className="py-2 text-right">Debits</th><th className="py-2 text-right">Credits</th><th className="py-2 text-right">Balance</th></tr></thead>
+            <thead><tr className="border-b border-sky-200 text-slate-500"><th className="py-2">Account</th><th className="py-2">Type</th><th className="py-2">Ownership</th><th className="py-2">Base currency</th><th className="py-2 text-right">Debits</th><th className="py-2 text-right">Credits</th><th className="py-2 text-right">Balance</th><th className="py-2">Mapping integrity</th></tr></thead>
             <tbody>{operationalBalances.accounts.map(account => <tr key={account.financial_account_id + account.base_currency_code} className="border-b border-sky-100">
               <td className="py-2"><div className="font-semibold text-slate-800">{account.account_name}{!account.is_active && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-800">Inactive</span>}</div><div className="text-[10px] text-slate-500">{account.chart_account_code} · {account.chart_account_name}</div></td>
               <td className="py-2 capitalize">{account.operational_account_type.replace("_", " ")}</td>
@@ -289,6 +289,7 @@ export const FinanceJournalWorkspace: React.FC<Props> = ({ branchId, scope, scop
               <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.debit_total)}</td>
               <td className="py-2 text-right tabular-nums">{money(account.base_currency_code, account.credit_total)}</td>
               <td className="py-2 text-right font-black tabular-nums">{money(account.base_currency_code, account.balance)}</td>
+              {account.mapping_is_ambiguous && <td className="py-2 text-left text-amber-800" role="alert"><span className="font-bold">Ambiguous mapping ({account.mapping_count})</span><div className="max-w-xs whitespace-normal">{account.mapping_warning || 'Multiple operational accounts share this chart account and ownership scope. The ledger balance cannot be reliably split between them.'}</div></td>}
             </tr>)}</tbody>
           </table>
         </div> : !operationalBalanceError && <p className="rounded-lg bg-white p-3 text-xs text-slate-500">No active cash, bank or mobile-money accounts are configured in this scope.</p>}
