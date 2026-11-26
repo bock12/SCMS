@@ -22,6 +22,9 @@ describe('financeOperationalBalanceService', () => {
               account_name: 'Main Bank',
               is_active: true,
               operational_account_type: 'bank',
+              mapping_count: 2,
+              mapping_is_ambiguous: true,
+              mapping_warning: 'Multiple operational accounts share this chart account.',
               currency_code: 'SLE',
               provider_name: 'Bank',
               account_reference: null,
@@ -48,7 +51,9 @@ describe('financeOperationalBalanceService', () => {
     expect(result.data?.accounts[0]).toMatchObject({
       operational_account_type: 'bank',
       base_currency_code: 'SLE',
-      balance: 1000
+      balance: 1000,
+      mapping_count: 2,
+      mapping_is_ambiguous: true
     });
   });
 
