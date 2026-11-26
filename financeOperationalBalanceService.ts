@@ -21,6 +21,9 @@ export interface FinanceOperationalBalanceAccount {
   debit_total: number;
   credit_total: number;
   balance: number;
+  mapping_count: number;
+  mapping_is_ambiguous: boolean;
+  mapping_warning: string | null;
 }
 
 export interface FinanceOperationalBalanceReport {
@@ -39,7 +42,7 @@ type RpcClient = {
 
 const defaultRpcClient = financeSupabase as unknown as RpcClient;
 
-/** Reads cash, bank and mobile-money balances from posted journal lines in an authorized scope. */
+/** Reads authorized posted-ledger balances and flags ambiguous operational-account mappings. */
 export async function getFinanceOperationalBalances(
   scope: FinanceOwnershipScope,
   client: RpcClient = defaultRpcClient
