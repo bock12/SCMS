@@ -45,3 +45,65 @@ jobs:
 
       - name: Apply migration and run RPC integration assertions
         run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_test" -v ON_ERROR_STOP=1 -f scripts/test-finance-operational-balance.sql
+
+  finance-lifecycle-postgres:
+    name: Finance transaction and transfer lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: scms_finance_lifecycle_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scms_finance_lifecycle_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Verify generated baseline is reproducible
+        run: bun scripts/build-supabase-baseline.mjs --check
+
+      - name: Install disposable Supabase Auth compatibility fixture
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test" -v ON_ERROR_STOP=1 -f scripts/supabase-postgres-bootstrap.sql
+
+      - name: Apply canonical baseline to disposable PostgreSQL
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test" -v ON_ERROR_STOP=1 -f supabase/baseline/fresh_install.sql
+
+      - name: Apply forward migrations after the recovered baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          database_url="postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test"
+          for migration in supabase/migrations/*.sql; do
+            filename="${migration##*/}"
+            if [[ "$filename" < "20261116000000" ]]; then
+              continue
+            fi
+            echo "Applying $filename"
+            psql "$database_url" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+
+      - name: Verify finance transaction lifecycle
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test" -v ON_ERROR_STOP=1 -f supabase/tests/finance_transaction_lifecycle.sql
+
+      - name: Verify finance transfer lifecycle and reconciliation
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test" -v ON_ERROR_STOP=1 -f supabase/tests/finance_transfer_lifecycle.sql
+
+      - name: Verify branch and district finance isolation
+        run: psql "postgresql://postgres:postgres@localhost:5432/scms_finance_lifecycle_test" -v ON_ERROR_STOP=1 -f supabase/tests/finance_organizational_scope.sql
