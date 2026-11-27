@@ -60,14 +60,6 @@ BEGIN
         is_main_branch = EXCLUDED.is_main_branch,
         status = 'active';
 
-  IF NOT EXISTS (
-    SELECT 1 FROM public.church_branches
-    WHERE id = v_branch_id AND status = 'active'
-  ) THEN
-    RAISE EXCEPTION 'FIN-INT test branch fixture was not persisted as active: %',
-      (SELECT status FROM public.church_branches WHERE id = v_branch_id);
-  END IF;
-
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
 
@@ -123,6 +115,16 @@ BEGIN
   );
 
   PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
+
+  RAISE NOTICE 'FIN-INT branch diagnostic: id=%, status=%',
+    v_branch_id,
+    (SELECT status FROM public.church_branches WHERE id = v_branch_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM public.church_branches
+    WHERE id = v_branch_id AND status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'FIN-INT test branch is not active immediately before transaction creation';
+  END IF;
 
   -- Missing policy must fail and leave no partial financial document.
   BEGIN
