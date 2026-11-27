@@ -711,7 +711,7 @@ begin
     from public.church_branches b
     where b.id = p_scope_id and b.status = 'active';
     if not found then
-      raise exception 'Finance branch does not exist or is inactive';
+      raise exception 'Finance branch % does not exist or is inactive', p_scope_id;
     end if;
     if not private.has_permission('manage_finances', p_scope_id) then
       raise exception 'Insufficient permission to create financial transactions in this branch';
