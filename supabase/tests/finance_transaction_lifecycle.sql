@@ -60,6 +60,22 @@ BEGIN
         is_main_branch = EXCLUDED.is_main_branch,
         status = 'active';
 
+  -- A second active branch is required to distinguish scope denial from
+  -- a nonexistent-branch validation error in the authorization test.
+  INSERT INTO public.church_branches (id, name, code, is_main_branch, status)
+  VALUES (
+    '10000000-0000-4000-8000-000000000002',
+    'FIN-INT Out-of-Scope Branch',
+    'FIN-INT-002',
+    false,
+    'active'
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET name = EXCLUDED.name,
+        code = EXCLUDED.code,
+        is_main_branch = false,
+        status = 'active';
+
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
 
@@ -116,9 +132,6 @@ BEGIN
 
   PERFORM set_config('request.jwt.claim.sub', v_auth_id::text, true);
 
-  RAISE NOTICE 'FIN-INT branch diagnostic: id=%, status=%',
-    v_branch_id,
-    (SELECT status FROM public.church_branches WHERE id = v_branch_id);
   IF NOT EXISTS (
     SELECT 1 FROM public.church_branches
     WHERE id = v_branch_id AND status = 'active'
