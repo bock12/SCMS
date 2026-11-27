@@ -51,6 +51,11 @@ DECLARE
   v_policy_index integer;
   v_bad_configuration jsonb;
 BEGIN
+  -- The finance actor is branch-scoped; seed its referenced branch first.
+  INSERT INTO public.church_branches (id, name, code, is_main_branch, status)
+  VALUES (v_branch_id, 'FIN-INT Test Branch', 'FIN-INT-001', true, 'active')
+  ON CONFLICT (id) DO NOTHING;
+
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
 
