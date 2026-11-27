@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Plus, Save, RefreshCw } from 'lucide-react';
 import { getFinanceConfiguration, getFinanceScopeConfiguration, saveFinanceConfiguration, saveFinanceScopeResources, saveFinanceScopeApprovalPolicies, getRequisitionApprovalConfiguration, saveRequisitionApprovalPolicy, type FinanceConfiguration, type FinanceOwnershipScope, type RequisitionApprovalConfiguration } from './financeConfigurationService';
-import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 import { getFinanceBranchClearingAccounts, setFinanceBranchClearingAccounts } from './financeTransferService';
 
 interface FinanceConfigurationWorkspaceProps {
@@ -739,13 +738,6 @@ export const FinanceConfigurationWorkspace: React.FC<FinanceConfigurationWorkspa
       </section>
 
       <p className="text-xs text-slate-500">Finance configuration is loaded and saved through authenticated PostgreSQL RPCs. Changes are subject to database permissions, organizational scope, validation and audit controls.</p>
-
-      {(scope || branchId) ? (
-        <FinanceTransactionEntryWorkspace
-          branchId={scope ? (scope.type === 'branch' ? scope.id : null) : branchId}
-          scope={scope}
-        />
-      ) : null}
     </div>
   );
 };

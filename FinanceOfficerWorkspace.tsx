@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FinanceDatabaseSessionGate } from './FinanceDatabaseSessionGate';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { financeSupabase } from './financeSupabaseClient';
@@ -15,15 +15,16 @@ import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
 import { getMyFinanceScopes, type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
+import { getScopedFinanceWorkflowDocuments } from './financeDocumentWorkflowService';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
 import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
 import { FinanceTransferWorkspace } from './FinanceTransferWorkspace';
 import { DepartmentRequisitionPaymentWorkspace } from './DepartmentRequisitionPaymentWorkspace';
 import { 
-  DollarSign, Sliders, Plus, Clock, Check, X, Printer, Filter, 
+  DollarSign, Sliders, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
   Trash2, Edit, AlertCircle, FileText, CheckCircle2, ArrowRightLeft,
-  ArrowUpRight, ArrowDownRight, PieChart, Calendar, ShoppingCart, Send, FileCode, CheckSquare, Shield, Upload, Bell, CheckCircle
+  ArrowUpRight, ArrowDownRight, PieChart, Calendar, ShoppingCart, Send, FileCode, CheckSquare, Shield, Upload, Bell, CheckCircle, MoreHorizontal
 } from 'lucide-react';
 
 interface FinanceOfficerWorkspaceProps {
@@ -34,9 +35,9 @@ interface FinanceOfficerWorkspaceProps {
   financeScope?: FinanceOwnershipScope;
 }
 
-type FinanceWorkspaceTab = 'ledger' | 'transfers' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
+type FinanceWorkspaceTab = 'ledger' | 'documents' | 'transfers' | 'requisitions' | 'event_budgets' | 'gateways' | 'setup';
 
-const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'transfers', 'requisitions', 'event_budgets', 'gateways', 'setup'];
+const VALID_FINANCE_TABS: FinanceWorkspaceTab[] = ['ledger', 'documents', 'transfers', 'requisitions', 'event_budgets', 'gateways', 'setup'];
 
 const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = ({ profile, databaseBranchId, databaseProfileId, financeScope }) => {
   const financeBranchId = databaseBranchId ?? profile?.branch_id ?? null;
@@ -92,12 +93,16 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const location = useLocation();
   const navigate = useNavigate();
   const resolveTabFromSearch = (search: string): FinanceWorkspaceTab => {
-    const raw = new URLSearchParams(search).get('tab') as FinanceWorkspaceTab | null;
-    return raw && VALID_FINANCE_TABS.includes(raw) ? raw : 'ledger';
+    const raw = new URLSearchParams(search).get('tab');
+    if (raw === 'approvals') return 'documents';
+    return raw && VALID_FINANCE_TABS.includes(raw as FinanceWorkspaceTab)
+      ? (raw as FinanceWorkspaceTab)
+      : 'ledger';
   };
   const [workspaceTab, setWorkspaceTabState] = useState<FinanceWorkspaceTab>(() =>
     resolveTabFromSearch(location.search)
   );
+  const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
 
   useEffect(() => {
     const nextTab = resolveTabFromSearch(location.search);
@@ -106,6 +111,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
   const setWorkspaceTab = (tab: FinanceWorkspaceTab) => {
     if (!canViewFinance && tab !== 'requisitions') return;
+    setShowMobileMoreMenu(false);
     setWorkspaceTabState(tab);
     navigate(`/portal/finance?tab=${tab}`, { replace: true });
   };
@@ -129,6 +135,30 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [requisitions, setRequisitions] = useState<DepartmentRequisition[]>([]);
   const [requisitionError, setRequisitionError] = useState<string | null>(null);
   const [eventBudgets, setEventBudgets] = useState<Array<Record<string, any>>>([]);
+  const [pendingDocsCount, setPendingDocsCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshPendingDocsCount = async () => {
+      if (!selectedFinanceScope || !canViewFinance) {
+        if (!cancelled) setPendingDocsCount(0);
+        return;
+      }
+      const res = await getScopedFinanceWorkflowDocuments(selectedFinanceScope);
+      if (cancelled || res.error) return;
+      const docs = res.data?.documents || [];
+      setPendingDocsCount(docs.filter(doc => doc.status === 'pending_approval').length);
+    };
+    void refreshPendingDocsCount();
+    const handleUpdated = () => {
+      void refreshPendingDocsCount();
+    };
+    window.addEventListener('finance_documents_updated', handleUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('finance_documents_updated', handleUpdated);
+    };
+  }, [selectedFinanceScope?.type, selectedFinanceScope?.id, canViewFinance]);
 
   // Sync Requisitions and Event Budgets with Service
   const reloadRequisitions = async () => {
@@ -169,10 +199,9 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
 
-  // Canonical Transaction Entry Shortcut State
-  const [requestedEntryType, setRequestedEntryType] = useState<{ type: 'receipt' | 'payment'; nonce: number } | null>(null);
-  const transactionEntrySectionRef = useRef<HTMLDivElement | null>(null);
+  // Canonical Ledger Archive & Print State
   const [showPrintModal, setShowPrintModal] = useState<FinancialRecord | null>(null);
+  const [showLegacyArchive, setShowLegacyArchive] = useState(false);
 
   // Member Roster & Selection State for Contributor & Payee
   const [membersList, setMembersList] = useState<Profile[]>([]);
@@ -301,12 +330,20 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     saveGivingConfig(updated);
   };
 
-  const openCanonicalTransactionEntry = (type: 'receipt' | 'payment') => {
-    setRequestedEntryType({ type, nonce: Date.now() });
+  const openPostedReportsSection = () => {
     setWorkspaceTab('ledger');
     window.requestAnimationFrame(() => {
-      transactionEntrySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('official-financial-reports')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+  };
+
+  const churchScopeOption = availableFinanceScopes.find(item => item.scope_type === 'church');
+  const canOpenChurchScopeSetup = Boolean(churchScopeOption);
+  const handleOpenAccountingSetup = (target?: 'church' | 'current') => {
+    if (target === 'church' && churchScopeOption) {
+      setSelectedFinanceScope({ type: 'church', id: null });
+    }
+    setWorkspaceTab('setup');
   };
 
   // Persist a disbursement ledger entry exactly once. Deterministic IDs make retries safe.
@@ -887,6 +924,19 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const pendingAmount = periodRecords.filter(r => r.status === 'pending_verification').reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
 
+  const legacyCategoryOptions = Array.from(
+    new Set([
+      'Tithe',
+      'Sunday Offering',
+      'Building & Sanctuary Expansion',
+      'Pastoral & Staff Stipends',
+      'Utilities & Electricity',
+      'Ministry & Worship Budgets',
+      'Media & IT Equipment',
+      ...records.map(r => r.category).filter(Boolean)
+    ])
+  ).sort((a, b) => a.localeCompare(b));
+
   const pendingReqsCount = requisitions.filter(r => r.status === 'pending_approval').length;
 
   if (financePermissionsLoading || (financeScopeLoading && !canAccessFinance)) {
@@ -900,25 +950,25 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     <div className="space-y-6 pb-24 lg:pb-0">
       {/* Requisition Approver Alert for Pending Ministry Requests */}
       {pendingReqsCount > 0 && (
-        <div className="p-4 bg-gradient-to-r from-indigo-900 via-indigo-800 to-indigo-900 text-white rounded-3xl shadow-lg border border-indigo-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+        <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-400/20 text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
-              <Bell size={20} className="animate-bounce" />
+            <div className="w-10 h-10 rounded-xl bg-amber-400/15 text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
+              <Bell size={19} />
             </div>
             <div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-400 text-slate-950">
-                Action Required ({pendingReqsCount} Pending Proposals)
+              <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                Action Required · {pendingReqsCount} Pending Proposals
               </span>
-              <h4 className="text-sm font-black mt-1">Ministry Funding Proposal Awaiting Review</h4>
-              <p className="text-xs text-indigo-200 mt-0.5">
-                Ministry Leaders have submitted funding requests for equipment & department operations.
+              <h4 className="text-sm font-black mt-0.5">Ministry Funding Proposal Awaiting Review</h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Ministry Leaders have submitted funding requests for equipment and department operations.
               </p>
             </div>
           </div>
 
           <button
             onClick={() => setWorkspaceTab('requisitions')}
-            className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all shrink-0 cursor-pointer"
+            className="min-h-[40px] px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             Review Requisitions &rarr;
           </button>
@@ -926,52 +976,39 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
       )}
 
       {/* Treasury Header */}
-      <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+      <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
           <div>
-            <div className="flex flex-wrap items-center gap-2 mb-1">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 flex items-center gap-1">
-                <ShieldCheck size={12} className="text-amber-700" />
+            <div className="flex flex-wrap items-center gap-2 mb-1 text-xs font-semibold text-slate-500">
+              <span className="inline-flex items-center gap-1 font-bold uppercase tracking-wider text-amber-800">
+                <ShieldCheck size={13} className="text-amber-700" />
                 {canViewFinance ? 'Finance Officer Console' : 'Requisition Approval Console'}
               </span>
-              <span className="text-xs text-slate-400 font-semibold">• Base currency: configured in Accounting Setup</span>
+              <span>·</span>
+              <span>Base currency configured in Accounting Setup</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">{canViewFinance ? 'Church Financial Operations' : 'Requisition Approvals'}</h1>
-            <p className="text-slate-500 text-xs sm:text-sm mt-0.5">
-              {canViewFinance ? 'Create canonical receipts and payments, review approval workflows, explicitly post journals and monitor posted accounting balances.' : 'Review branch requisitions and record only the approval step assigned to your permissions.'}
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              {canViewFinance ? 'Church Financial Operations' : 'Requisition Approvals'}
+            </h1>
+            <p className="text-slate-500 text-xs sm:text-sm mt-1">
+              {canViewFinance
+                ? 'Create canonical receipts and payments, review approval workflows, explicitly post journals and monitor posted accounting balances.'
+                : 'Review branch requisitions and record only the approval step assigned to your permissions.'}
             </p>
           </div>
 
           {ledgerError && (
-            <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-800">
+            <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-800">
               Finance ledger unavailable: {ledgerError}. No demo records have been substituted.
             </div>
           )}
           {canViewFinance ? (
-            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
+            <div className="flex items-center w-full sm:w-auto lg:w-auto">
               <button
-                title="Open canonical receipt entry"
-                onClick={() => openCanonicalTransactionEntry('receipt')}
-                className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
+                onClick={openPostedReportsSection}
+                className="w-full sm:w-auto px-3.5 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors min-h-[44px] sm:min-h-[40px] whitespace-nowrap shrink-0"
               >
-                <Plus size={16} />
-                <span>Record Income</span>
-              </button>
-  
-              <button
-                title="Open canonical payment entry"
-                onClick={() => openCanonicalTransactionEntry('payment')}
-                className="px-3.5 sm:px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
-              >
-                <Plus size={16} />
-                <span>Record Expense</span>
-              </button>
-  
-              <button
-                onClick={() => setWorkspaceTab('ledger')}
-                className="col-span-2 sm:col-span-1 px-3.5 sm:px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all min-h-[44px]"
-              >
-                <Printer size={16} />
+                <Printer size={15} />
                 <span>Open Posted Reports</span>
               </button>
             </div>
@@ -979,26 +1016,42 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         </div>
 
         {canViewFinance ? (
-          <div className="hidden lg:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 pb-1 -mx-1 px-1">
+          <div className="hidden lg:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 pb-0.5">
             <button
               onClick={() => setWorkspaceTab('ledger')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                 workspaceTab === 'ledger'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
               }`}
             >
               <PieChart size={15} />
               <span>Journal Ledger</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200">Journal</span>
             </button>
-  
+
+            <button
+              onClick={() => setWorkspaceTab('documents')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
+                workspaceTab === 'documents'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ShieldCheck size={15} />
+              <span>Documents &amp; Approvals</span>
+              {pendingDocsCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-400 text-slate-950 tabular-nums">
+                  {pendingDocsCount}
+                </span>
+              )}
+            </button>
+
             {selectedFinanceScope?.type === 'branch' && (
               <button
                 onClick={() => setWorkspaceTab('transfers')}
-                className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                   workspaceTab === 'transfers'
-                    ? 'bg-indigo-600 text-white shadow-xs'
+                    ? 'bg-slate-900 text-white'
                     : 'bg-slate-100 text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -1009,67 +1062,67 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
             <button
               onClick={() => setWorkspaceTab('requisitions')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                 workspaceTab === 'requisitions'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
               }`}
             >
               <ShoppingCart size={15} />
               <span>Ministry Proposals</span>
               {pendingReqsCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
+                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-400 text-slate-950 tabular-nums">
                   {pendingReqsCount}
                 </span>
               )}
             </button>
-  
+
             <button
               onClick={() => setWorkspaceTab('event_budgets')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] relative ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                 workspaceTab === 'event_budgets'
-                  ? 'bg-emerald-600 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
               }`}
             >
               <Calendar size={15} />
               <span>Event Budgets</span>
               {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 animate-pulse">
+                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-400 text-slate-950 tabular-nums">
                   {eventBudgets.filter(b => b.status === 'pending_approval').length}
                 </span>
               )}
             </button>
-  
+
             <button
               onClick={() => setWorkspaceTab('setup')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                 workspaceTab === 'setup'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
               }`}
             >
               <Landmark size={15} />
               <span>Accounting Setup</span>
             </button>
-  
+
             <button
               onClick={() => setWorkspaceTab('gateways')}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[40px] ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
                 workspaceTab === 'gateways'
-                  ? 'bg-amber-600 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
               }`}
             >
               <Sliders size={15} />
-              <span>Gateways & Funds</span>
+              <span>Gateways &amp; Funds</span>
             </button>
           </div>
         ) : (
           <div className="flex items-center pt-1">
             <button
               onClick={() => setWorkspaceTab('requisitions')}
-              className="px-4 py-2.5 rounded-xl text-xs font-black bg-indigo-600 text-white"
+              className="px-4 py-2.5 rounded-xl text-xs font-black bg-slate-900 text-white inline-flex items-center gap-2"
             >
               <ShoppingCart size={15} /> Requisition Approvals
             </button>
@@ -1077,12 +1130,16 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         )}
       </div>
 
-      {(workspaceTab === 'ledger' || workspaceTab === 'setup' || workspaceTab === 'transfers') && (
-        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      {(workspaceTab === 'ledger' || workspaceTab === 'documents' || workspaceTab === 'setup' || workspaceTab === 'transfers') && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <label htmlFor="finance-configuration-scope" className="block text-xs font-black uppercase tracking-wide text-indigo-900">Finance organizational scope</label>
-              <p className="mt-1 text-xs leading-5 text-indigo-800">Only church, district and branch scopes authorized by your authenticated Supabase account are listed here.</p>
+              <label htmlFor="finance-configuration-scope" className="block text-xs font-black uppercase tracking-wide text-slate-700">
+                Finance organizational scope
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Only church, district and branch scopes authorized by your authenticated Supabase account are listed here.
+              </p>
             </div>
             <select
               id="finance-configuration-scope"
@@ -1096,7 +1153,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
                   : null);
               }}
               disabled={financeScopeLoading || availableFinanceScopes.length <= 1}
-              className="min-w-56 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60"
+              className="min-h-[40px] w-full sm:w-auto sm:min-w-64 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-slate-900 disabled:bg-slate-50 disabled:opacity-70"
             >
               {availableFinanceScopes.map(item => (
                 <option key={`${item.scope_type}:${item.scope_id ?? 'church'}`} value={`${item.scope_type}:${item.scope_id ?? 'church'}`}>
@@ -1105,8 +1162,26 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               ))}
             </select>
           </div>
-          {financeScopeLoading && <p className="mt-2 text-xs text-indigo-700">Loading authorized finance scopes…</p>}
+          {financeScopeLoading && <p className="mt-2 text-xs text-slate-500">Loading authorized finance scopes…</p>}
           {financeScopeError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{financeScopeError}</p>}
+        </div>
+      )}
+
+      {/* --- WORKSPACE TAB: FINANCIAL DOCUMENTS & APPROVALS --- */}
+      {workspaceTab === 'documents' && (
+        <div className="space-y-6">
+          {selectedFinanceScope ? (
+            <FinanceDocumentWorkflowWorkspace
+              branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+              scope={selectedFinanceScope}
+              scopeOptions={availableFinanceScopes}
+              onPendingCountChange={setPendingDocsCount}
+            />
+          ) : !financeScopeLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Canonical financial documents and approvals are unavailable until an authorized organizational scope is confirmed by Supabase.
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -1116,22 +1191,18 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
           {selectedFinanceScope ? (
             <>
               {canCreateScopedTransactions && (
-                <div ref={transactionEntrySectionRef}>
-                  <FinanceTransactionEntryWorkspace
-                    branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
-                    scope={selectedFinanceScope}
-                    requestedEntryType={requestedEntryType}
-                  />
-                </div>
+                <FinanceTransactionEntryWorkspace
+                  branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
+                  scope={selectedFinanceScope}
+                  onOpenAccountingSetup={handleOpenAccountingSetup}
+                  canOpenChurchScopeSetup={canOpenChurchScopeSetup}
+                  onOpenDocumentsTab={() => setWorkspaceTab('documents')}
+                />
               )}
-              <FinanceDocumentWorkflowWorkspace
-                branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
-                scope={selectedFinanceScope}
-                scopeOptions={availableFinanceScopes}
-              />
               <FinanceJournalWorkspace
                 branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
                 scope={selectedFinanceScope}
+                scopeOptions={availableFinanceScopes}
               />
             </>
           ) : !financeScopeLoading ? (
@@ -1139,268 +1210,286 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               Canonical transactions, approvals and journal balances are unavailable until an authorized organizational scope is confirmed by Supabase.
             </div>
           ) : null}
-          {/* Revenue, expenditure and net-position figures are now rendered from
-              posted journal lines in FinanceJournalWorkspace above. Do not restore
-              the legacy FinancialRecord-derived summary cards here. */}
 
-          {/* Department/event budget allocations are operational planning data, not posted accounting expenditure. */}
-
-          {/* Filter Controls - Period Dropdown with Download CSV button on the right */}
-          <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-            <div className="flex flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-2 flex-1 max-w-xs sm:max-w-sm">
-                <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider shrink-0">Period:</label>
-                <select
-                  value={periodFilter}
-                  onChange={(e) => setPeriodFilter(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                >
-                  <option value="all">All-Time</option>
-                  <option value="week">This Week</option>
-                  <option value="month">This Month</option>
-                  <option value="quarter">This Quarter</option>
-                  <option value="year">This Year</option>
-                </select>
+          {/* Legacy Financial Records Archive (Collapsible Informational Reference) */}
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">
+                  Legacy financial records — informational only
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {records.length} historical record{records.length === 1 ? '' : 's'} · Excluded from official CSV/PDF reports and posted ledger balances.
+                </p>
               </div>
-
-              <span className="text-[10px] font-semibold text-slate-500">Legacy records below are not included in official reports.</span>
+              <button
+                type="button"
+                onClick={() => setShowLegacyArchive(prev => !prev)}
+                aria-expanded={showLegacyArchive}
+                className="inline-flex min-h-[38px] items-center justify-center whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shrink-0 cursor-pointer"
+              >
+                {showLegacyArchive ? 'Hide legacy archive' : `View legacy archive (${records.length})`}
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100">
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search contributor, payee, txn ref..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <select
-                value={typeFilter}
-                onChange={e => setTypeFilter(e.target.value as any)}
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none cursor-pointer"
-              >
-                <option value="all">Type: Revenue & Expenses</option>
-                <option value="income">Type: Revenue (Income)</option>
-                <option value="expense">Type: Expenditures (Expenses)</option>
-              </select>
-
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value as any)}
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none cursor-pointer"
-              >
-                <option value="all">Status: All Statuses</option>
-                <option value="pending_verification">Pending Verification</option>
-                <option value="completed">Completed / Verified</option>
-                <option value="rejected">Rejected / Flagged</option>
-              </select>
-
-              <select
-                value={selectedCategoryFilter}
-                onChange={e => setSelectedCategoryFilter(e.target.value)}
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none cursor-pointer"
-              >
-                <option value="all">Category: All Categories</option>
-                <option value="Tithe">Tithe</option>
-                <option value="Sunday Offering">Sunday Offering</option>
-                <option value="Building & Sanctuary Expansion">Building Fund</option>
-                <option value="Pastoral & Staff Stipends">Pastoral Stipends</option>
-                <option value="Utilities & Electricity">Utilities & Power</option>
-                <option value="Ministry & Worship Budgets">Ministry Budgets</option>
-                <option value="Media & IT Equipment">Media & IT Equipment</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Legacy financial records — informational only.</strong> These historical/demo records are not canonical financial documents or posted journal entries and are excluded from official CSV/PDF reports and ledger balances.
-          </div>
-
-          {/* Records View: Mobile/Tablet Cards + Desktop Table */}
-          <div className="space-y-3">
-            {/* MOBILE & TABLET CARD VIEW (block lg:hidden) */}
-            <div className="block lg:hidden space-y-3">
-              {loading ? (
-                <div className="p-8 text-center text-slate-400 font-bold bg-white rounded-2xl border border-slate-200">
-                  Loading financial records...
+            {showLegacyArchive && (
+              <div className="space-y-4 border-t border-slate-200 pt-4">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                  <strong>Informational archive only.</strong> These historical records are not canonical financial documents or posted journal entries and do not affect posted ledger balances.
                 </div>
-              ) : filteredRecords.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 font-bold bg-white rounded-2xl border border-slate-200">
-                  No transactions match the selected filters.
-                </div>
-              ) : (
-                filteredRecords.map(r => {
-                  const isExpense = r.type === 'expense';
-                  return (
-                    <div key={r.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 hover:border-slate-300 transition-all">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h4 className="font-extrabold text-slate-900 text-sm leading-snug">{r.contributor_name}</h4>
-                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">{new Date(r.date).toLocaleString()}</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className={`font-black text-base font-mono tabular-nums ${isExpense ? 'text-rose-600' : 'text-emerald-600'}`}>
-                            {isExpense ? '-' : '+'}{r.currency || 'SLE'} {Number(r.amount).toLocaleString()}
-                          </div>
-                          <span className={`inline-block mt-1 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                            r.status === 'completed' || !r.status ? 'bg-emerald-100 text-emerald-800' :
-                            r.status === 'pending_verification' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                            'bg-rose-100 text-rose-800'
-                          }`}>
-                            {r.status === 'pending_verification' ? 'Pending Audit' : r.status || 'Verified'}
-                          </span>
-                        </div>
-                      </div>
 
-                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 text-xs">
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                          isExpense ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                        }`}>
-                          {isExpense ? 'Expense' : 'Revenue'}
-                        </span>
-                        <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px]">{r.category}</span>
-                        <span className="text-slate-500 font-medium capitalize text-[11px]">• {r.payment_method.replace('_', ' ')}</span>
-                      </div>
-
-                      {r.notes && (
-                        <p className="text-xs text-slate-500 bg-slate-50 p-2 rounded-xl border border-slate-100 italic">
-                          "{r.notes}"
-                        </p>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                        <div className="text-[11px] font-mono text-slate-500 truncate">
-                          {r.transaction_id && <span>Ref: <strong className="text-indigo-600">{r.transaction_id}</strong></span>}
-                          {r.payment_proof_ref && <span className="ml-2 text-emerald-600 font-semibold">• Proof Attached</span>}
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-
-                          <button
-                            onClick={() => setShowPrintModal(r)}
-                            title="Print Official Receipt/Voucher"
-                            className="p-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl min-h-[38px] flex items-center justify-center cursor-pointer"
-                          >
-                            <Printer size={16} />
-                          </button>
-                        </div>
-                      </div>
+                {/* Filter Controls */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-1 max-w-xs sm:max-w-sm">
+                      <label htmlFor="legacy-period-filter" className="text-xs font-extrabold text-slate-600 uppercase tracking-wider shrink-0">
+                        Period:
+                      </label>
+                      <select
+                        id="legacy-period-filter"
+                        value={periodFilter}
+                        onChange={(e) => setPeriodFilter(e.target.value as any)}
+                        className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-slate-900 cursor-pointer"
+                      >
+                        <option value="all">All-Time</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="quarter">This Quarter</option>
+                        <option value="year">This Year</option>
+                      </select>
                     </div>
-                  );
-                })
-              )}
-            </div>
+                    <span className="text-xs font-medium text-slate-500 tabular-nums">
+                      Showing {filteredRecords.length} of {records.length} records
+                    </span>
+                  </div>
 
-            {/* DESKTOP LARGE TABLE VIEW (hidden lg:block) */}
-            <div className="hidden lg:block bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 uppercase tracking-wider text-[11px]">
-                    <tr>
-                      <th className="px-5 py-3.5">Contributor / Payee</th>
-                      <th className="px-5 py-3.5">Type & Category</th>
-                      <th className="px-5 py-3.5">Payment Method & Vendor Ref</th>
-                      <th className="px-5 py-3.5 text-right">Amount (SLE)</th>
-                      <th className="px-5 py-3.5">Status</th>
-                      <th className="px-5 py-3.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {loading ? (
-                      <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
-                          Loading financial records...
-                        </td>
-                      </tr>
-                    ) : filteredRecords.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
-                          No transactions match the selected filters.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredRecords.map(r => {
-                        const isExpense = r.type === 'expense';
-                        return (
-                          <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-5 py-3.5">
-                              <div className="font-extrabold text-slate-900 text-sm">
-                                {r.contributor_name}
-                              </div>
-                              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-slate-200">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search contributor, payee, txn ref..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="w-full min-h-[38px] pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs outline-none focus:border-slate-900"
+                      />
+                    </div>
+
+                    <select
+                      aria-label="Filter legacy record type"
+                      value={typeFilter}
+                      onChange={e => setTypeFilter(e.target.value as any)}
+                      className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-slate-900 cursor-pointer"
+                    >
+                      <option value="all">Type: Revenue &amp; Expenses</option>
+                      <option value="income">Type: Revenue (Income)</option>
+                      <option value="expense">Type: Expenditures (Expenses)</option>
+                    </select>
+
+                    <select
+                      aria-label="Filter legacy record status"
+                      value={statusFilter}
+                      onChange={e => setStatusFilter(e.target.value as any)}
+                      className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-slate-900 cursor-pointer"
+                    >
+                      <option value="all">Status: All Statuses</option>
+                      <option value="pending_verification">Pending Verification</option>
+                      <option value="completed">Completed / Verified</option>
+                      <option value="rejected">Rejected / Flagged</option>
+                    </select>
+
+                    <select
+                      aria-label="Filter legacy record category"
+                      value={selectedCategoryFilter}
+                      onChange={e => setSelectedCategoryFilter(e.target.value)}
+                      className="w-full min-h-[38px] px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-slate-900 cursor-pointer"
+                    >
+                      <option value="all">Category: All Categories</option>
+                      {legacyCategoryOptions.map(category => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Mobile Cards */}
+                <div className="block lg:hidden space-y-2.5">
+                  {loading ? (
+                    <div className="p-6 text-center text-slate-500 text-xs font-semibold bg-slate-50 rounded-xl border border-slate-200">
+                      Loading financial records...
+                    </div>
+                  ) : filteredRecords.length === 0 ? (
+                    <div className="p-6 text-center text-slate-500 text-xs font-semibold bg-slate-50 rounded-xl border border-slate-200">
+                      No transactions match the selected filters.
+                    </div>
+                  ) : (
+                    filteredRecords.map(r => {
+                      const isExpense = r.type === 'expense';
+                      return (
+                        <div key={r.id} className="p-3.5 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-sm leading-snug">{r.contributor_name}</h4>
+                              <p className="text-[11px] text-slate-500 font-mono mt-0.5 tabular-nums">
                                 {new Date(r.date).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className={`font-black text-sm font-mono tabular-nums ${isExpense ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                {isExpense ? '-' : '+'}{r.currency || 'SLE'} {Number(r.amount).toLocaleString()}
                               </div>
-                            </td>
-
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                                  isExpense ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                                }`}>
-                                  {isExpense ? 'Expense' : 'Revenue'}
-                                </span>
-                                <span className="font-bold text-slate-700">{r.category}</span>
-                              </div>
-                              {r.notes && <p className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5">{r.notes}</p>}
-                            </td>
-
-                            <td className="px-5 py-3.5">
-                              <div className="font-bold text-slate-800 capitalize">
-                                {r.payment_method.replace('_', ' ')}
-                              </div>
-                              {r.transaction_id && (
-                                <div className="font-mono text-[10px] text-indigo-600">
-                                  Ref: {r.transaction_id}
-                                </div>
-                              )}
-                              {r.payment_proof_ref && (
-                                <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                                  <FileText size={10} /> Proof: {r.payment_proof_ref}
-                                </div>
-                              )}
-                            </td>
-
-                            <td className={`px-5 py-3.5 text-right font-black text-sm tabular-nums ${
-                              isExpense ? 'text-rose-600' : 'text-emerald-600'
-                            }`}>
-                              {isExpense ? '-' : '+'}{r.currency || 'SLE'} {Number(r.amount).toLocaleString()}
-                            </td>
-
-                            <td className="px-5 py-3.5">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                                r.status === 'completed' || !r.status ? 'bg-emerald-100 text-emerald-800' :
-                                r.status === 'pending_verification' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                                'bg-rose-100 text-rose-800'
-                              }`}>
+                              <span
+                                className={`inline-block mt-1 px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase ${
+                                  r.status === 'completed' || !r.status
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                    : r.status === 'pending_verification'
+                                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                      : 'border-rose-200 bg-rose-50 text-rose-800'
+                                }`}
+                              >
                                 {r.status === 'pending_verification' ? 'Pending Audit' : r.status || 'Verified'}
                               </span>
-                            </td>
+                            </div>
+                          </div>
 
-                            <td className="px-5 py-3.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 text-xs text-slate-600">
+                            <span className={`font-bold ${isExpense ? 'text-rose-700' : 'text-emerald-700'}`}>
+                              {isExpense ? 'Expense' : 'Revenue'}
+                            </span>
+                            <span>·</span>
+                            <span className="font-semibold text-slate-800">{r.category}</span>
+                            <span>·</span>
+                            <span className="capitalize">{r.payment_method.replace('_', ' ')}</span>
+                          </div>
 
-                                <button
-                                  onClick={() => setShowPrintModal(r)}
-                                  title="Print Official Receipt/Voucher"
-                                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                                >
-                                  <Printer size={16} />
-                                </button>
-                              </div>
+                          {r.notes && (
+                            <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                              {r.notes}
+                            </p>
+                          )}
+
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                            <div className="text-[11px] font-mono text-slate-500 truncate">
+                              {r.transaction_id && <span>Ref: <strong className="text-slate-800">{r.transaction_id}</strong></span>}
+                              {r.payment_proof_ref && <span className="ml-2 text-emerald-700 font-semibold">· Proof attached</span>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowPrintModal(r)}
+                              title="Print Official Receipt/Voucher"
+                              className="min-h-[38px] px-3 py-1.5 text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                            >
+                              <Printer size={14} />
+                              <span>Print</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden lg:block rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="px-4 py-3">Contributor / Payee</th>
+                          <th className="px-4 py-3">Type &amp; Category</th>
+                          <th className="px-4 py-3">Payment Method &amp; Ref</th>
+                          <th className="px-4 py-3 text-right">Amount</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {loading ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-slate-500 font-semibold">
+                              Loading financial records...
                             </td>
                           </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                        ) : filteredRecords.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-slate-500 font-semibold">
+                              No transactions match the selected filters.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredRecords.map(r => {
+                            const isExpense = r.type === 'expense';
+                            return (
+                              <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="font-bold text-slate-900 text-sm">{r.contributor_name}</div>
+                                  <div className="text-[11px] text-slate-500 font-mono mt-0.5 tabular-nums">
+                                    {new Date(r.date).toLocaleString()}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`font-bold uppercase text-[10px] ${isExpense ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                      {isExpense ? 'Expense' : 'Revenue'}
+                                    </span>
+                                    <span className="text-slate-400">·</span>
+                                    <span className="font-semibold text-slate-800">{r.category}</span>
+                                  </div>
+                                  {r.notes && <p className="text-[11px] text-slate-500 truncate max-w-xs mt-0.5">{r.notes}</p>}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="font-semibold text-slate-800 capitalize">
+                                    {r.payment_method.replace('_', ' ')}
+                                  </div>
+                                  {r.transaction_id && (
+                                    <div className="font-mono text-[11px] text-slate-600">Ref: {r.transaction_id}</div>
+                                  )}
+                                  {r.payment_proof_ref && (
+                                    <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
+                                      <FileText size={11} /> Proof: {r.payment_proof_ref}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className={`px-4 py-3 text-right font-black text-sm tabular-nums ${isExpense ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                  {isExpense ? '-' : '+'}{r.currency || 'SLE'} {Number(r.amount).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={`inline-block px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase ${
+                                      r.status === 'completed' || !r.status
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                        : r.status === 'pending_verification'
+                                          ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                          : 'border-rose-200 bg-rose-50 text-rose-800'
+                                    }`}
+                                  >
+                                    {r.status === 'pending_verification' ? 'Pending Audit' : r.status || 'Verified'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPrintModal(r)}
+                                    title="Print Official Receipt/Voucher"
+                                    className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                  >
+                                    <Printer size={14} />
+                                    <span>Print</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </section>
         </div>
       )}
 
@@ -1675,93 +1764,254 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         <EventBudgetFinanceWorkspace branchId={financeBranchId} profileId={databaseProfileId || null} />
       )}
 
-      {/* MOBILE & TABLET BOTTOM NAV BAR (Fixed at bottom on < lg screens) */}
-      <nav className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5">
+      {/* MOBILE & TABLET MORE DRAWER (Overflow tabs + quick actions) */}
+      {showMobileMoreMenu && canViewFinance && (
+        <div
+          className="lg:hidden fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-[1px]"
+          onClick={() => setShowMobileMoreMenu(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="More finance console sections"
+        >
+          <div
+            className="fixed bottom-[72px] inset-x-3 mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl space-y-3"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">More Finance Sections</h3>
+                <p className="text-[11px] text-slate-500">Additional configuration and quick actions</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close more menu"
+                onClick={() => setShowMobileMoreMenu(false)}
+                className="inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              {selectedFinanceScope?.type === 'branch' && (
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceTab('setup')}
+                  className={`w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left transition-colors cursor-pointer ${
+                    workspaceTab === 'setup'
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-50 text-slate-800 hover:bg-slate-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Landmark size={18} />
+                    <div>
+                      <div className="text-xs font-bold">Accounting Setup</div>
+                      <div className={`text-[11px] ${workspaceTab === 'setup' ? 'text-slate-300' : 'text-slate-500'}`}>
+                        Accounts, currencies, periods &amp; approval policies
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('gateways')}
+                className={`w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left transition-colors cursor-pointer ${
+                  workspaceTab === 'gateways'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-50 text-slate-800 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Sliders size={18} />
+                  <div>
+                    <div className="text-xs font-bold">Gateways &amp; Funds</div>
+                    <div className={`text-[11px] ${workspaceTab === 'gateways' ? 'text-slate-300' : 'text-slate-500'}`}>
+                      External payment-channel integration status
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="border-t border-slate-100 pt-2.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Quick Actions</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMobileMoreMenu(false);
+                  openPostedReportsSection();
+                }}
+                className="w-full inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50 cursor-pointer"
+              >
+                <Printer size={14} /> Open Posted Reports
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MOBILE & TABLET BOTTOM NAV BAR (5 Primary Tabs + Three-Dot More Button = 6 items on < lg screens) */}
+      <nav
+        aria-label="Mobile finance navigation"
+        className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5"
+      >
         {canViewFinance ? (
-          <div className={`grid ${selectedFinanceScope?.type === 'branch' ? 'grid-cols-6' : 'grid-cols-5'} gap-1 max-w-2xl mx-auto`}>
+          <div className="grid grid-cols-6 gap-1 max-w-2xl mx-auto">
+            {/* Slot 1: Ledger */}
             <button
+              type="button"
               onClick={() => setWorkspaceTab('ledger')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
                 workspaceTab === 'ledger'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
               <PieChart size={18} />
               <span className="mt-0.5 truncate w-full text-center">Ledger</span>
             </button>
-  
-            {selectedFinanceScope?.type === 'branch' && (
+
+            {/* Slot 2: Documents & Approvals */}
+            <button
+              type="button"
+              onClick={() => setWorkspaceTab('documents')}
+              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                workspaceTab === 'documents'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ShieldCheck size={18} />
+              <span className="mt-0.5 truncate w-full text-center">Approvals</span>
+              {pendingDocsCount > 0 && (
+                <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+              )}
+            </button>
+
+            {/* Slot 3: Transfers (branch scope) or Proposals (church/district scope) */}
+            {selectedFinanceScope?.type === 'branch' ? (
               <button
+                type="button"
                 onClick={() => setWorkspaceTab('transfers')}
-                className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
                   workspaceTab === 'transfers'
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
                 <ArrowRightLeft size={18} />
                 <span className="mt-0.5 truncate w-full text-center">Transfers</span>
               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('requisitions')}
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                  workspaceTab === 'requisitions'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <ShoppingCart size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Proposals</span>
+                {pendingReqsCount > 0 && (
+                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
             )}
 
-            <button
-              onClick={() => setWorkspaceTab('requisitions')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-                workspaceTab === 'requisitions'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <ShoppingCart size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Proposals</span>
-              {pendingReqsCount > 0 && (
-                <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
-              )}
-            </button>
-  
-            <button
-              onClick={() => setWorkspaceTab('event_budgets')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-                workspaceTab === 'event_budgets'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Calendar size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Budgets</span>
-              {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-                <span className="absolute top-1 right-2 w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse border-2 border-slate-900" />
-              )}
-            </button>
-  
-            <button
-              onClick={() => setWorkspaceTab('setup')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-                workspaceTab === 'setup'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <Landmark size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Setup</span>
-            </button>
+            {/* Slot 4: Proposals (branch scope) or Budgets (church/district scope) */}
+            {selectedFinanceScope?.type === 'branch' ? (
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('requisitions')}
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                  workspaceTab === 'requisitions'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <ShoppingCart size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Proposals</span>
+                {pendingReqsCount > 0 && (
+                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('event_budgets')}
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                  workspaceTab === 'event_budgets'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Calendar size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Budgets</span>
+                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+            )}
 
+            {/* Slot 5: Budgets (branch scope) or Setup (church/district scope) */}
+            {selectedFinanceScope?.type === 'branch' ? (
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('event_budgets')}
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                  workspaceTab === 'event_budgets'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Calendar size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Budgets</span>
+                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('setup')}
+                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                  workspaceTab === 'setup'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Landmark size={18} />
+                <span className="mt-0.5 truncate w-full text-center">Setup</span>
+              </button>
+            )}
+
+            {/* Slot 6: Three-dot More Button */}
             <button
-              onClick={() => setWorkspaceTab('gateways')}
-              className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer relative ${
-                workspaceTab === 'gateways'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              type="button"
+              aria-label="More finance sections"
+              aria-expanded={showMobileMoreMenu}
+              onClick={() => setShowMobileMoreMenu(prev => !prev)}
+              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+                showMobileMoreMenu ||
+                workspaceTab === 'gateways' ||
+                (selectedFinanceScope?.type === 'branch' && workspaceTab === 'setup')
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <Sliders size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Gateways</span>
+              <MoreHorizontal size={18} />
+              <span className="mt-0.5 truncate w-full text-center">More</span>
             </button>
           </div>
         ) : (
           <div className="max-w-2xl mx-auto">
             <button
+              type="button"
               onClick={() => setWorkspaceTab('requisitions')}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-extrabold bg-indigo-600 text-white"
             >
@@ -1770,6 +2020,107 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
           </div>
         )}
       </nav>
+      {/* Legacy Financial Record Print / Voucher Modal */}
+      {showPrintModal && (
+        <div
+          className="finance-detail-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Legacy financial record voucher"
+        >
+          <div className="finance-detail-panel">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3 print:hidden">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Legacy record voucher</p>
+                <h3 className="text-lg font-black text-slate-900">
+                  {showPrintModal.type === 'expense' ? 'LEGACY PAYMENT RECORD' : 'LEGACY RECEIPT RECORD'}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="inline-flex min-h-[38px] items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+                >
+                  <Printer size={14} /> Print
+                </button>
+                <button
+                  type="button"
+                  aria-label="Close legacy voucher"
+                  onClick={() => setShowPrintModal(null)}
+                  className="inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="finance-print-sheet pt-4 space-y-5">
+              <div className="border-b-2 border-slate-900 pb-4">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
+                  {churchProfile.name} · Informational Archive Copy
+                </p>
+                <h2 className="mt-2 text-2xl font-black text-slate-900">
+                  {showPrintModal.type === 'expense' ? 'HISTORICAL EXPENSE RECORD' : 'HISTORICAL RECEIPT RECORD'}
+                </h2>
+                <p className="mt-1 font-mono text-xs text-slate-600">
+                  Record ID: {showPrintModal.id}
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 text-sm">
+                <div>
+                  <p className="text-xs uppercase text-slate-500">
+                    {showPrintModal.type === 'expense' ? 'Paid to' : 'Contributor'}
+                  </p>
+                  <p className="mt-1 font-bold text-slate-900">{showPrintModal.contributor_name}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Date</p>
+                  <p className="mt-1 font-bold tabular-nums text-slate-900">
+                    {new Date(showPrintModal.date).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Amount</p>
+                  <p className="mt-1 text-xl font-black tabular-nums text-slate-900">
+                    {showPrintModal.currency || 'SLE'} {Number(showPrintModal.amount).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Category &amp; Method</p>
+                  <p className="mt-1 font-bold text-slate-900 capitalize">
+                    {showPrintModal.category} · {showPrintModal.payment_method.replace('_', ' ')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Reference</p>
+                  <p className="mt-1 font-mono font-bold text-slate-900">
+                    {showPrintModal.transaction_id || '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-slate-500">Status</p>
+                  <p className="mt-1 font-bold capitalize text-slate-900">
+                    {showPrintModal.status || 'verified'}
+                  </p>
+                </div>
+              </div>
+
+              {showPrintModal.notes && (
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <p className="text-xs uppercase text-slate-500">Notes</p>
+                  <p className="mt-1 text-sm text-slate-800">{showPrintModal.notes}</p>
+                </div>
+              )}
+
+              <p className="text-center text-[10px] text-slate-400">
+                This informational copy is from the legacy archive and is not a canonical posted journal entry.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

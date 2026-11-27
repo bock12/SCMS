@@ -188,3 +188,131 @@ export async function saveRequisitionApprovalPolicy(
     p_steps: steps
   });
 }
+
+export interface TransactionEntryReadiness {
+  ready: boolean;
+  hasSupportedCurrency: boolean;
+  hasScopeFinancialAccount: boolean;
+  hasIncomeChartAccount: boolean;
+  hasExpenseChartAccount: boolean;
+  hasOpenPeriodForDate: boolean;
+  hasApprovalBand: boolean;
+  applicablePolicy: FinanceConfiguration['approvalPolicies'][number] | null;
+  churchWideMissing: string[];
+  scopeSpecificMissing: string[];
+  missingReasons: string[];
+}
+
+export function isFinancialAccountInScope(
+  account: FinanceConfiguration['financialAccounts'][number],
+  options: { scope?: FinanceOwnershipScope; effectiveBranchId: string | null }
+): boolean {
+  if (!account.is_active) return false;
+  if (options.scope?.type === 'church') return account.branch_id === null && !account.district_id;
+  if (options.scope?.type === 'district') {
+    return account.branch_id === null && (!account.district_id || account.district_id === options.scope.id);
+  }
+  return account.branch_id === null || account.branch_id === options.effectiveBranchId;
+}
+
+export function evaluateTransactionEntryReadiness(
+  configuration: FinanceConfiguration,
+  options: {
+    scope?: FinanceOwnershipScope;
+    effectiveBranchId: string | null;
+    transactionDate: string;
+    amount: number | string;
+    exchangeRate: number | string;
+    today?: string;
+  }
+): TransactionEntryReadiness {
+  const today = options.today || new Date().toISOString().slice(0, 10);
+  const hasSupportedCurrency = configuration.currencies.length > 0;
+  const hasScopeFinancialAccount = configuration.financialAccounts.some(account =>
+    isFinancialAccountInScope(account, options)
+  );
+  const hasIncomeChartAccount = configuration.chartAccounts.some(
+    account => account.is_active && !account.is_control_account && account.account_type === 'income'
+  );
+  const hasExpenseChartAccount = configuration.chartAccounts.some(
+    account => account.is_active && !account.is_control_account && account.account_type === 'expense'
+  );
+  const hasOpenPeriodForDate = Boolean(options.transactionDate) && configuration.periods.some(period => {
+    const yearIsOpen =
+      period.year_status === 'open' ||
+      configuration.financialYears.some(year => year.id === period.financial_year_id && year.status === 'open');
+    return (
+      period.status === 'open' &&
+      yearIsOpen &&
+      options.transactionDate >= period.start_date &&
+      options.transactionDate <= period.end_date
+    );
+  });
+
+  const applicablePolicies = configuration.approvalPolicies
+    .filter(policy => {
+      if (!policy.is_active || policy.transaction_type !== 'financial_document') return false;
+      if (policy.effective_from > today || (policy.effective_to && policy.effective_to < today)) return false;
+      if (options.scope?.type === 'church') return policy.branch_id === null && !policy.district_id;
+      if (options.scope?.type === 'district') {
+        return policy.branch_id === null && (!policy.district_id || policy.district_id === options.scope.id);
+      }
+      return policy.branch_id === null || policy.branch_id === options.effectiveBranchId;
+    })
+    .sort((a, b) => {
+      const rank = (item: typeof a) => (item.branch_id !== null ? 2 : item.district_id ? 1 : 0);
+      return rank(b) - rank(a) || b.version - a.version;
+    });
+  const applicablePolicy = applicablePolicies[0] || null;
+
+  const enteredBaseAmount = Number(options.amount) * Number(options.exchangeRate);
+  const hasApprovalBand = Boolean(
+    applicablePolicy &&
+      configuration.approvalPolicyBands.some(
+        band =>
+          band.policy_id === applicablePolicy.id &&
+          (!Number.isFinite(enteredBaseAmount) ||
+            enteredBaseAmount <= 0 ||
+            (enteredBaseAmount >= Number(band.min_amount_base) &&
+              (band.max_amount_base === null || enteredBaseAmount < Number(band.max_amount_base))))
+      )
+  );
+
+  const churchWideMissing: string[] = [];
+  if (!hasSupportedCurrency) churchWideMissing.push('supported currencies');
+  if (!hasIncomeChartAccount) churchWideMissing.push('an active non-control income chart account');
+  if (!hasExpenseChartAccount) churchWideMissing.push('an active non-control expense chart account');
+  if (!hasOpenPeriodForDate) {
+    churchWideMissing.push(`an open financial period covering ${options.transactionDate || 'the transaction date'}`);
+  }
+
+  const scopeSpecificMissing: string[] = [];
+  if (!hasScopeFinancialAccount) scopeSpecificMissing.push('an active scope-compatible financial account');
+  if (!hasApprovalBand) scopeSpecificMissing.push('an active financial-document approval policy band covering this amount');
+
+  const missingReasons = [
+    ...(!hasSupportedCurrency ? ['supported currencies'] : []),
+    ...(!hasScopeFinancialAccount ? ['an active scope-compatible financial account'] : []),
+    ...(!hasIncomeChartAccount ? ['an active non-control income chart account'] : []),
+    ...(!hasExpenseChartAccount ? ['an active non-control expense chart account'] : []),
+    ...(!hasOpenPeriodForDate
+      ? [`an open financial period covering ${options.transactionDate || 'the transaction date'}`]
+      : []),
+    ...(!hasApprovalBand ? ['an active financial-document approval policy band covering this amount'] : [])
+  ];
+
+  return {
+    ready: missingReasons.length === 0,
+    hasSupportedCurrency,
+    hasScopeFinancialAccount,
+    hasIncomeChartAccount,
+    hasExpenseChartAccount,
+    hasOpenPeriodForDate,
+    hasApprovalBand,
+    applicablePolicy,
+    churchWideMissing,
+    scopeSpecificMissing,
+    missingReasons
+  };
+}
+

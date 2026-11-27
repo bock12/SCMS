@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { getFinanceConfiguration, getFinanceScopeConfiguration, getMyFinanceScopes, saveFinanceConfiguration, saveFinanceScopeApprovalPolicies, saveFinanceScopeResources, type FinanceConfiguration } from './financeConfigurationService';
+import {
+  evaluateTransactionEntryReadiness,
+  getFinanceConfiguration,
+  getFinanceScopeConfiguration,
+  getFinanceScopeTransactionOptions,
+  getMyFinanceScopes,
+  saveFinanceConfiguration,
+  saveFinanceScopeApprovalPolicies,
+  saveFinanceScopeResources,
+  type FinanceConfiguration
+} from './financeConfigurationService';
+import { createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
 
 const config: FinanceConfiguration = {
   currencies: ['SLE', 'USD'], baseCurrencyCode: 'SLE',
@@ -182,4 +193,167 @@ describe('finance configuration service', () => {
     expect(result.error?.code).toBe('42501');
     expect(result.data).toBeNull();
   });
+
+  test('evaluateTransactionEntryReadiness detects all missing prerequisites and rejects control chart accounts', () => {
+    const partial: FinanceConfiguration = {
+      currencies: ['SLE'],
+      baseCurrencyCode: 'SLE',
+      chartAccounts: [
+        { id: 'ctrl-inc', code: '4000', name: 'Income Control', account_type: 'income', is_active: true, is_control_account: true },
+        { id: 'ctrl-exp', code: '5000', name: 'Expense Control', account_type: 'expense', is_active: true, is_control_account: true }
+      ],
+      financialAccounts: [],
+      funds: [],
+      financialYears: [],
+      periods: [],
+      approvalPolicies: [],
+      approvalPolicyBands: [],
+      approvalPolicySteps: []
+    };
+
+    const readiness = evaluateTransactionEntryReadiness(partial, {
+      scope: { type: 'church', id: null },
+      effectiveBranchId: null,
+      transactionDate: '2026-11-25',
+      amount: '',
+      exchangeRate: '1',
+      today: '2026-11-25'
+    });
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.hasSupportedCurrency).toBe(true);
+    expect(readiness.hasIncomeChartAccount).toBe(false);
+    expect(readiness.hasExpenseChartAccount).toBe(false);
+    expect(readiness.hasScopeFinancialAccount).toBe(false);
+    expect(readiness.hasOpenPeriodForDate).toBe(false);
+    expect(readiness.hasApprovalBand).toBe(false);
+    expect(readiness.missingReasons).toEqual([
+      'an active scope-compatible financial account',
+      'an active non-control income chart account',
+      'an active non-control expense chart account',
+      'an open financial period covering 2026-11-25',
+      'an active financial-document approval policy band covering this amount'
+    ]);
+  });
+
+  test('evaluateTransactionEntryReadiness unlocks only when non-control chart accounts, open period/year, scoped account and covering approval band exist', () => {
+    const full: FinanceConfiguration = {
+      ...config,
+      chartAccounts: [
+        ...config.chartAccounts,
+        { id: 'expense', code: '5000', name: 'Operations', account_type: 'expense', normal_balance: 'debit', is_active: true, is_control_account: false }
+      ],
+      periods: [
+        { id: 'p-2026', financial_year_id: 'fy-2026', name: 'FY 2026', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }
+      ],
+      approvalPolicyBands: [
+        { id: 'band', policy_id: 'policy', min_amount_base: 0, max_amount_base: 5000 }
+      ]
+    };
+
+    const ready = evaluateTransactionEntryReadiness(full, {
+      scope: { type: 'church', id: null },
+      effectiveBranchId: null,
+      transactionDate: '2026-11-25',
+      amount: '250',
+      exchangeRate: '1',
+      today: '2026-11-25'
+    });
+    expect(ready.ready).toBe(true);
+    expect(ready.missingReasons).toEqual([]);
+
+    const outOfBand = evaluateTransactionEntryReadiness(full, {
+      scope: { type: 'church', id: null },
+      effectiveBranchId: null,
+      transactionDate: '2026-11-25',
+      amount: '5000',
+      exchangeRate: '1',
+      today: '2026-11-25'
+    });
+    expect(outOfBand.ready).toBe(false);
+    expect(outOfBand.hasApprovalBand).toBe(false);
+  });
+
+  test('church-wide saveFinanceConfiguration preserves existing district/branch accounts and funds and hydrates period year_status', async () => {
+    const initial: MockFinanceState = {
+      ...createEmptyMockFinanceState(),
+      profiles: [{ id: 'admin', auth_user_id: 'auth-admin', branch_id: null, status: 'active' }],
+      permissions: [
+        { profile_id: 'admin', permission: 'manage_finances', branch_id: null },
+        { profile_id: 'admin', permission: 'view_finances', branch_id: null }
+      ],
+      districts: [{ id: 'district-1', name: 'Western District', status: 'active' }],
+      branches: [{ id: 'branch-1', district_id: 'district-1', name: 'HQ Branch', status: 'active' }],
+      currencies: ['SLE'],
+      baseCurrencyCode: 'SLE',
+      chartAccounts: [
+        { id: 'asset-1010', code: '1010', name: 'Cash on Hand', account_type: 'asset', normal_balance: 'debit', is_active: true, is_control_account: false }
+      ],
+      financialAccounts: [
+        { id: 'dist-cash', chart_account_id: 'asset-1010', branch_id: null, district_id: 'district-1', name: 'District Cash', account_type: 'cash', currency_code: 'SLE', is_active: true }
+      ],
+      funds: [
+        { id: 'branch-fund', branch_id: 'branch-1', district_id: 'district-1', name: 'Branch Building Fund', code: 'BLD', fund_type: 'designated', is_default: false, is_active: true }
+      ]
+    };
+    let state = structuredClone(initial);
+    const rpc = createMockFinanceRpc(
+      { load: () => structuredClone(state), save: next => { state = structuredClone(next); } },
+      () => ({ userId: 'auth-admin' })
+    );
+
+    const churchLoaded = await getFinanceScopeConfiguration({ type: 'church', id: null }, rpc);
+    expect(churchLoaded.error).toBeNull();
+    expect(churchLoaded.data?.financialAccounts).toHaveLength(0);
+    expect(churchLoaded.data?.funds).toHaveLength(0);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const yearNumber = Number(today.slice(0, 4));
+    const draft: FinanceConfiguration = {
+      ...churchLoaded.data!,
+      chartAccounts: [
+        ...churchLoaded.data!.chartAccounts,
+        { id: 'inc-4000', code: '4000', name: 'Tithes & Offerings', account_type: 'income', normal_balance: 'credit', is_active: true, is_control_account: false },
+        { id: 'exp-5000', code: '5000', name: 'Ministry Expenses', account_type: 'expense', normal_balance: 'debit', is_active: true, is_control_account: false }
+      ],
+      financialAccounts: [
+        { id: 'hq-cash', chart_account_id: 'asset-1010', branch_id: null, district_id: null, name: 'HQ Cash', account_type: 'cash', currency_code: 'SLE', is_active: true }
+      ],
+      financialYears: [
+        { id: 'fy-current', year_number: yearNumber, start_date: `${yearNumber}-01-01`, end_date: `${yearNumber}-12-31`, status: 'open' }
+      ],
+      periods: [
+        { id: 'p-current', financial_year_id: 'fy-current', name: 'Annual', start_date: `${yearNumber}-01-01`, end_date: `${yearNumber}-12-31`, status: 'open' }
+      ],
+      approvalPolicies: [
+        { id: 'pol-church', name: 'HQ Approval', transaction_type: 'financial_document', branch_id: null, district_id: null, version: 1, effective_from: today, is_active: true }
+      ],
+      approvalPolicyBands: [
+        { id: 'band-church', policy_id: 'pol-church', min_amount_base: 0, max_amount_base: null }
+      ],
+      approvalPolicySteps: [
+        { id: 'step-church', band_id: 'band-church', step_number: 1, required_permission_key: 'approve_finances', required_approvals: 1, prohibit_submitter_approval: true }
+      ]
+    };
+
+    const saved = await saveFinanceConfiguration(draft, null, rpc);
+    expect(saved.error).toBeNull();
+    expect(state.financialAccounts.some(a => a.id === 'dist-cash')).toBe(true);
+    expect(state.financialAccounts.some(a => a.id === 'hq-cash')).toBe(true);
+    expect(state.funds.some(f => f.id === 'branch-fund')).toBe(true);
+
+    const options = await getFinanceScopeTransactionOptions({ type: 'church', id: null }, rpc);
+    expect(options.error).toBeNull();
+    expect(options.data?.periods[0]?.year_status).toBe('open');
+    const readiness = evaluateTransactionEntryReadiness(options.data!, {
+      scope: { type: 'church', id: null },
+      effectiveBranchId: null,
+      transactionDate: today,
+      amount: '100',
+      exchangeRate: '1',
+      today
+    });
+    expect(readiness.ready).toBe(true);
+  });
 });
+

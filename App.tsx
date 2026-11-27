@@ -27,6 +27,7 @@ import { MemberEventSurveysPage } from './MemberEventSurveysPage';
 import { CalendarPage } from './CalendarPage';
 import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption, syncPastRecurringEventsAutomatically } from './eventAccountService';
 import { getGivingConfig } from './givingConfig';
+import { getMemberGivingChannels, type MemberGivingChannelsPayload } from './paymentChannelService';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, getDepartmentRequisitionSubmissionOptions, submitDatabaseRequisition } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
 import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
@@ -88,6 +89,7 @@ import {
   approveMinistryJoinRequest,
   declineMinistryJoinRequest,
   getJoinRequestsForMember,
+  getJoinRequestsForMinistry,
   leaveMinistryTeam,
   MINISTRY_JOIN_REQUESTS_UPDATED_EVENT,
   reopenMinistryJoinRequest,
@@ -516,6 +518,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const financeLinks = [
     { to: '/portal/finance?tab=ledger', icon: Landmark, label: 'Financial Ledger', isDefault: true },
+    { to: '/portal/finance?tab=documents', icon: ShieldCheck, label: 'Documents & Approvals', isDefault: false },
     { to: '/portal/finance?tab=requisitions', icon: ShoppingCart, label: 'Ministry Proposals', isDefault: false },
     { to: '/portal/finance?tab=event_budgets', icon: Calendar, label: 'Event Budgets', isDefault: false },
     { to: '/portal/finance?tab=gateways', icon: CreditCard, label: 'Gateways & Funds', isDefault: false },
@@ -5130,25 +5133,36 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     loadSyncedDeptRoster();
   }, [activeDept, activeMinistryObj?.id]);
 
-  const refreshPendingJoinRequests = () => {
-    const allForDept = getJoinRequestsForMinistry({
-      ministryId: activeMinistryObj?.id,
-      ministryName: activeDept,
-      status: 'all'
-    });
-    setPendingJoinRequests(allForDept.filter(r => r.status === 'pending'));
-    setHistoryJoinRequests(allForDept.filter(r => r.status !== 'pending'));
+  const refreshPendingJoinRequests = async (isCancelled?: () => boolean) => {
+    try {
+      const allForDept = await getJoinRequestsForMinistry({
+        ministryId: activeMinistryObj?.id,
+        ministryName: activeDept,
+        status: 'all'
+      });
+      if (isCancelled?.()) return;
+      setPendingJoinRequests(allForDept.filter(r => r.status === 'pending'));
+      setHistoryJoinRequests(allForDept.filter(r => r.status !== 'pending'));
+    } catch (err) {
+      if (isCancelled?.()) return;
+      console.error('Unable to load ministry join requests:', err);
+      setPendingJoinRequests([]);
+      setHistoryJoinRequests([]);
+    }
   };
 
   useEffect(() => {
-    refreshPendingJoinRequests();
+    let cancelled = false;
+    const isCancelled = () => cancelled;
+    void refreshPendingJoinRequests(isCancelled);
     const handleReqUpdate = () => {
-      refreshPendingJoinRequests();
-      loadSyncedDeptRoster();
+      void refreshPendingJoinRequests(isCancelled);
+      void loadSyncedDeptRoster();
     };
     window.addEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleReqUpdate);
     window.addEventListener('storage', handleReqUpdate);
     return () => {
+      cancelled = true;
       window.removeEventListener(MINISTRY_JOIN_REQUESTS_UPDATED_EVENT, handleReqUpdate);
       window.removeEventListener('storage', handleReqUpdate);
     };
@@ -5426,7 +5440,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           reviewNote
         });
         await loadSyncedDeptRoster();
-        refreshPendingJoinRequests();
+        await refreshPendingJoinRequests();
         setProposalSuccessToast(
           `Approved ${reviewingJoinReq.req.applicant_name} as ${result.request.assigned_role_title} in ${reviewingJoinReq.req.ministry_name} and sent notification!`
         );
@@ -5436,7 +5450,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
           reviewerProfile: profile,
           reviewNote
         });
-        refreshPendingJoinRequests();
+        await refreshPendingJoinRequests();
         setProposalSuccessToast(
           `Updated request for ${reviewingJoinReq.req.applicant_name} and sent notification.`
         );
@@ -5454,7 +5468,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const handleReopenJoinRequest = async (req: MinistryJoinRequest) => {
     try {
       await reopenMinistryJoinRequest(req.id, profile);
-      refreshPendingJoinRequests();
+      await refreshPendingJoinRequests();
       setJoinRequestTab('pending');
       setProposalSuccessToast(`Re-opened ${req.applicant_name}'s request for review.`);
       setTimeout(() => setProposalSuccessToast(null), 4000);
@@ -9999,6 +10013,9 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const { resolution: givingPermissions } = usePermissionResolution(profile?.id, profile?.branch_id);
   const canGiving = (key: string) => hasEffectivePermission(givingPermissions, key);
   const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
+  const [channelsPayload, setChannelsPayload] = useState<MemberGivingChannelsPayload | null>(null);
+  const [channelsLoading, setChannelsLoading] = useState(true);
+  const [channelsError, setChannelsError] = useState<string | null>(null);
   const [selectedAmount, setSelectedAmount] = useState<number | string>(100);
   const [customAmount, setCustomAmount] = useState('');
   
@@ -10006,7 +10023,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const [frequency, setFrequency] = useState<'one_time' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'>('one_time');
 
   // Fund selection
-  const [selectedFundId, setSelectedFundId] = useState<string>('f1');
+  const [selectedFundId, setSelectedFundId] = useState<string>('');
   const [customFundName, setCustomFundName] = useState('');
 
   // Payment Method
@@ -10019,12 +10036,13 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const [cardCvc, setCardCvc] = useState('');
 
   // Mobile Money Form State
-  const [selectedMobileProvider, setSelectedMobileProvider] = useState<string>('Afrimoney');
+  const [selectedMobileChannelId, setSelectedMobileChannelId] = useState<string>('');
   const [mobileSenderPhone, setMobileSenderPhone] = useState(profile?.phone || '');
   const [mobileTxnId, setMobileTxnId] = useState('');
   const [mobileTxnDate, setMobileTxnDate] = useState(new Date().toISOString().slice(0, 10));
 
   // Bank Wire Proof Form State
+  const [selectedBankChannelId, setSelectedBankChannelId] = useState<string>('');
   const [bankWireRef, setBankWireRef] = useState('');
 
   const [givingSuccess, setGivingSuccess] = useState(false);
@@ -10034,30 +10052,82 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
   const isStaff = hasAnyEffectivePermission(givingPermissions, FINANCE_CONSOLE_PERMISSION_KEYS);
   const userFullName = profile ? `${profile.first_name} ${profile.last_name}` : 'Grace Cathedral Member';
 
+  const loadGivingChannels = async () => {
+    setChannelsLoading(true);
+    setChannelsError(null);
+    const result = await getMemberGivingChannels(profile?.branch_id ?? null);
+    if (result.error) {
+      setChannelsPayload(null);
+      setChannelsError(result.error.message || 'Unable to load verified church payment channels.');
+    } else {
+      setChannelsPayload(result.data || null);
+    }
+    setChannelsLoading(false);
+  };
+
   useEffect(() => {
     setGivingConfig(getGivingConfig());
     const fetchHistory = async () => {
       const { data } = await supabase.from('financial_records').select('*').order('date', { ascending: false });
       if (data) setHistory(data as FinancialRecord[]);
     };
-    fetchHistory();
-  }, []);
+    void fetchHistory();
+    void loadGivingChannels();
+    const handleChannelRefresh = () => {
+      void loadGivingChannels();
+    };
+    window.addEventListener('finance_payment_channels_updated', handleChannelRefresh);
+    window.addEventListener('finance_configuration_updated', handleChannelRefresh);
+    return () => {
+      window.removeEventListener('finance_payment_channels_updated', handleChannelRefresh);
+      window.removeEventListener('finance_configuration_updated', handleChannelRefresh);
+    };
+  }, [profile?.branch_id]);
 
-  const activeFunds = givingConfig.funds.filter(f => f.is_active);
-  const activeGateways = givingConfig.mobile_gateways.filter(g => g.is_active);
-  const currentGateway = activeGateways.find(g => g.provider === selectedMobileProvider) || activeGateways[0];
+  const activeCurrency = channelsPayload?.baseCurrencyCode || givingConfig.currency_symbol || 'SLE';
+  const persistedFunds = channelsPayload?.funds || [];
+  const mobileChannels = (channelsPayload?.channels || []).filter(c => c.channel_type === 'mobile_money');
+  const bankChannels = (channelsPayload?.channels || []).filter(c => c.channel_type === 'bank_transfer');
+  const currentMobileChannel = mobileChannels.find(c => c.id === selectedMobileChannelId) || mobileChannels[0] || null;
+  const currentBankChannel = bankChannels.find(c => c.id === selectedBankChannelId) || bankChannels[0] || null;
+
+  useEffect(() => {
+    if (persistedFunds.length > 0) {
+      if (selectedFundId !== 'custom_fund' && !persistedFunds.some(f => f.id === selectedFundId)) {
+        const def = persistedFunds.find(f => f.is_default) || persistedFunds[0];
+        setSelectedFundId(def.id);
+      }
+    } else if (!selectedFundId && givingConfig.allow_custom_funds) {
+      setSelectedFundId('custom_fund');
+    }
+  }, [persistedFunds, selectedFundId, givingConfig.allow_custom_funds]);
+
+  useEffect(() => {
+    if (mobileChannels.length > 0 && !mobileChannels.some(c => c.id === selectedMobileChannelId)) {
+      setSelectedMobileChannelId(mobileChannels[0].id);
+    }
+  }, [mobileChannels, selectedMobileChannelId]);
+
+  useEffect(() => {
+    if (bankChannels.length > 0 && !bankChannels.some(c => c.id === selectedBankChannelId)) {
+      setSelectedBankChannelId(bankChannels[0].id);
+    }
+  }, [bankChannels, selectedBankChannelId]);
 
   const handleGive = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalAmount = selectedAmount === 'custom' ? Number(customAmount) : Number(selectedAmount);
     if (!finalAmount || finalAmount <= 0) return;
 
+    if (method === 'bank_transfer' && !currentBankChannel) return;
+    if (method === 'mobile_money' && !currentMobileChannel) return;
+
     // Resolve Category/Fund Name
-    let fundName = 'Tithe';
+    let fundName = 'General Offering';
     if (selectedFundId === 'custom_fund') {
       fundName = customFundName.trim() || 'Custom Ministry Offering';
     } else {
-      const found = activeFunds.find(f => f.id === selectedFundId);
+      const found = persistedFunds.find(f => f.id === selectedFundId);
       if (found) fundName = found.name;
     }
 
@@ -10071,15 +10141,15 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
     if (method === 'card') {
       cardLast4 = cardNumber.replace(/\s+/g, '').slice(-4) || '4242';
       notes = `Card payment ending in ${cardLast4}`;
-    } else if (method === 'bank_transfer') {
+    } else if (method === 'bank_transfer' && currentBankChannel) {
       status = 'pending_verification';
       txnId = bankWireRef.trim() || `WIRE-${Date.now().toString().slice(-6)}`;
-      notes = `Bank Wire Reference: ${txnId}`;
-    } else if (method === 'mobile_money') {
+      notes = `${currentBankChannel.provider_name} Bank Transfer Reference: ${txnId}`;
+    } else if (method === 'mobile_money' && currentMobileChannel) {
       status = 'pending_verification';
       senderPhone = mobileSenderPhone.trim();
       txnId = mobileTxnId.trim() || `MM-${Date.now().toString().slice(-6)}`;
-      notes = `${selectedMobileProvider} Mobile Money from ${senderPhone} (Txn ID: ${txnId})`;
+      notes = `${currentMobileChannel.provider_name} Mobile Money from ${senderPhone} (Txn ID: ${txnId})`;
     }
 
     const receipt: FinancialRecord = {
@@ -10088,7 +10158,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
       user_id: profile?.id,
       type: 'income',
       amount: finalAmount,
-      currency: givingConfig.currency_symbol || 'SLE',
+      currency: activeCurrency,
       category: fundName,
       payment_method: method,
       status,
@@ -10194,7 +10264,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
             </div>
             <div>
               <p><strong>Tax Year:</strong> ${new Date().getFullYear()}</p>
-              <p><strong>Currency:</strong> ${givingConfig.currency_symbol || 'SLE'}</p>
+              <p><strong>Currency:</strong> ${activeCurrency}</p>
               <p><strong>Date Issued:</strong> ${new Date().toLocaleDateString()}</p>
             </div>
           </div>
@@ -10206,7 +10276,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                 <th>Category / Fund</th>
                 <th>Frequency</th>
                 <th>Payment Method</th>
-                <th style="text-align: right;">Amount (SLE)</th>
+                <th style="text-align: right;">Amount (${activeCurrency})</th>
               </tr>
             </thead>
             <tbody>
@@ -10216,7 +10286,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                   <td><strong>${r.category}</strong></td>
                   <td>${r.frequency || 'one_time'}</td>
                   <td style="text-transform: capitalize;">${r.payment_method.replace('_', ' ')}</td>
-                  <td style="text-align: right; font-weight: bold; color: #059669;">SLE ${Number(r.amount).toLocaleString()}</td>
+                  <td style="text-align: right; font-weight: bold; color: #059669;">${r.currency || activeCurrency} ${Number(r.amount).toLocaleString()}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -10224,7 +10294,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
 
           <div class="total-box">
             <div style="font-size: 12px; color: #047857; font-weight: 800; text-transform: uppercase;">Total Tax-Deductible Contribution (${new Date().getFullYear()})</div>
-            <div class="total-amount">${givingConfig.currency_symbol || 'SLE'} ${totalGiving.toLocaleString()}</div>
+            <div class="total-amount">${activeCurrency} ${totalGiving.toLocaleString()}</div>
           </div>
 
           <div class="footer">
@@ -10248,7 +10318,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
       <div>
         <div className="flex items-center gap-2 mb-1">
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
-            {givingConfig.currency_symbol || 'SLE'} Stewardship
+            {activeCurrency} Stewardship
           </span>
           <span className="text-xs text-slate-400 font-semibold">• FaithConnect Grace Cathedral</span>
         </div>
@@ -10344,7 +10414,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {activeFunds.map(fund => (
+                  {persistedFunds.map(fund => (
                     <button
                       key={fund.id}
                       type="button"
@@ -10382,6 +10452,12 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                   )}
                 </div>
 
+                {!channelsLoading && persistedFunds.length === 0 && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    No active designated funds are configured in Accounting Setup yet.
+                  </p>
+                )}
+
                 {/* Custom Given Fund Input */}
                 {selectedFundId === 'custom_fund' && (
                   <div className="mt-3 p-3 bg-indigo-50/80 border border-indigo-200 rounded-2xl space-y-1.5 animate-in fade-in">
@@ -10400,10 +10476,10 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                 )}
               </div>
 
-              {/* Amount Buttons in SLE Currency */}
+              {/* Amount Buttons */}
               <div>
                 <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider block mb-2">
-                  Contribution Amount ({givingConfig.currency_symbol || 'SLE'}) *
+                  Contribution Amount ({activeCurrency}) *
                 </label>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   {[100, 250, 500, 1000, 2500].map(amt => (
@@ -10411,13 +10487,13 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                       key={amt}
                       type="button"
                       onClick={() => setSelectedAmount(amt)}
-                      className={`py-3 rounded-2xl text-xs font-black border transition-all cursor-pointer ${
+                      className={`py-3 rounded-2xl text-xs font-black border transition-all cursor-pointer tabular-nums ${
                         selectedAmount === amt 
                           ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
                           : 'bg-slate-50 border-slate-200 text-slate-800 hover:border-indigo-300'
                       }`}
                     >
-                      {givingConfig.currency_symbol || 'SLE'} {amt}
+                      {activeCurrency} {amt}
                     </button>
                   ))}
                   <button
@@ -10439,7 +10515,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                       type="number" 
                       required
                       min={1}
-                      placeholder={`Enter custom amount in ${givingConfig.currency_symbol || 'SLE'}...`}
+                      placeholder={`Enter custom amount in ${activeCurrency}...`}
                       value={customAmount}
                       onChange={(e) => setCustomAmount(e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-bold outline-none focus:ring-2 focus:ring-indigo-500"
@@ -10574,151 +10650,217 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                 </div>
               )}
 
-              {/* --- METHOD 2: BANK WIRE / ACH TRANSFER DETAILS & PROOF --- */}
+              {/* --- METHOD 2: BANK WIRE / TRANSFER DETAILS & PROOF --- */}
               {method === 'bank_transfer' && (
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3.5 animate-in fade-in">
                   <div className="flex items-center justify-between border-b pb-2">
                     <span className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
-                      🏛️ Official Church Bank Transfer Account
+                      🏛️ Verified Church Bank Transfer Accounts
                     </span>
-                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold uppercase">Direct Wire</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold uppercase">Direct Transfer</span>
                   </div>
 
-                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5 text-xs text-slate-800 font-medium">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Bank Name:</span>
-                      <strong className="text-indigo-900 font-extrabold">{givingConfig.bank_details.bank_name}</strong>
+                  {channelsLoading ? (
+                    <p className="text-xs text-slate-600">Loading verified church bank transfer instructions…</p>
+                  ) : channelsError ? (
+                    <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                      {channelsError}
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Account Name:</span>
-                      <strong>{givingConfig.bank_details.account_name}</strong>
+                  ) : !currentBankChannel ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1">
+                      <p className="font-bold">No verified church bank-transfer instructions are configured yet.</p>
+                      <p className="text-amber-900">Treasury has not published a verified bank transfer channel for this scope. Please choose another payment method or contact church treasury.</p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Account Number:</span>
-                      <strong className="font-mono bg-slate-100 px-2 py-0.5 rounded text-indigo-700">{givingConfig.bank_details.account_number}</strong>
-                    </div>
-                    {givingConfig.bank_details.swift_code && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">SWIFT / BIC Code:</span>
-                        <strong className="font-mono">{givingConfig.bank_details.swift_code}</strong>
+                  ) : (
+                    <>
+                      {bankChannels.length > 1 && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {bankChannels.map(channel => (
+                            <button
+                              key={channel.id}
+                              type="button"
+                              onClick={() => setSelectedBankChannelId(channel.id)}
+                              className={`p-2.5 rounded-xl text-xs font-bold border text-left transition-all cursor-pointer ${
+                                currentBankChannel.id === channel.id
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                  : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
+                              }`}
+                            >
+                              {channel.provider_name} ({channel.currency_code})
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5 text-xs text-slate-800 font-medium">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Bank Name:</span>
+                          <strong className="text-indigo-900 font-extrabold text-right">{currentBankChannel.provider_name}</strong>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Account Name:</span>
+                          <strong className="text-right">{currentBankChannel.account_name}</strong>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Account Number:</span>
+                          <strong className="font-mono bg-slate-100 px-2 py-0.5 rounded text-indigo-700 tabular-nums">{currentBankChannel.account_number_or_code}</strong>
+                        </div>
+                        {currentBankChannel.branch_or_swift_code && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-400">SWIFT / Branch Code:</span>
+                            <strong className="font-mono">{currentBankChannel.branch_or_swift_code}</strong>
+                          </div>
+                        )}
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Currency:</span>
+                          <strong className="font-mono">{currentBankChannel.currency_code}</strong>
+                        </div>
+                        {currentBankChannel.instructions && (
+                          <p className="text-[11px] text-slate-600 pt-1.5 border-t border-slate-100">
+                            {currentBankChannel.instructions}
+                          </p>
+                        )}
                       </div>
-                    )}
-                    <p className="text-[10px] text-slate-500 italic pt-1 border-t border-slate-100">
-                      💡 {givingConfig.bank_details.instructions}
-                    </p>
-                  </div>
 
-                  {/* Wire Proof Form Input */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="font-extrabold text-slate-800 text-xs block">
-                      Provide Bank Wire Reference / Receipt Proof *
-                    </label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="e.g. SLCB-WIRE-98213 or Bank Transfer Slip ID"
-                      value={bankWireRef}
-                      onChange={e => setBankWireRef(e.target.value)}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <p className="text-[10px] text-slate-400">Our financial officer will verify your bank wire reference and confirm your giving ledger entry.</p>
-                  </div>
+                      {/* Wire Proof Form Input */}
+                      <div className="space-y-1.5 pt-1">
+                        <label className="font-extrabold text-slate-800 text-xs block">
+                          Provide Bank Wire Reference / Receipt Proof *
+                        </label>
+                        <input 
+                          type="text" 
+                          required
+                          placeholder="Enter bank transfer reference or slip ID"
+                          value={bankWireRef}
+                          onChange={e => setBankWireRef(e.target.value)}
+                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <p className="text-[10px] text-slate-400">Our financial officer will verify your bank wire reference and confirm your giving ledger entry.</p>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
-              {/* --- METHOD 3: MOBILE MONEY (AFRIMONEY, ORANGE MONEY, ETC) --- */}
+              {/* --- METHOD 3: MOBILE MONEY (PERSISTED PAYMENT CHANNELS) --- */}
               {method === 'mobile_money' && (
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 animate-in fade-in">
                   <div className="flex items-center justify-between border-b pb-2">
                     <span className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
-                      📱 Regional Mobile Money Payment (SLE)
+                      📱 Regional Mobile Money Payment ({activeCurrency})
                     </span>
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black uppercase">Instant Mobile Transfer</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black uppercase">Verified Channel</span>
                   </div>
 
-                  {/* Provider Choice */}
-                  <div>
-                    <label className="font-bold text-slate-700 text-xs block mb-1">Select Mobile Money Provider *</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {activeGateways.map(g => (
-                        <button
-                          key={g.provider}
-                          type="button"
-                          onClick={() => setSelectedMobileProvider(g.provider)}
-                          className={`p-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
-                            selectedMobileProvider === g.provider 
-                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
-                              : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
-                          }`}
-                        >
-                          {g.provider}
-                        </button>
-                      ))}
+                  {channelsLoading ? (
+                    <p className="text-xs text-slate-600">Loading verified mobile-money channels…</p>
+                  ) : channelsError ? (
+                    <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                      {channelsError}
                     </div>
-                  </div>
-
-                  {/* Payment Instructions Banner */}
-                  {currentGateway && (
-                    <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-1.5 text-xs text-amber-950">
-                      <div className="flex justify-between font-bold">
-                        <span>Merchant Name: <strong>{currentGateway.merchant_name}</strong></span>
-                        <span className="font-mono bg-amber-200/60 px-2 py-0.5 rounded text-amber-900">{currentGateway.merchant_number}</span>
+                  ) : mobileChannels.length === 0 ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1">
+                      <p className="font-bold">No verified mobile-money channels are configured yet.</p>
+                      <p className="text-amber-900">Treasury can publish verified mobile-money merchant codes and USSD instructions under Finance Operations &rarr; Gateways &amp; Funds.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Provider Choice */}
+                      <div>
+                        <label className="font-bold text-slate-700 text-xs block mb-1">Select Mobile Money Provider *</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {mobileChannels.map(channel => (
+                            <button
+                              key={channel.id}
+                              type="button"
+                              onClick={() => setSelectedMobileChannelId(channel.id)}
+                              className={`p-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                                currentMobileChannel?.id === channel.id 
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' 
+                                  : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
+                              }`}
+                            >
+                              {channel.provider_name} ({channel.currency_code})
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <p className="text-[11px] leading-relaxed text-amber-900">
-                        <strong>Dial Instructions:</strong> {currentGateway.dial_code_instructions}
-                      </p>
-                    </div>
+
+                      {/* Payment Instructions Banner */}
+                      {currentMobileChannel && (
+                        <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-1.5 text-xs text-amber-950">
+                          <div className="flex flex-wrap justify-between gap-2 font-bold">
+                            <span>Account Title: <strong>{currentMobileChannel.account_name}</strong></span>
+                            <span className="font-mono bg-amber-200/60 px-2 py-0.5 rounded text-amber-900 tabular-nums">{currentMobileChannel.account_number_or_code}</span>
+                          </div>
+                          {currentMobileChannel.branch_or_swift_code && (
+                            <p className="text-[11px] font-mono text-amber-900">
+                              USSD / Shortcode: <strong>{currentMobileChannel.branch_or_swift_code}</strong>
+                            </p>
+                          )}
+                          {currentMobileChannel.instructions && (
+                            <p className="text-[11px] leading-relaxed text-amber-900">
+                              <strong>Payment Instructions:</strong> {currentMobileChannel.instructions}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Mobile Payment Proof Fields */}
+                      <div className="p-3 bg-white rounded-2xl border border-slate-200 space-y-3">
+                        <span className="font-extrabold text-slate-900 text-xs block border-b pb-1">
+                          ✍️ Submit Payment Proof Details
+                        </span>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="font-bold text-slate-600 block mb-0.5">Sender Mobile Number *</label>
+                            <input 
+                              type="text" 
+                              required
+                              placeholder="Enter sender mobile number"
+                              value={mobileSenderPhone}
+                              onChange={e => setMobileSenderPhone(e.target.value)}
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:border-indigo-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="font-bold text-slate-600 block mb-0.5">Transaction ID / SMS Code *</label>
+                            <input 
+                              type="text" 
+                              required
+                              placeholder="Enter provider SMS reference"
+                              value={mobileTxnId}
+                              onChange={e => setMobileTxnId(e.target.value)}
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-600 block mb-0.5 text-xs">Date of Transfer *</label>
+                          <input 
+                            type="date" 
+                            required
+                            value={mobileTxnDate}
+                            onChange={e => setMobileTxnDate(e.target.value)}
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                      </div>
+                    </>
                   )}
-
-                  {/* Mobile Payment Proof Fields */}
-                  <div className="p-3 bg-white rounded-2xl border border-slate-200 space-y-3">
-                    <span className="font-extrabold text-slate-900 text-xs block border-b pb-1">
-                      ✍️ Submit Payment Proof Details
-                    </span>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <label className="font-bold text-slate-600 block mb-0.5">Sender Mobile Number *</label>
-                        <input 
-                          type="text" 
-                          required
-                          placeholder="e.g. 077 123 456"
-                          value={mobileSenderPhone}
-                          onChange={e => setMobileSenderPhone(e.target.value)}
-                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl font-medium outline-none focus:border-indigo-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="font-bold text-slate-600 block mb-0.5">Transaction ID / SMS Code *</label>
-                        <input 
-                          type="text" 
-                          required
-                          placeholder="e.g. MP261031.1042.A812"
-                          value={mobileTxnId}
-                          onChange={e => setMobileTxnId(e.target.value)}
-                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl font-bold font-mono outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5 text-xs">Date of Transfer *</label>
-                      <input 
-                        type="date" 
-                        required
-                        value={mobileTxnDate}
-                        onChange={e => setMobileTxnDate(e.target.value)}
-                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
                 </div>
               )}
 
               <button 
                 type="submit" 
-                className="w-full py-4 bg-indigo-600 text-white rounded-2xl text-base font-black hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                disabled={
+                  (method === 'bank_transfer' && !currentBankChannel)
+                  || (method === 'mobile_money' && !currentMobileChannel)
+                }
+                className="w-full py-4 bg-indigo-600 text-white rounded-2xl text-base font-black hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Gift size={18} /> Confirm & Submit Contribution
               </button>

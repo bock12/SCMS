@@ -6,7 +6,9 @@ import { Profile, ChurchBranch, District, MemberTransfer, Stream, ChatMessage, M
 import { EventWorkspaceModal } from './EventWorkspaceModal';
 import { MemberTransfersAdminTab } from './MemberTransfersAdminTab';
 import { registerEventMember, registerEventGuest, cancelEventRegistration } from './eventRegistrationService';
-import { getGivingConfig, saveGivingConfig } from './givingConfig';
+import { getGivingConfig } from './givingConfig';
+import { PaymentChannelsWorkspace } from './PaymentChannelsWorkspace';
+import { getMyFinanceScopes, type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding } from './requisitionService';
 import { RolesAndPermissionsTab } from './RolesAndPermissionsTab';
 import { ResourcesAdminTab } from './ResourcesAdminTab';
@@ -4322,7 +4324,6 @@ const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => vo
   
   // Modals & Controls
   const [showEntryModal, setShowEntryModal] = useState(false);
-  const [showConfigModal, setShowConfigModal] = useState(false);
   const [showPrintReceiptModal, setShowPrintReceiptModal] = useState<FinancialRecord | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending_verification'>('all');
 
@@ -4340,25 +4341,6 @@ const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => vo
   const [notes, setNotes] = useState('');
   const [senderPhone, setSenderPhone] = useState('');
   const [txnId, setTxnId] = useState('');
-
-  // Configuration Modal Form State
-  const [configActiveTab, setConfigActiveTab] = useState<'funds' | 'mobile' | 'bank'>('mobile');
-  const [newFundName, setNewFundName] = useState('');
-  const [newFundDesc, setNewFundDesc] = useState('');
-
-  // Mobile Money Provider Form State (Add / Edit)
-  const [editingGatewayId, setEditingGatewayId] = useState<string | null>(null);
-  const [showGatewayForm, setShowGatewayForm] = useState(false);
-  const [gwProvider, setGwProvider] = useState('');
-  const [gwMerchantNumber, setGwMerchantNumber] = useState('');
-  const [gwMerchantName, setGwMerchantName] = useState('');
-  const [gwInstructions, setGwInstructions] = useState('');
-
-  // Bank Form State
-  const [bankName, setBankName] = useState(givingConfig.bank_details.bank_name);
-  const [bankAccName, setBankAccName] = useState(givingConfig.bank_details.account_name);
-  const [bankAccNum, setBankAccNum] = useState(givingConfig.bank_details.account_number);
-  const [bankSwift, setBankSwift] = useState(givingConfig.bank_details.swift_code || '');
 
   const fetchMembers = async () => {
     const { data } = await supabase.from('profiles').select('*').order('first_name', { ascending: true });
@@ -4443,127 +4425,6 @@ const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => vo
     fetchMembers();
     setGivingConfig(getGivingConfig());
   }, []);
-
-  const handlePersistConfig = (updated: GivingConfig) => {
-    setGivingConfig(updated);
-    saveGivingConfig(updated);
-  };
-
-  // Save Configuration Updates
-  const handleSaveConfig = () => {
-    const updated: GivingConfig = {
-      ...givingConfig,
-      bank_details: {
-        ...givingConfig.bank_details,
-        bank_name: bankName.trim(),
-        account_name: bankAccName.trim(),
-        account_number: bankAccNum.trim(),
-        swift_code: bankSwift.trim()
-      }
-    };
-    handlePersistConfig(updated);
-    setShowConfigModal(false);
-  };
-
-  const handleAddCustomFund = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFundName.trim()) return;
-
-    const newFund = {
-      id: `f_${Date.now()}`,
-      name: newFundName.trim(),
-      description: newFundDesc.trim() || undefined,
-      is_active: true
-    };
-
-    const updated = {
-      ...givingConfig,
-      funds: [...givingConfig.funds, newFund]
-    };
-
-    handlePersistConfig(updated);
-    setNewFundName('');
-    setNewFundDesc('');
-  };
-
-  const handleToggleFundStatus = (fundId: string) => {
-    const updated = {
-      ...givingConfig,
-      funds: givingConfig.funds.map(f => f.id === fundId ? { ...f, is_active: !f.is_active } : f)
-    };
-    handlePersistConfig(updated);
-  };
-
-  // --- MOBILE MONEY GATEWAY CRUD HANDLERS ---
-  const handleOpenAddGateway = () => {
-    setEditingGatewayId(null);
-    setGwProvider('');
-    setGwMerchantNumber('');
-    setGwMerchantName('Grace Cathedral Ministry');
-    setGwInstructions('');
-    setShowGatewayForm(true);
-  };
-
-  const handleOpenEditGateway = (g: any) => {
-    setEditingGatewayId(g.id || g.provider);
-    setGwProvider(g.provider);
-    setGwMerchantNumber(g.merchant_number);
-    setGwMerchantName(g.merchant_name);
-    setGwInstructions(g.dial_code_instructions);
-    setShowGatewayForm(true);
-  };
-
-  const handleSaveGateway = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gwProvider.trim() || !gwMerchantNumber.trim()) return;
-
-    let updatedList = [...givingConfig.mobile_gateways];
-
-    if (editingGatewayId) {
-      updatedList = updatedList.map(g => {
-        if ((g.id && g.id === editingGatewayId) || g.provider === editingGatewayId) {
-          return {
-            ...g,
-            provider: gwProvider.trim(),
-            merchant_number: gwMerchantNumber.trim(),
-            merchant_name: gwMerchantName.trim() || 'Grace Cathedral Ministry',
-            dial_code_instructions: gwInstructions.trim()
-          };
-        }
-        return g;
-      });
-    } else {
-      const newGw = {
-        id: `mm-${Date.now()}`,
-        provider: gwProvider.trim(),
-        merchant_number: gwMerchantNumber.trim(),
-        merchant_name: gwMerchantName.trim() || 'Grace Cathedral Ministry',
-        dial_code_instructions: gwInstructions.trim() || `Dial provider USSD -> Pay Merchant -> Enter Code -> Confirm`,
-        is_active: true
-      };
-      updatedList.push(newGw);
-    }
-
-    const updatedConfig = { ...givingConfig, mobile_gateways: updatedList };
-    handlePersistConfig(updatedConfig);
-    setShowGatewayForm(false);
-  };
-
-  const handleDeleteGateway = (gwIdOrProvider: string) => {
-    if (!confirm("Are you sure you want to delete this Mobile Money provider?")) return;
-    const updatedList = givingConfig.mobile_gateways.filter(g => (g.id || g.provider) !== gwIdOrProvider);
-    handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
-  };
-
-  const handleToggleGateway = (gwIdOrProvider: string) => {
-    const updatedList = givingConfig.mobile_gateways.map(g => {
-      if ((g.id || g.provider) === gwIdOrProvider) {
-        return { ...g, is_active: !g.is_active };
-      }
-      return g;
-    });
-    handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
-  };
 
   // Transaction Verification Actions
   const handleApproveRecord = async (recordId: string) => {
@@ -5208,311 +5069,6 @@ const FinancialsAdminTab = ({ onSwitchTab }: { onSwitchTab?: (tab: string) => vo
         </div>
       )}
 
-      {/* --- MODAL 2: CONFIGURE GIVING FUNDS & GATEWAYS --- */}
-      {showConfigModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-4 sm:p-6 max-w-2xl w-full shadow-2xl border border-slate-200 space-y-5 my-auto max-h-[92vh] overflow-y-auto">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                  Financial Module Settings
-                </span>
-                <h3 className="text-xl font-black text-slate-900 mt-1">Configure Giving Funds & Payment Gateways</h3>
-              </div>
-              <button onClick={() => setShowConfigModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-xl">
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Config Sub-Tabs */}
-            <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs font-bold">
-              <button
-                onClick={() => setConfigActiveTab('mobile')}
-                className={`px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                  configActiveTab === 'mobile' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                📱 Mobile Money Providers ({givingConfig.mobile_gateways.length})
-              </button>
-              <button
-                onClick={() => setConfigActiveTab('funds')}
-                className={`px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                  configActiveTab === 'funds' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                📁 Giving Funds ({givingConfig.funds.length})
-              </button>
-              <button
-                onClick={() => setConfigActiveTab('bank')}
-                className={`px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                  configActiveTab === 'bank' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                🏛️ Bank Account Details
-              </button>
-            </div>
-
-            {/* TAB 1: DYNAMIC FULLY CUSTOMIZABLE MOBILE MONEY PROVIDERS */}
-            {configActiveTab === 'mobile' && (
-              <div className="space-y-4 text-xs">
-                <div className="flex items-center justify-between">
-                  <p className="text-slate-500">Configure merchant numbers and USSD instructions for mobile money providers (Afrimoney, Orange Money, M-Pesa, MTN MoMo, etc.).</p>
-                  <button
-                    onClick={handleOpenAddGateway}
-                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl font-extrabold hover:bg-indigo-700 transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                  >
-                    <Plus size={14} /> Add Provider
-                  </button>
-                </div>
-
-                {/* Sub-form to Add or Edit Provider */}
-                {showGatewayForm && (
-                  <form onSubmit={handleSaveGateway} className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-200 space-y-3">
-                    <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
-                      <span className="font-black text-indigo-950 uppercase text-[11px]">
-                        {editingGatewayId ? 'Edit Mobile Money Provider' : '➕ Add New Mobile Money Provider'}
-                      </span>
-                      <button type="button" onClick={() => setShowGatewayForm(false)} className="text-slate-400 hover:text-slate-600">
-                        <X size={16} />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-0.5">Provider Name *</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. Afrimoney, Orange Money, M-Pesa, Telebirr"
-                          value={gwProvider}
-                          onChange={e => setGwProvider(e.target.value)}
-                          className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold"
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-0.5">Merchant Number / Code *</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. 077 123 456 (Code: 8812)"
-                          value={gwMerchantNumber}
-                          onChange={e => setGwMerchantNumber(e.target.value)}
-                          className="w-full p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-0.5">Account Name *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. Grace Cathedral Ministry"
-                        value={gwMerchantName}
-                        onChange={e => setGwMerchantName(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-0.5">USSD Dial Instructions</label>
-                      <textarea
-                        rows={2}
-                        placeholder="e.g. Dial *161# -> Select Pay Merchant -> Enter Code 8812 -> Enter Amount..."
-                        value={gwInstructions}
-                        onChange={e => setGwInstructions(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl outline-none"
-                      />
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button type="button" onClick={() => setShowGatewayForm(false)} className="px-3 py-1.5 text-slate-500 font-bold">
-                        Cancel
-                      </button>
-                      <button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 cursor-pointer shadow-xs">
-                        {editingGatewayId ? 'Save Changes' : 'Add Provider'}
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {/* List of Mobile Money Providers */}
-                <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                  {givingConfig.mobile_gateways.map((g, idx) => {
-                    const gwId = g.id || g.provider;
-                    return (
-                      <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            <span className="w-8 h-8 rounded-xl bg-amber-500 text-white font-black flex items-center justify-center text-xs">
-                              📱
-                            </span>
-                            <div>
-                              <span className="font-black text-slate-900 text-sm">{g.provider}</span>
-                              <span className="text-[10px] text-slate-400 block font-mono">{g.merchant_number}</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleGateway(gwId)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase cursor-pointer ${
-                                g.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-                              }`}
-                            >
-                              {g.is_active ? 'Active' : 'Disabled'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditGateway(g)}
-                              className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all cursor-pointer"
-                              title="Edit Merchant Info"
-                            >
-                              <Edit size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteGateway(gwId)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                              title="Delete Provider"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="p-2.5 bg-white rounded-xl border border-slate-100 text-[11px] space-y-1">
-                          <p className="font-bold text-slate-700">Account Name: <span className="text-slate-900">{g.merchant_name}</span></p>
-                          <p className="text-slate-500">{g.dial_code_instructions}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: GIVING FUNDS MANAGER */}
-            {configActiveTab === 'funds' && (
-              <div className="space-y-4 text-xs">
-                {/* Add Custom Giving Fund Form */}
-                <form onSubmit={handleAddCustomFund} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                  <span className="font-extrabold text-slate-900 block">➕ Add New Giving Fund / Project Category</span>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Fund Category Name *</label>
-                      <input 
-                        type="text" 
-                        required
-                        placeholder="e.g. Youth Camp Sponsorship"
-                        value={newFundName}
-                        onChange={e => setNewFundName(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-bold text-slate-600 block mb-0.5">Short Description</label>
-                      <input 
-                        type="text" 
-                        placeholder="e.g. Annual youth retreat fund"
-                        value={newFundDesc}
-                        onChange={e => setNewFundDesc(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 cursor-pointer shadow-xs">
-                      Add Fund Category
-                    </button>
-                  </div>
-                </form>
-
-                {/* Existing Funds List */}
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {givingConfig.funds.map(fund => (
-                    <div key={fund.id} className="p-3 bg-white rounded-2xl border border-slate-200 flex items-center justify-between">
-                      <div>
-                        <p className="font-extrabold text-slate-900">{fund.name}</p>
-                        {fund.description && <p className="text-[10px] text-slate-400">{fund.description}</p>}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleToggleFundStatus(fund.id)}
-                        className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase cursor-pointer transition-colors ${
-                          fund.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        {fund.is_active ? 'Active' : 'Disabled'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: BANK DETAILS */}
-            {configActiveTab === 'bank' && (
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Bank Name *</label>
-                  <input 
-                    type="text" 
-                    value={bankName}
-                    onChange={e => setBankName(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Account Name *</label>
-                  <input 
-                    type="text" 
-                    value={bankAccName}
-                    onChange={e => setBankAccName(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Account Number *</label>
-                    <input 
-                      type="text" 
-                      value={bankAccNum}
-                      onChange={e => setBankAccNum(e.target.value)}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">SWIFT / BIC Code</label>
-                    <input 
-                      type="text" 
-                      value={bankSwift}
-                      onChange={e => setBankSwift(e.target.value)}
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-3 border-t">
-              <button onClick={() => setShowConfigModal(false)} className="px-4 py-2 font-bold text-slate-500 cursor-pointer">
-                Cancel
-              </button>
-              <button onClick={handleSaveConfig} className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer shadow-md">
-                Save Module Settings
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* --- MODAL 3: PRINT OFFICIAL TAX STATEMENT RECEIPT --- */}
       {showPrintReceiptModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100] flex items-center justify-center p-4">
@@ -5752,11 +5308,16 @@ const MultiTenantTab = () => {
 // --- Church Settings Tab ---
 
 const ChurchSettingsTab = () => {
-  const [settingsTab, setSettingsTab] = useState<'profile' | 'mobile' | 'funds' | 'bank'>('profile');
-  const [givingConfig, setGivingConfig] = useState<GivingConfig>(getGivingConfig());
+  const navigate = useNavigate();
+  const [settingsTab, setSettingsTab] = useState<'profile' | 'channels'>('profile');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const gatewayFormRef = useRef<HTMLFormElement | null>(null);
+
+  // Scoped Payment-Channel Settings API state
+  const [availableFinanceScopes, setAvailableFinanceScopes] = useState<FinanceScopeOption[]>([]);
+  const [selectedFinanceScope, setSelectedFinanceScope] = useState<FinanceOwnershipScope | null>(null);
+  const [financeScopeLoading, setFinanceScopeLoading] = useState(true);
+  const [financeScopeError, setFinanceScopeError] = useState<string | null>(null);
 
   // Church Profile State
   const [profileData, setProfileData] = useState<ChurchProfile>(() => getChurchProfile());
@@ -5771,23 +5332,32 @@ const ChurchSettingsTab = () => {
     policyBlocked?: boolean;
   } | null>(null);
 
-  // Mobile Money Provider Form State (Add / Edit)
-  const [editingGatewayId, setEditingGatewayId] = useState<string | null>(null);
-  const [confirmDeleteGwId, setConfirmDeleteGwId] = useState<string | null>(null);
-  const [gwProvider, setGwProvider] = useState('');
-  const [gwMerchantNumber, setGwMerchantNumber] = useState('');
-  const [gwMerchantName, setGwMerchantName] = useState('');
-  const [gwInstructions, setGwInstructions] = useState('');
-
-  // Fund Form State
-  const [newFundName, setNewFundName] = useState('');
-  const [newFundDesc, setNewFundDesc] = useState('');
-
-  // Bank Form State
-  const [bankName, setBankName] = useState(givingConfig.bank_details.bank_name);
-  const [bankAccName, setBankAccName] = useState(givingConfig.bank_details.account_name);
-  const [bankAccNum, setBankAccNum] = useState(givingConfig.bank_details.account_number);
-  const [bankSwift, setBankSwift] = useState(givingConfig.bank_details.swift_code || '');
+  useEffect(() => {
+    let cancelled = false;
+    setFinanceScopeLoading(true);
+    setFinanceScopeError(null);
+    getMyFinanceScopes().then(result => {
+      if (cancelled) return;
+      if (result.error) {
+        setAvailableFinanceScopes([]);
+        setSelectedFinanceScope(null);
+        setFinanceScopeError(result.error.message);
+        return;
+      }
+      const scopes = result.data || [];
+      setAvailableFinanceScopes(scopes);
+      const selected = scopes[0];
+      setSelectedFinanceScope(
+        selected ? ({ type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope) : null
+      );
+      if (!selected) {
+        setFinanceScopeError('Your authenticated account has no authorized finance scope for payment-channel settings.');
+      }
+    }).finally(() => {
+      if (!cancelled) setFinanceScopeLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const showToast = (msg: string) => {
     setErrorMsg(null);
@@ -5799,12 +5369,6 @@ const ChurchSettingsTab = () => {
     setToastMsg(null);
     setErrorMsg(msg);
     setTimeout(() => setErrorMsg(null), 5000);
-  };
-
-  const handlePersistConfig = (updated: GivingConfig) => {
-    setGivingConfig(updated);
-    saveGivingConfig(updated);
-    showToast('Payment Gateway & Fund configurations updated.');
   };
 
   const handleSaveChurchProfile = (e: React.FormEvent) => {
@@ -5921,126 +5485,14 @@ const ChurchSettingsTab = () => {
     }));
   };
 
-  const handleSaveBank = (e: React.FormEvent) => {
-    e.preventDefault();
-    const updated: GivingConfig = {
-      ...givingConfig,
-      bank_details: {
-        ...givingConfig.bank_details,
-        bank_name: bankName.trim(),
-        account_name: bankAccName.trim(),
-        account_number: bankAccNum.trim(),
-        swift_code: bankSwift.trim()
-      }
-    };
-    handlePersistConfig(updated);
-  };
-
-  const handleAddCustomFund = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFundName.trim()) return;
-
-    const newFund = {
-      id: `f_${Date.now()}`,
-      name: newFundName.trim(),
-      description: newFundDesc.trim() || undefined,
-      is_active: true
-    };
-
-    const updated = {
-      ...givingConfig,
-      funds: [...givingConfig.funds, newFund]
-    };
-
-    handlePersistConfig(updated);
-    setNewFundName('');
-    setNewFundDesc('');
-  };
-
-  const handleToggleFundStatus = (fundId: string) => {
-    const updated = {
-      ...givingConfig,
-      funds: givingConfig.funds.map(f => f.id === fundId ? { ...f, is_active: !f.is_active } : f)
-    };
-    handlePersistConfig(updated);
-  };
-
-  const resetGatewayForm = () => {
-    setEditingGatewayId(null);
-    setGwProvider('');
-    setGwMerchantNumber('');
-    setGwMerchantName(profileData.name || 'Grace Cathedral Ministry');
-    setGwInstructions('');
-  };
-
-  const handleOpenEditGateway = (g: any) => {
-    setEditingGatewayId(g.id || g.provider);
-    setGwProvider(g.provider);
-    setGwMerchantNumber(g.merchant_number);
-    setGwMerchantName(g.merchant_name);
-    setGwInstructions(g.dial_code_instructions);
-    setConfirmDeleteGwId(null);
-    setTimeout(() => {
-      gatewayFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 50);
-  };
-
-  const handleSaveGateway = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gwProvider.trim() || !gwMerchantNumber.trim()) return;
-
-    let updatedList = [...givingConfig.mobile_gateways];
-
-    if (editingGatewayId) {
-      updatedList = updatedList.map(g => {
-        if ((g.id && g.id === editingGatewayId) || g.provider === editingGatewayId) {
-          return {
-            ...g,
-            provider: gwProvider.trim(),
-            merchant_number: gwMerchantNumber.trim(),
-            merchant_name: gwMerchantName.trim() || profileData.name || 'Grace Cathedral Ministry',
-            dial_code_instructions: gwInstructions.trim()
-          };
-        }
-        return g;
-      });
-    } else {
-      const newGw = {
-        id: `mm-${Date.now()}`,
-        provider: gwProvider.trim(),
-        merchant_number: gwMerchantNumber.trim(),
-        merchant_name: gwMerchantName.trim() || profileData.name || 'Grace Cathedral Ministry',
-        dial_code_instructions: gwInstructions.trim() || 'Dial provider USSD -> Pay Merchant -> Enter Code -> Confirm',
-        is_active: true
-      };
-      updatedList.push(newGw);
-    }
-
-    const updatedConfig = { ...givingConfig, mobile_gateways: updatedList };
-    handlePersistConfig(updatedConfig);
-    resetGatewayForm();
-  };
-
-  const handleDeleteGateway = (gwIdOrProvider: string) => {
-    const updatedList = givingConfig.mobile_gateways.filter(g => (g.id || g.provider) !== gwIdOrProvider);
-    handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
-    if (editingGatewayId === gwIdOrProvider) {
-      resetGatewayForm();
-    }
-    setConfirmDeleteGwId(null);
-  };
-
-  const handleToggleGateway = (gwIdOrProvider: string) => {
-    const updatedList = givingConfig.mobile_gateways.map(g => {
-      if ((g.id || g.provider) === gwIdOrProvider) {
-        return { ...g, is_active: !g.is_active };
-      }
-      return g;
-    });
-    handlePersistConfig({ ...givingConfig, mobile_gateways: updatedList });
-  };
-
-  const activeFundsCount = givingConfig.funds.filter(f => f.is_active).length;
+  const selectedScopeOption = availableFinanceScopes.find(
+    item => item.scope_type === selectedFinanceScope?.type && item.scope_id === selectedFinanceScope?.id
+  );
+  const selectedScopeLabel = selectedScopeOption
+    ? (selectedScopeOption.scope_type === 'church'
+      ? 'Church-wide'
+      : `${selectedScopeOption.scope_type === 'district' ? 'District' : 'Branch'} — ${selectedScopeOption.scope_name}`)
+    : undefined;
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -6054,10 +5506,10 @@ const ChurchSettingsTab = () => {
               <span className="truncate">{profileData.name || 'Grace Cathedral'}</span>
             </div>
             <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight">
-              Church Profile, GPS & Payment Gateways
+              Church Profile, GPS &amp; Payment Channels
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 max-w-2xl leading-relaxed">
-              Manage church branding, sanctuary coordinates, weekly worship schedules, offering funds, and payment channels.
+              Manage church branding, sanctuary coordinates, weekly worship schedules, and database-backed payment channels.
             </p>
           </div>
 
@@ -6068,63 +5520,37 @@ const ChurchSettingsTab = () => {
               className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
             >
               <Check size={16} />
-              <span>Save Profile & GPS</span>
+              <span>Save Profile &amp; GPS</span>
             </button>
           )}
         </div>
 
-        {/* Sub-Navigation Segmented Control: 2x2 Grid on Mobile, 4-Col Bar on Tablet/Desktop */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-bold">
+        {/* Sub-Navigation Segmented Control */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-bold">
           <button
             type="button"
             onClick={() => setSettingsTab('profile')}
-            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap ${
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap ${
               settingsTab === 'profile'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Church size={15} className={`shrink-0 ${settingsTab === 'profile' ? 'text-indigo-600' : ''}`} />
-            <span className="truncate">Profile & GPS</span>
+            <span className="truncate">Profile &amp; GPS</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setSettingsTab('mobile')}
-            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap tabular-nums ${
-              settingsTab === 'mobile'
+            onClick={() => setSettingsTab('channels')}
+            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-2 whitespace-nowrap ${
+              settingsTab === 'channels'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Smartphone size={15} className={`shrink-0 ${settingsTab === 'mobile' ? 'text-indigo-600' : ''}`} />
-            <span className="truncate">Mobile Money ({givingConfig.mobile_gateways.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSettingsTab('funds')}
-            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap tabular-nums ${
-              settingsTab === 'funds'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <DollarSign size={15} className={`shrink-0 ${settingsTab === 'funds' ? 'text-indigo-600' : ''}`} />
-            <span className="truncate">Giving Funds ({givingConfig.funds.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSettingsTab('bank')}
-            className={`min-h-[40px] px-3 py-2 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap ${
-              settingsTab === 'bank'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Landmark size={15} className={`shrink-0 ${settingsTab === 'bank' ? 'text-indigo-600' : ''}`} />
-            <span className="truncate">Bank Wire</span>
+            <Landmark size={15} className={`shrink-0 ${settingsTab === 'channels' ? 'text-indigo-600' : ''}`} />
+            <span className="truncate">Payment Channels &amp; Funds</span>
           </button>
         </div>
       </div>
@@ -6850,421 +6276,69 @@ const ChurchSettingsTab = () => {
         </form>
       )}
 
-      {/* TAB 2: MOBILE MONEY PROVIDERS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
-      {settingsTab === 'mobile' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
-          {/* Left: Configured Providers List */}
-          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-5 min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-slate-900">Mobile Money Gateways</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Active merchant codes and USSD payment instructions shown in the Giving Portal.
-                </p>
-              </div>
-              <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
-                {givingConfig.mobile_gateways.filter(g => g.is_active).length} active / {givingConfig.mobile_gateways.length} total
-              </span>
-            </div>
-
-            {givingConfig.mobile_gateways.length === 0 ? (
-              <div className="py-10 px-4 text-center space-y-2 border border-dashed border-slate-200 rounded-xl">
-                <Smartphone size={28} className="mx-auto text-slate-300" />
-                <p className="font-bold text-slate-700">No Mobile Money providers configured</p>
-                <p className="text-xs text-slate-500">Use the provider panel to add Afrimoney, Orange Money, or M-Pesa.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-                {givingConfig.mobile_gateways.map((g, idx) => {
-                  const gwId = g.id || g.provider;
-                  const isEditing = editingGatewayId === gwId;
-                  const isConfirmingDelete = confirmDeleteGwId === gwId;
-
-                  return (
-                    <div
-                      key={gwId || idx}
-                      className={`p-4 space-y-2.5 transition-colors ${
-                        isEditing ? 'bg-indigo-50/60' : 'bg-white hover:bg-slate-50/70'
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                            <Smartphone size={18} />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                              <span className="font-black text-slate-900 text-sm truncate">{g.provider}</span>
-                              <span className="text-slate-300" aria-hidden="true">·</span>
-                              <span className="font-mono font-bold text-slate-600 tabular-nums">{g.merchant_number}</span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 font-semibold truncate">
-                              Account: <span className="text-slate-800">{g.merchant_name}</span>
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-end sm:justify-start gap-1.5 shrink-0 pl-12 sm:pl-0">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleGateway(gwId)}
-                            className={`min-h-[34px] px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap ${
-                              g.is_active
-                                ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-                            }`}
-                          >
-                            {g.is_active ? 'Active' : 'Disabled'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditGateway(g)}
-                            className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                            title="Edit Provider"
-                            aria-label={`Edit ${g.provider}`}
-                          >
-                            <Edit size={15} />
-                          </button>
-
-                          {isConfirmingDelete ? (
-                            <div className="flex items-center gap-1 pl-1">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteGateway(gwId)}
-                                className="min-h-[32px] px-2.5 py-1 bg-rose-600 text-white rounded-lg text-[11px] font-bold hover:bg-rose-700 cursor-pointer whitespace-nowrap"
-                              >
-                                Delete
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDeleteGwId(null)}
-                                className="min-h-[32px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold hover:bg-slate-200 cursor-pointer"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteGwId(gwId)}
-                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title="Delete Provider"
-                              aria-label={`Delete ${g.provider}`}
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {g.dial_code_instructions && (
-                        <p className="text-[11px] text-slate-500 sm:pl-12 leading-relaxed break-words">
-                          {g.dial_code_instructions}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Right: Sticky Add / Edit Provider Form */}
-          <form
-            ref={gatewayFormRef}
-            onSubmit={handleSaveGateway}
-            className="lg:col-span-5 lg:sticky lg:top-20 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0"
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div className="min-w-0">
-                <h3 className="text-base font-black text-slate-900 truncate">
-                  {editingGatewayId ? 'Edit Mobile Money Provider' : 'Add Mobile Money Provider'}
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {editingGatewayId ? 'Update merchant details and USSD flow.' : 'Register a new mobile wallet channel.'}
-                </p>
-              </div>
-              {editingGatewayId && (
-                <button
-                  type="button"
-                  onClick={resetGatewayForm}
-                  className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer shrink-0"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Provider Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Afrimoney, Orange Money, M-Pesa"
-                  value={gwProvider}
-                  onChange={e => setGwProvider(e.target.value)}
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Merchant Number / Code *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. 076 892 101 or #144*4*8891#"
-                  value={gwMerchantNumber}
-                  onChange={e => setGwMerchantNumber(e.target.value)}
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="font-bold text-slate-700 block mb-1.5">Account Title / Merchant Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Grace Cathedral Ministry"
-                  value={gwMerchantName}
-                  onChange={e => setGwMerchantName(e.target.value)}
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="font-bold text-slate-700 block mb-1.5">USSD Dial Instructions</label>
-                <textarea
-                  rows={3}
-                  placeholder="e.g. Dial *161# -> Select Pay Merchant -> Enter Code 8812 -> Enter Amount..."
-                  value={gwInstructions}
-                  onChange={e => setGwInstructions(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 pt-2">
-              {editingGatewayId && (
-                <button
-                  type="button"
-                  onClick={resetGatewayForm}
-                  className="w-full sm:w-auto min-h-[42px] px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl font-bold cursor-pointer"
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                type="submit"
-                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 cursor-pointer shadow-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-              >
-                {editingGatewayId ? <Check size={15} /> : <Plus size={15} />}
-                <span>{editingGatewayId ? 'Save Changes' : 'Add Provider'}</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* TAB 3: GIVING FUNDS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
-      {settingsTab === 'funds' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
-          {/* Left: Add New Fund Form */}
-          <form
-            onSubmit={handleAddCustomFund}
-            className="lg:col-span-5 lg:sticky lg:top-20 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0"
-          >
-            <div className="border-b border-slate-100 pb-3">
-              <h3 className="text-base font-black text-slate-900">Add Giving Fund / Project</h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Create designated offering funds or special project categories for church giving.
+      {/* TAB 2: PERSISTED PAYMENT CHANNELS & FUNDS */}
+      {settingsTab === 'channels' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <label htmlFor="settings-payment-channel-scope" className="block text-xs font-bold text-slate-900">
+                Finance organizational scope
+              </label>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Payment channels link directly to active financial accounts and funds in your authenticated finance scope.
               </p>
             </div>
+            <select
+              id="settings-payment-channel-scope"
+              value={selectedFinanceScope ? `${selectedFinanceScope.type}:${selectedFinanceScope.id ?? 'church'}` : ''}
+              onChange={event => {
+                const selected = availableFinanceScopes.find(
+                  item => `${item.scope_type}:${item.scope_id ?? 'church'}` === event.target.value
+                );
+                setSelectedFinanceScope(
+                  selected ? ({ type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope) : null
+                );
+              }}
+              disabled={financeScopeLoading || availableFinanceScopes.length <= 1}
+              className="min-w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 disabled:opacity-60"
+            >
+              {availableFinanceScopes.map(item => (
+                <option
+                  key={`${item.scope_type}:${item.scope_id ?? 'church'}`}
+                  value={`${item.scope_type}:${item.scope_id ?? 'church'}`}
+                >
+                  {item.scope_type === 'church'
+                    ? 'Church-wide'
+                    : `${item.scope_type === 'district' ? 'District' : 'Branch'} — ${item.scope_name}`}
+                </option>
+              ))}
+            </select>
+          </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Fund Category Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Youth Camp Sponsorship"
-                  value={newFundName}
-                  onChange={e => setNewFundName(e.target.value)}
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Short Description</label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Annual youth retreat seed & scholarship fund"
-                  value={newFundDesc}
-                  onChange={e => setNewFundDesc(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
+          {financeScopeLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 text-xs text-slate-600">
+              Loading authorized finance scopes…
             </div>
-
-            <div className="flex justify-end pt-1">
+          ) : financeScopeError || !selectedFinanceScope ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-xs text-amber-950 space-y-2">
+              <p className="font-bold">Unable to load payment-channel configuration scope</p>
+              <p>{financeScopeError || 'Your authenticated account has no finance scope assigned.'}</p>
               <button
-                type="submit"
-                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 cursor-pointer shadow-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                type="button"
+                onClick={() => navigate('/portal/finance?tab=gateways')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-700 cursor-pointer"
               >
-                <Plus size={15} />
-                <span>Add Fund Category</span>
+                Open Finance Operations
               </button>
             </div>
-          </form>
-
-          {/* Right: Funds Directory */}
-          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-slate-900">Giving Funds & Project Categories</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Toggle availability in the member checkout selector.</p>
-              </div>
-              <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">
-                {activeFundsCount} active / {givingConfig.funds.length} total
-              </span>
-            </div>
-
-            {givingConfig.funds.length === 0 ? (
-              <div className="py-10 px-4 text-center space-y-2 border border-dashed border-slate-200 rounded-xl">
-                <DollarSign size={28} className="mx-auto text-slate-300" />
-                <p className="font-bold text-slate-700">No giving funds configured</p>
-                <p className="text-xs text-slate-500">Add a designated fund category to enable online giving.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-                {givingConfig.funds.map(fund => (
-                  <div key={fund.id} className="p-4 bg-white hover:bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
-                    <div className="min-w-0">
-                      <p className="font-bold text-slate-900 text-sm break-words">{fund.name}</p>
-                      {fund.description && <p className="text-xs text-slate-500 mt-0.5 break-words">{fund.description}</p>}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleToggleFundStatus(fund.id)}
-                      className={`self-start sm:self-center min-h-[34px] px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
-                        fund.is_active
-                          ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {fund.is_active ? 'Active' : 'Disabled'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 4: BANK ACCOUNT DETAILS (Responsive Mobile/Tablet/Desktop Split Workspace) */}
-      {settingsTab === 'bank' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start text-xs">
-          <form
-            onSubmit={handleSaveBank}
-            className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-5 min-w-0"
-          >
-            <div className="border-b border-slate-100 pb-3">
-              <h3 className="text-base sm:text-lg font-black text-slate-900">Church Bank Wire & Transfer Details</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Banking instructions displayed to congregants making electronic wire deposits.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Bank Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={bankName}
-                  onChange={e => setBankName(e.target.value)}
-                  placeholder="e.g. Sierra Leone Commercial Bank (SLCB)"
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Account Title / Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={bankAccName}
-                  onChange={e => setBankAccName(e.target.value)}
-                  placeholder="e.g. Grace Cathedral General Account"
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">Account Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={bankAccNum}
-                  onChange={e => setBankAccNum(e.target.value)}
-                  placeholder="e.g. 003-010-994821"
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold text-slate-900 tabular-nums focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1.5">SWIFT / Routing Code</label>
-                <input
-                  type="text"
-                  value={bankSwift}
-                  onChange={e => setBankSwift(e.target.value)}
-                  placeholder="e.g. SLCBFREETOWN"
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm sm:text-xs font-mono font-bold text-slate-900 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="submit"
-                className="w-full sm:w-auto min-h-[42px] px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-              >
-                <Check size={16} />
-                <span>Save Bank Details</span>
-              </button>
-            </div>
-          </form>
-
-          {/* Right: Live Congregant Wire Summary Preview */}
-          <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 space-y-4 min-w-0">
-            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <Landmark className="text-indigo-600 shrink-0" size={18} />
-              <div className="min-w-0">
-                <h4 className="text-sm font-black text-slate-900">Member Wire Card Preview</h4>
-                <p className="text-[11px] text-slate-500">Live preview of how bank instructions appear to donors.</p>
-              </div>
-            </div>
-
-            <dl className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-slate-50/50">
-                <dt className="text-slate-500 font-semibold shrink-0">Bank Institution</dt>
-                <dd className="font-bold text-slate-900 sm:text-right break-words">{bankName || 'Not set'}</dd>
-              </div>
-              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
-                <dt className="text-slate-500 font-semibold shrink-0">Account Title</dt>
-                <dd className="font-bold text-slate-900 sm:text-right break-words">{bankAccName || 'Not set'}</dd>
-              </div>
-              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-slate-50/50">
-                <dt className="text-slate-500 font-semibold shrink-0">Account Number</dt>
-                <dd className="font-mono font-bold text-slate-900 tabular-nums sm:text-right break-all">{bankAccNum || '—'}</dd>
-              </div>
-              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
-                <dt className="text-slate-500 font-semibold shrink-0">SWIFT / Routing</dt>
-                <dd className="font-mono font-bold text-slate-900 sm:text-right break-all">{bankSwift || '—'}</dd>
-              </div>
-            </dl>
-          </div>
+          ) : (
+            <PaymentChannelsWorkspace
+              scope={selectedFinanceScope}
+              scopeLabel={selectedScopeLabel}
+              canManageFinances={true}
+              onOpenAccountingSetup={() => navigate('/portal/finance?tab=setup')}
+            />
+          )}
         </div>
       )}
     </div>

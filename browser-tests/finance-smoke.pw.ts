@@ -295,7 +295,7 @@ test.describe('SCMS finance browser smoke', () => {
         localStorage.setItem(key, JSON.stringify(session));
       }, approverIds[index].authUserId);
       await page.reload();
-      await page.goto('/#/portal/finance?tab=ledger');
+      await page.goto('/#/portal/finance?tab=documents');
       await expect(page.getByText('Financial documents & approvals')).toBeVisible();
     };
 
@@ -383,8 +383,10 @@ test.describe('SCMS finance browser smoke', () => {
     expect(stillRejectedJournal.source_type).toBe('financial_document_pending');
     expect(postedState.journals.filter((journal: any) => journal.status === 'posted')).toHaveLength(1);
 
-    // Open the canonical receipt detail and exercise its print action without
-    // launching a native print dialog in CI.
+    // Open the canonical receipt detail from the Documents & Approvals tab and
+    // exercise its print action without launching a native print dialog in CI.
+    await page.goto('/#/portal/finance?tab=documents');
+    await expect(page.getByText('Financial documents & approvals')).toBeVisible();
     const postedReceiptCard = page.locator('article').filter({ hasText: 'Browser Test Offering' }).first();
     await postedReceiptCard.getByRole('button', { name: 'View details' }).click();
     const detailDialog = page.getByRole('dialog', { name: 'Financial document detail' });

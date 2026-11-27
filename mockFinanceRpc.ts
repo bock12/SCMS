@@ -11,9 +11,10 @@ export interface MockFinanceState {
   districts: Array<{ id: string; name: string; status?: string }>;
   currencies: string[];
   baseCurrencyCode: string | null;
-  financialAccounts: Array<{ id: string; branch_id: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
+  financialAccounts: Array<{ id: string; branch_id: string | null; district_id?: string | null; currency_code: string; is_active: boolean; chart_account_id: string; [key: string]: any }>;
   chartAccounts: Array<{ id: string; is_active: boolean; account_type: string; is_control_account?: boolean; [key: string]: any }>;
   funds: Array<{ id: string; is_active: boolean; branch_id?: string | null; district_id?: string | null; [key: string]: any }>;
+  paymentChannels: Array<Record<string, any>>;
   periods: Array<{ id: string; start_date: string; end_date: string; status: string; year_status: string; [key: string]: any }>;
   financialYears: Array<Record<string, any>>;
   approvalPolicyBands: Array<Record<string, any>>;
@@ -81,6 +82,7 @@ export function createBrowserMockFinanceStorage(
       parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
       parsed.budgets = Array.isArray(parsed.budgets) ? parsed.budgets : [];
       parsed.budgetLines = Array.isArray(parsed.budgetLines) ? parsed.budgetLines : [];
+      parsed.paymentChannels = Array.isArray(parsed.paymentChannels) ? parsed.paymentChannels : [];
       return parsed;
     },
     save(state) { storage.setItem(key, JSON.stringify(state)); }
@@ -116,7 +118,7 @@ export function expandMockFinancePermissions(
 export function createEmptyMockFinanceState(): MockFinanceState {
   return {
     profiles: [], permissions: [], branches: [], districts: [], ministries: [], requisitions: [], requisitionItems: [], currencies: [], baseCurrencyCode: null,
-    financialAccounts: [], chartAccounts: [], funds: [], periods: [], financialYears: [],
+    financialAccounts: [], chartAccounts: [], funds: [], paymentChannels: [], periods: [], financialYears: [],
     approvalPolicyBands: [], approvalPolicySteps: [], approvalPolicies: [], events: [], budgets: [], budgetLines: [],
     documents: [], transfers: [], branchClearingAccounts: [], journals: [], journalLines: [], approvalRequests: [], approvalSteps: [], approvalDecisions: [], nextId: 1
   };
@@ -2579,11 +2581,22 @@ export function createMockFinanceRpc(
     // branch Finance Officer must not gain permission to change currencies,
     // the chart of accounts, funds, financial years or periods merely because
     // the branch-scoped configuration payload contains those records.
-    const globalChartChanged = JSON.stringify([state.currencies, state.baseCurrencyCode, state.chartAccounts, state.funds]) !==
+    const scopeMatchesAccountOwner = (item: { branch_id?: string | null; district_id?: string | null }) =>
+      branchId === null
+        ? (item.branch_id ?? null) === null && (item.district_id ?? null) === null
+        : (item.branch_id ?? null) === branchId;
+    const submittedFundIds = new Set(config.funds.map((fund: any) => fund.id));
+    const fundsBeforeForComparison = state.funds.filter(fund =>
+      submittedFundIds.has(fund.id) || ((fund.branch_id ?? null) === null && (fund.district_id ?? null) === null)
+    );
+    const corePeriods = (items: any[]) => items.map(({ id: periodId, financial_year_id, name, start_date, end_date, status }) => ({
+      id: periodId, financial_year_id, name, start_date, end_date, status
+    }));
+    const globalChartChanged = JSON.stringify([state.currencies, state.baseCurrencyCode, state.chartAccounts, fundsBeforeForComparison]) !==
       JSON.stringify([config.currencies, config.baseCurrencyCode, config.chartAccounts, config.funds]);
-    const periodsChanged = JSON.stringify([state.financialYears, state.periods]) !==
-      JSON.stringify([config.financialYears, config.periods]);
-    const branchAccountsBefore = state.financialAccounts.filter(account => (account.branch_id ?? null) === branchId);
+    const periodsChanged = JSON.stringify([state.financialYears, corePeriods(state.periods)]) !==
+      JSON.stringify([config.financialYears, corePeriods(config.periods)]);
+    const branchAccountsBefore = state.financialAccounts.filter(scopeMatchesAccountOwner);
     const branchAccountsChanged = JSON.stringify(branchAccountsBefore) !== JSON.stringify(config.financialAccounts);
     const canManageGlobalFinance = hasPermission(state, actor.id, 'manage_finances', null);
     const canManageGlobalChart = canManageGlobalFinance ||
@@ -2669,7 +2682,7 @@ export function createMockFinanceRpc(
       return fail('Chart account codes must be unique');
     }
     const chartIds = new Set(chartAccounts.map((a: any) => a.id));
-    if (config.financialAccounts.some((a: any) => (a.branch_id ?? null) !== branchId)) {
+    if (config.financialAccounts.some((a: any) => !scopeMatchesAccountOwner(a))) {
       return fail('Financial accounts must match the requested branch scope');
     }
     if (config.financialAccounts.some((a: any) => !a.id || !a.name?.trim() || !currencies.includes(a.currency_code) ||
@@ -2742,10 +2755,15 @@ export function createMockFinanceRpc(
     state.baseCurrencyCode = baseCurrency;
     state.chartAccounts = clone(chartAccounts);
     state.financialAccounts = [
-      ...state.financialAccounts.filter(account => (account.branch_id ?? null) !== branchId),
+      ...state.financialAccounts.filter(account => !scopeMatchesAccountOwner(account)),
       ...clone(config.financialAccounts)
     ];
-    state.funds = clone(config.funds);
+    state.funds = [
+      ...state.funds.filter(fund =>
+        !submittedFundIds.has(fund.id) && ((fund.branch_id ?? null) !== null || (fund.district_id ?? null) !== null)
+      ),
+      ...clone(config.funds)
+    ];
     state.financialYears = clone(config.financialYears);
     state.periods = clone(config.periods).map((period: any) => ({
       ...period,
@@ -2778,6 +2796,352 @@ export function createMockFinanceRpc(
     return success({ saved: true });
   }
 
+  function resolveMockPaymentChannelScopeAuth(
+    state: MockFinanceState,
+    scopeType: string,
+    scopeId: string | null,
+    requireManage: boolean
+  ) {
+    const auth = getAuth();
+    if (!auth.userId) return { error: fail('Authentication required', '42501') };
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived' && p.record_status !== 'archived');
+    if (!actor) return { error: fail('No active member profile is linked to this account', '42501') };
+    const scope = resolveMockFinanceScope(state, scopeType, scopeId);
+    if ('error' in scope) return { error: fail(scope.error || 'Invalid finance scope') };
+    const perms = requireManage ? ['manage_finances'] : ['view_finances', 'manage_finances', 'approve_finances'];
+    const allowed = scopeType === 'church'
+      ? perms.some(permission => hasPermission(state, actor.id, permission, null))
+      : scopeType === 'district'
+        ? perms.some(permission => hasDistrictPermission(state, actor.id, permission, scopeId!))
+        : perms.some(permission => hasPermission(state, actor.id, permission, scopeId!));
+    if (!allowed) {
+      return {
+        error: fail(
+          requireManage
+            ? 'Insufficient permission to manage payment channels in this scope'
+            : 'Insufficient permission to view payment channels in this scope',
+          '42501'
+        )
+      };
+    }
+    return { actor, scopeType, scopeId, branchId: scope.branchId, districtId: scope.districtId };
+  }
+
+  function getPaymentChannelConfiguration(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const resolved = resolveMockPaymentChannelScopeAuth(
+      state,
+      String(args.p_scope_type || ''),
+      args.p_scope_id ?? null,
+      false
+    );
+    if ('error' in resolved) return resolved.error;
+    const { scopeType, scopeId, branchId, districtId } = resolved;
+
+    const channels = (state.paymentChannels || [])
+      .filter(channel => matchesExactScope(channel, scopeType, branchId, districtId))
+      .map((channel): Record<string, any> => {
+        const account = state.financialAccounts.find(item => item.id === channel.financial_account_id);
+        const fund = channel.default_fund_id
+          ? state.funds.find(item => item.id === channel.default_fund_id)
+          : null;
+        return {
+          ...clone(channel),
+          financial_account_name: account?.name ?? 'Unknown financial account',
+          financial_account_type: account?.account_type ?? null,
+          currency_code: account?.currency_code ?? state.baseCurrencyCode ?? 'SLE',
+          default_fund_name: fund?.name ?? null
+        };
+      })
+      .sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0) ||
+        String(a.provider_name || '').localeCompare(String(b.provider_name || '')));
+
+    const eligibleFinancialAccounts = state.financialAccounts
+      .filter(account => account.is_active &&
+        ['bank', 'mobile_money'].includes(account.account_type) &&
+        matchesHierarchicalScope(account, scopeType, branchId, districtId))
+      .sort((a, b) => Number(b.branch_id != null) - Number(a.branch_id != null) ||
+        Number(b.district_id != null) - Number(a.district_id != null) ||
+        String(a.name || '').localeCompare(String(b.name || '')));
+
+    const activeFunds = state.funds
+      .filter(fund => fund.is_active && matchesHierarchicalScope(fund, scopeType, branchId, districtId))
+      .sort((a, b) => Number(Boolean(b.is_default)) - Number(Boolean(a.is_default)) ||
+        String(a.code || '').localeCompare(String(b.code || '')));
+
+    return success({
+      scope: { type: scopeType, id: scopeId },
+      currencies: clone(state.currencies),
+      baseCurrencyCode: state.baseCurrencyCode,
+      channels,
+      eligibleFinancialAccounts: clone(eligibleFinancialAccounts),
+      activeFunds: clone(activeFunds)
+    });
+  }
+
+  function savePaymentChannel(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const resolved = resolveMockPaymentChannelScopeAuth(
+      state,
+      String(args.p_scope_type || ''),
+      args.p_scope_id ?? null,
+      true
+    );
+    if ('error' in resolved) return resolved.error;
+    const { actor, scopeType, branchId, districtId } = resolved;
+
+    const payload = args.p_channel;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return fail('Payment channel payload must be an object');
+    }
+    const channelType = String(payload.channel_type || '').trim();
+    const providerName = String(payload.provider_name || '').trim();
+    const accountName = String(payload.account_name || '').trim();
+    const accountNumberOrCode = String(payload.account_number_or_code || '').trim();
+    const financialAccountId = String(payload.financial_account_id || '').trim();
+    const defaultFundId = payload.default_fund_id ? String(payload.default_fund_id).trim() : null;
+    const branchOrSwiftCode = payload.branch_or_swift_code ? String(payload.branch_or_swift_code).trim() : null;
+    const instructions = payload.instructions ? String(payload.instructions).trim() : null;
+    const verificationMode = payload.verification_mode ? String(payload.verification_mode).trim() : 'manual_proof';
+    const displayOrder = payload.display_order == null ? 0 : Number(payload.display_order);
+    const isActive = payload.is_active == null ? true : Boolean(payload.is_active);
+
+    if (!['mobile_money', 'bank_transfer'].includes(channelType)) {
+      return fail('Channel type must be mobile_money or bank_transfer');
+    }
+    if (!providerName || !accountName || !accountNumberOrCode) {
+      return fail('Provider name, account name and merchant code or account number are required');
+    }
+    if (!['manual_proof', 'provider_reference'].includes(verificationMode)) {
+      return fail('Verification mode must be manual_proof or provider_reference');
+    }
+    if (!Number.isInteger(displayOrder) || displayOrder < 0) {
+      return fail('Display order must be zero or a positive integer');
+    }
+    if (!financialAccountId) {
+      return fail('An active operational bank or mobile-money financial account is required');
+    }
+
+    const account = state.financialAccounts.find(item => item.id === financialAccountId && item.is_active);
+    if (!account) {
+      return fail('Linked financial account was not found or is inactive');
+    }
+    if (channelType === 'mobile_money' && account.account_type !== 'mobile_money') {
+      return fail('Mobile-money channels must link to a mobile_money financial account');
+    }
+    if (channelType === 'bank_transfer' && account.account_type !== 'bank') {
+      return fail('Bank-transfer channels must link to a bank financial account');
+    }
+    if (!matchesHierarchicalScope(account, scopeType, branchId, districtId)) {
+      return fail('Linked financial account is outside the requested scope');
+    }
+
+    if (defaultFundId) {
+      const fund = state.funds.find(item => item.id === defaultFundId && item.is_active);
+      if (!fund) return fail('Selected default fund was not found or is inactive');
+      if (!matchesHierarchicalScope(fund, scopeType, branchId, districtId)) {
+        return fail('Selected default fund is outside the requested scope');
+      }
+    }
+
+    state.paymentChannels = Array.isArray(state.paymentChannels) ? state.paymentChannels : [];
+    const requestedId = payload.id ? String(payload.id).trim() : '';
+    const existingIndex = requestedId
+      ? state.paymentChannels.findIndex(item => item.id === requestedId)
+      : -1;
+    const nowIso = new Date().toISOString();
+
+    if (existingIndex >= 0) {
+      const existing = state.paymentChannels[existingIndex];
+      if (!matchesExactScope(existing, scopeType, branchId, districtId)) {
+        return fail('Payment channel does not belong to the requested scope', '42501');
+      }
+      const updated = {
+        ...existing,
+        financial_account_id: financialAccountId,
+        default_fund_id: defaultFundId,
+        channel_type: channelType,
+        provider_name: providerName,
+        account_name: accountName,
+        account_number_or_code: accountNumberOrCode,
+        branch_or_swift_code: branchOrSwiftCode || null,
+        instructions: instructions || null,
+        verification_mode: verificationMode,
+        display_order: displayOrder,
+        is_active: isActive,
+        updated_by: actor.id,
+        updated_at: nowIso
+      };
+      state.paymentChannels[existingIndex] = updated;
+      storage.save(state);
+      return success({ saved: true, channel: clone(updated) });
+    }
+
+    const created = {
+      id: requestedId || id(state, 'pchan'),
+      branch_id: branchId,
+      district_id: districtId,
+      financial_account_id: financialAccountId,
+      default_fund_id: defaultFundId,
+      channel_type: channelType,
+      provider_name: providerName,
+      account_name: accountName,
+      account_number_or_code: accountNumberOrCode,
+      branch_or_swift_code: branchOrSwiftCode || null,
+      instructions: instructions || null,
+      verification_mode: verificationMode,
+      display_order: displayOrder,
+      is_active: isActive,
+      created_by: actor.id,
+      updated_by: actor.id,
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+    state.paymentChannels.push(created);
+    storage.save(state);
+    return success({ saved: true, channel: clone(created) });
+  }
+
+  function setPaymentChannelStatus(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived' && p.record_status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const channelId = String(args.p_channel_id || '').trim();
+    const index = (state.paymentChannels || []).findIndex(item => item.id === channelId);
+    if (index < 0) return fail('Payment channel does not exist');
+
+    const existing = state.paymentChannels[index];
+    const allowed = hasScopePermission(
+      state,
+      actor.id,
+      'manage_finances',
+      existing.branch_id ?? null,
+      existing.district_id ?? null
+    );
+    if (!allowed) return fail('Insufficient permission to update payment channels in this scope', '42501');
+
+    const nextActive = args.p_is_active == null ? true : Boolean(args.p_is_active);
+    state.paymentChannels[index] = {
+      ...existing,
+      is_active: nextActive,
+      updated_by: actor.id,
+      updated_at: new Date().toISOString()
+    };
+    storage.save(state);
+    return success({ id: existing.id, is_active: nextActive });
+  }
+
+  function deletePaymentChannel(args: Record<string, any> = {}) {
+    const state = clone(storage.load());
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived' && p.record_status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const channelId = String(args.p_channel_id || '').trim();
+    const index = (state.paymentChannels || []).findIndex(item => item.id === channelId);
+    if (index < 0) return fail('Payment channel does not exist');
+
+    const existing = state.paymentChannels[index];
+    const allowed = hasScopePermission(
+      state,
+      actor.id,
+      'manage_finances',
+      existing.branch_id ?? null,
+      existing.district_id ?? null
+    );
+    if (!allowed) return fail('Insufficient permission to remove payment channels in this scope', '42501');
+
+    state.paymentChannels.splice(index, 1);
+    storage.save(state);
+    return success({ deleted: true, id: channelId });
+  }
+
+  function getMemberGivingChannels(args: Record<string, any> = {}) {
+    const state = storage.load();
+    const auth = getAuth();
+    if (!auth.userId) return fail('Authentication required', '42501');
+    const actor = state.profiles.find(p => p.auth_user_id === auth.userId && p.status !== 'suspended' && p.status !== 'archived' && p.record_status !== 'archived');
+    if (!actor) return fail('No active member profile is linked to this account', '42501');
+
+    const branchId = (args.p_branch_id ?? actor.branch_id ?? null) as string | null;
+    let districtId: string | null = null;
+    if (branchId) {
+      const branch = state.branches.find(item => item.id === branchId);
+      if (!branch) return fail('Branch does not exist');
+      districtId = branch.district_id ?? null;
+      const canAccess =
+        actor.branch_id === branchId ||
+        state.permissions.some(p =>
+          p.profile_id === actor.id &&
+          ((p.branch_id == null && p.district_id == null) ||
+           (districtId != null && p.district_id === districtId) ||
+           p.branch_id === branchId)
+        );
+      if (!canAccess) return fail('Insufficient permission to view giving channels for this branch', '42501');
+    }
+
+    const scopeType = branchId ? 'branch' : 'church';
+    const channels = (state.paymentChannels || [])
+      .filter(channel => {
+        if (!channel.is_active) return false;
+        const account = state.financialAccounts.find(item => item.id === channel.financial_account_id);
+        if (!account || !account.is_active) return false;
+        return matchesHierarchicalScope(channel, scopeType, branchId, districtId);
+      })
+      .map(channel => {
+        const account = state.financialAccounts.find(item => item.id === channel.financial_account_id);
+        const fund = channel.default_fund_id
+          ? state.funds.find(item => item.id === channel.default_fund_id)
+          : null;
+        return {
+          id: channel.id,
+          scope_type: channel.branch_id ? 'branch' : channel.district_id ? 'district' : 'church',
+          branch_id: channel.branch_id ?? null,
+          district_id: channel.district_id ?? null,
+          channel_type: channel.channel_type,
+          provider_name: channel.provider_name,
+          account_name: channel.account_name,
+          account_number_or_code: channel.account_number_or_code,
+          branch_or_swift_code: channel.branch_or_swift_code ?? null,
+          instructions: channel.instructions ?? null,
+          currency_code: account?.currency_code ?? state.baseCurrencyCode ?? 'SLE',
+          default_fund_id: channel.default_fund_id ?? null,
+          default_fund_name: fund?.name ?? null,
+          verification_mode: channel.verification_mode ?? 'manual_proof',
+          display_order: channel.display_order ?? 0
+        };
+      })
+      .sort((a, b) =>
+        Number(b.branch_id != null) - Number(a.branch_id != null) ||
+        Number(b.district_id != null) - Number(a.district_id != null) ||
+        Number(a.display_order || 0) - Number(b.display_order || 0) ||
+        String(a.provider_name || '').localeCompare(String(b.provider_name || '')));
+
+    const funds = state.funds
+      .filter(fund => fund.is_active && matchesHierarchicalScope(fund, scopeType, branchId, districtId))
+      .map(fund => ({
+        id: fund.id,
+        name: fund.name,
+        code: fund.code,
+        description: fund.description ?? null,
+        fund_type: fund.fund_type,
+        is_default: Boolean(fund.is_default)
+      }))
+      .sort((a, b) => Number(b.is_default) - Number(a.is_default) || String(a.code || '').localeCompare(String(b.code || '')));
+
+    return success({
+      branch_id: branchId,
+      currencies: clone(state.currencies),
+      baseCurrencyCode: state.baseCurrencyCode,
+      channels,
+      funds
+    });
+  }
+
   return {
     async rpc(name: string, args: Record<string, any> = {}) {
       try {
@@ -2787,6 +3151,11 @@ export function createMockFinanceRpc(
         if (name === 'get_finance_scope_transaction_options') return getFinanceScopeTransactionOptions(args);
         if (name === 'save_finance_scope_resources') return saveFinanceScopeResources(args);
         if (name === 'save_finance_scope_approval_policies') return saveFinanceScopeApprovalPolicies(args);
+        if (name === 'get_payment_channel_configuration') return getPaymentChannelConfiguration(args);
+        if (name === 'save_payment_channel') return savePaymentChannel(args);
+        if (name === 'set_payment_channel_status') return setPaymentChannelStatus(args);
+        if (name === 'delete_payment_channel') return deletePaymentChannel(args);
+        if (name === 'get_member_giving_channels') return getMemberGivingChannels(args);
         if (name === 'get_requisition_approval_configuration') return getRequisitionApprovalConfiguration(args);
         if (name === 'get_department_requisitions') return getDepartmentRequisitions(args);
         if (name === 'get_department_requisition_submission_options') return getDepartmentRequisitionSubmissionOptions(args);
