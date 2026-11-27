@@ -33,3 +33,34 @@ $function$;
 
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+
+
+-- Minimal Supabase Storage schema compatibility for migration replay in CI.
+-- This models only the columns and RLS surface used by SCMS migrations;
+-- it does not emulate the Storage API, object service, or production bucket setup.
+CREATE SCHEMA IF NOT EXISTS storage;
+
+CREATE TABLE IF NOT EXISTS storage.buckets (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  public boolean NOT NULL DEFAULT false,
+  file_size_limit bigint,
+  allowed_mime_types text[],
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS storage.objects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bucket_id text NOT NULL REFERENCES storage.buckets(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  owner_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (bucket_id, name)
+);
+
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+GRANT USAGE ON SCHEMA storage TO authenticated;
+GRANT SELECT, INSERT, DELETE ON storage.objects TO authenticated;
