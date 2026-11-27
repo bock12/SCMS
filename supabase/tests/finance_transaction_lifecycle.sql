@@ -129,10 +129,21 @@ BEGIN
   -- Missing policy must fail and leave no partial financial document.
   BEGIN
     PERFORM public.create_finance_scope_document_transaction(
-      'branch', v_branch_id, 'receipt', '2026-11-17', NULL, 'Test Donor', 100,
-      'SLE', 'cash', v_financial_account_id, v_income_chart_id,
-      NULL, 'FIN-INT-NO-POLICY', 'Missing policy rollback test', 1,
-      '97000000-0000-4000-8000-000000000001'
+      p_scope_type => 'branch',
+      p_scope_id => v_branch_id,
+      p_document_type => 'receipt',
+      p_transaction_date => '2026-11-17',
+      p_profile_id => NULL,
+      p_party_name => 'Test Donor',
+      p_amount => 100,
+      p_currency_code => 'SLE',
+      p_payment_method => 'cash',
+      p_financial_account_id => v_financial_account_id,
+      p_category_account_id => v_income_chart_id,
+      p_external_reference => 'FIN-INT-NO-POLICY',
+      p_description => 'Missing policy rollback test',
+      p_exchange_rate_to_base => 1,
+      p_idempotency_key => '97000000-0000-4000-8000-000000000001'
     );
     RAISE EXCEPTION 'FIN_INT_EXPECTED_POLICY_FAILURE';
   EXCEPTION WHEN OTHERS THEN
