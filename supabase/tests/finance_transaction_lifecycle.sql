@@ -60,6 +60,14 @@ BEGIN
         is_main_branch = EXCLUDED.is_main_branch,
         status = 'active';
 
+  IF NOT EXISTS (
+    SELECT 1 FROM public.church_branches
+    WHERE id = v_branch_id AND status = 'active'
+  ) THEN
+    RAISE EXCEPTION 'FIN-INT test branch fixture was not persisted as active: %',
+      (SELECT status FROM public.church_branches WHERE id = v_branch_id);
+  END IF;
+
   INSERT INTO auth.users (id, email)
   VALUES (v_auth_id, 'fin-int-001@example.invalid');
 
