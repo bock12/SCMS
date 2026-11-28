@@ -7,7 +7,7 @@ import {
   ShieldCheck, MapPin, Share2, ClipboardList, AlertCircle, Search, Filter, Plus, 
   CheckCircle2, Clock, Play, Radio, MessageSquare, Send, BookOpen, Heart, Sparkles, ChevronRight, ChevronLeft, ChevronDown, ArrowRight,
   Building2, Layers, Church, Gift, FileText, Download, Check, ShieldAlert, Award, Trophy, Star,
-  Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera
+  Printer, Upload, UserPlus, UserMinus, Trash2, Edit, Eye, Key, QrCode, Landmark, ShoppingCart, FileCode, CreditCard, Camera, ArrowRightLeft
 } from 'lucide-react';
 import { supabase, resetLocalDatabase } from './supabaseClient';
 import { resolveMemberDataClient, supabaseAuthEnabled, supabaseDataClient, supabaseIntegrationEnabled } from './supabaseIntegration';
@@ -28,7 +28,7 @@ import { CalendarPage } from './CalendarPage';
 import { formatLocalDateKey, generateEventOccurrences, resolveOccurrencePreemption, syncPastRecurringEventsAutomatically } from './eventAccountService';
 import { getGivingConfig } from './givingConfig';
 import { getMemberGivingChannels, type MemberGivingChannelsPayload } from './paymentChannelService';
-import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, getDepartmentRequisitionSubmissionOptions, submitDatabaseRequisition } from './requisitionService';
+import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, getDepartmentRequisitionSubmissionOptions, submitDatabaseRequisition, getRequisitionRejectionReason } from './requisitionService';
 import { getDepartmentLedgerRecords, saveDepartmentLedgerRecord, deleteDepartmentLedgerRecord, getDepartmentLedgerSummary } from './departmentLedgerService';
 import { ReceiptDocumentScanner } from './ReceiptDocumentScanner';
 import type { DepartmentLedgerRecord } from './types';
@@ -158,7 +158,7 @@ const getPortalPageMeta = (pathname: string, search: string): { section: string;
       ledger: 'Financial Ledger',
       requisitions: 'Ministry Proposals',
       event_budgets: 'Event Budgets',
-      gateways: 'Gateways & Funds'
+      gateways: 'Payment Channels'
     };
     return {
       section: 'Finance & Treasury',
@@ -519,9 +519,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   const financeLinks = [
     { to: '/portal/finance?tab=ledger', icon: Landmark, label: 'Financial Ledger', isDefault: true },
     { to: '/portal/finance?tab=documents', icon: ShieldCheck, label: 'Documents & Approvals', isDefault: false },
+    { to: '/portal/finance?tab=transfers', icon: ArrowRightLeft, label: 'Internal Transfers', isDefault: false },
     { to: '/portal/finance?tab=requisitions', icon: ShoppingCart, label: 'Ministry Proposals', isDefault: false },
     { to: '/portal/finance?tab=event_budgets', icon: Calendar, label: 'Event Budgets', isDefault: false },
-    { to: '/portal/finance?tab=gateways', icon: CreditCard, label: 'Gateways & Funds', isDefault: false },
+    { to: '/portal/finance?tab=setup', icon: Settings, label: 'Accounting Setup', isDefault: false },
+    { to: '/portal/finance?tab=gateways', icon: CreditCard, label: 'Payment Channels', isDefault: false },
     ...(can('manage_finances') || can('view_finances')
       ? [{ to: '/portal/admin?tab=financials', icon: DollarSign, label: 'Tithes & Giving Ledger', isDefault: false }]
       : [])
@@ -4617,6 +4619,10 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const [proposalSuccessToast, setProposalSuccessToast] = useState<string | null>(null);
   const [editingReqId, setEditingReqId] = useState<string | null>(null);
   const [editingReqNum, setEditingReqNum] = useState<string | null>(null);
+  const [resubmittingRejectionContext, setResubmittingRejectionContext] = useState<{
+    sourceNumber: string;
+    reason: string | null;
+  } | null>(null);
 
   // Proposal & Proforma Invoice Preview / Edit Modal State
   const [showProposalPreviewModal, setShowProposalPreviewModal] = useState(false);
@@ -5499,6 +5505,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const openNewProposalModal = () => {
     setEditingReqId(null);
     setEditingReqNum(null);
+    setResubmittingRejectionContext(null);
     setReqBaseCurrency('SLE');
     setReqDept(activeDept);
     setReqApplicantName(profile ? `${profile.first_name} ${profile.last_name}` : 'Ministry Leader');
@@ -5528,6 +5535,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
   const handleEditExistingProposal = (req: DepartmentRequisition) => {
     setEditingReqId(req.id);
     setEditingReqNum(req.requisition_number);
+    setResubmittingRejectionContext(null);
     setReqDept(req.department_name);
     setReqApplicantName(req.applicant_name);
     setReqApplicantRole(req.applicant_role || 'Ministry Lead');
@@ -5541,6 +5549,42 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
     setReqBaseCurrency(req.currency || 'SLE');
     setReqItems(req.items.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit_price: i.unit_price })));
     setShowProposalModal(true);
+  };
+
+  const handleResubmitRejectedProposal = (req: DepartmentRequisition) => {
+    setEditingReqId(null);
+    setEditingReqNum(null);
+    setResubmittingRejectionContext({
+      sourceNumber: req.requisition_number,
+      reason: getRequisitionRejectionReason(req)
+    });
+    setReqDept(req.department_name);
+    setReqApplicantName(req.applicant_name);
+    setReqApplicantRole(req.applicant_role || 'Ministry Lead');
+    setReqTitle(req.title);
+    setReqDesc(req.description || '');
+    setReqPriority(req.priority);
+    setReqNeededDate(req.needed_by_date || '');
+    setReqVendorQuote(req.vendor_quote_reference || req.vendor_quote_url || '');
+    setReqDisbMethod(req.disbursement_method || 'bank_transfer');
+    setReqDisbInfo(req.disbursement_account_info || '');
+    setReqBaseCurrency(req.currency || 'SLE');
+    setReqItems(
+      req.items.length > 0
+        ? req.items.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit_price: i.unit_price }))
+        : [{ item_name: 'Equipment / Service Quotation Item', quantity: 1, unit_price: req.requested_amount || 0 }]
+    );
+    setShowProposalModal(true);
+    if (profile?.branch_id && activeMinistryObj?.id) {
+      setReqOptionsLoading(true);
+      void getDepartmentRequisitionSubmissionOptions(profile.branch_id, activeMinistryObj.id)
+        .then(result => {
+          if (!result.error && result.data) {
+            setReqBaseCurrency(result.data.base_currency_code);
+          }
+        })
+        .finally(() => setReqOptionsLoading(false));
+    }
   };
 
   const submitRequisitionToDatabase = async (requisition: DepartmentRequisition) => {
@@ -6282,6 +6326,35 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                         </div>
                       </div>
 
+                      {/* Approval Step Progress & Rejection Feedback */}
+                      {req.approval_steps && req.approval_steps.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">
+                            Approval progress:{' '}
+                            <span className="tabular-nums">
+                              {req.approval_steps.filter(step => step.status === 'approved').length}/{req.approval_steps.length} steps approved
+                            </span>
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {req.approval_steps.map(step => (
+                              <span key={step.id} className="text-[11px] font-medium text-slate-600">
+                                Step {step.step_number}: <strong className="capitalize">{step.status}</strong>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {req.status === 'rejected' && (() => {
+                        const reason = getRequisitionRejectionReason(req);
+                        return (
+                          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-900">
+                            <strong>Rejection reason:</strong>{' '}
+                            {reason || 'This proposal was rejected. Revise the scope or pricing and resubmit.'}
+                          </div>
+                        );
+                      })()}
+
                       {/* Submitted Receipts & Reconciliation Preview */}
                       {(req.status === 'reconciled' || req.status === 'settled') && (
                         <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-2xl text-xs space-y-1.5 text-teal-950">
@@ -6290,11 +6363,11 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                               <CheckCircle2 size={15} className="text-teal-600" />
                               Expenditure Report & Vendor Tax Receipt Submitted
                             </span>
-                            <span className="font-mono">Spent: SLE {(req.actual_amount_spent || req.requested_amount).toLocaleString()}</span>
+                            <span className="font-mono">Spent: {req.currency || 'SLE'} {(req.actual_amount_spent || req.requested_amount).toLocaleString()}</span>
                           </div>
                           <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 pt-0.5">
                             <span>Receipt Proof: <strong className="text-indigo-700 font-mono">{req.receipt_proof_url}</strong></span>
-                            <span>Unspent Returned: <strong className="text-emerald-700 font-mono">SLE {(req.unspent_balance_returned || 0).toLocaleString()}</strong></span>
+                            <span>Unspent Returned: <strong className="text-emerald-700 font-mono">{req.currency || 'SLE'} {(req.unspent_balance_returned || 0).toLocaleString()}</strong></span>
                           </div>
                           {req.receipt_notes && <p className="italic text-slate-600 text-[11px]">"{req.receipt_notes}"</p>}
                         </div>
@@ -6332,16 +6405,27 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                               </button>
                             </>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPreviewProposal({ ...req, items: req.items.map(i => ({ ...i })) });
-                                setShowProposalPreviewModal(true);
-                              }}
-                              className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
-                            >
-                              <FileText size={14} /> View Requisition
-                            </button>
+                            <>
+                              {req.status === 'rejected' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleResubmitRejectedProposal(req)}
+                                  className="px-3.5 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                                >
+                                  <Edit size={14} /> Edit &amp; Resubmit
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPreviewProposal({ ...req, items: req.items.map(i => ({ ...i })) });
+                                  setShowProposalPreviewModal(true);
+                                }}
+                                className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-extrabold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                              >
+                                <FileText size={14} /> View Requisition
+                              </button>
+                            </>
                           )}
 
                           {req.status === 'disbursed' && (
@@ -6350,7 +6434,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                               <button
                                 type="button"
                                 onClick={() => openReconcileModal(req)}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer transition-all animate-pulse"
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer transition-all"
                               >
                                 <Upload size={14} /> Reconcile Spending & Upload Receipts
                               </button>
@@ -7680,10 +7764,28 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                   Build your itemized proposal invoice. You can save as a draft to edit later or submit directly to pastoral board.
                 </p>
               </div>
-              <button onClick={() => setShowProposalModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
+              <button onClick={() => { setShowProposalModal(false); setResubmittingRejectionContext(null); }} className="text-slate-400 hover:text-slate-600 cursor-pointer p-1">
                 <X size={22} />
               </button>
             </div>
+
+            {resubmittingRejectionContext && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 flex items-start justify-between gap-3">
+                <div>
+                  <strong>Resubmitting rejected proposal ({resubmittingRejectionContext.sourceNumber}):</strong>{' '}
+                  {resubmittingRejectionContext.reason
+                    ? `Feedback — “${resubmittingRejectionContext.reason}”`
+                    : 'Update the details or item totals below and submit as a new proposal.'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setResubmittingRejectionContext(null)}
+                  className="text-amber-800 hover:text-amber-950 font-bold shrink-0 cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             <form onSubmit={e => { e.preventDefault(); handleSaveFundingProposal(false); }} className="space-y-6 text-xs">
               {/* SECTION 1: PROPOSAL ESSENTIALS */}
@@ -8066,14 +8168,14 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
               </div>
               <div className="flex justify-between pt-1 border-t border-slate-200">
                 <span className="text-slate-400">Disbursed Amount:</span>
-                <strong className="text-emerald-700 font-black text-sm">SLE {reconcileReq.requested_amount.toLocaleString()}</strong>
+                <strong className="text-emerald-700 font-black text-sm">{reconcileReq.currency || 'SLE'} {reconcileReq.requested_amount.toLocaleString()}</strong>
               </div>
             </div>
 
             <form onSubmit={handleConfirmReconciliation} className="space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Actual Amount Spent (SLE) *</label>
+                  <label className="font-extrabold text-slate-700 block mb-1">Actual Amount Spent ({reconcileReq.currency || 'SLE'}) *</label>
                   <input
                     type="number"
                     required
@@ -8085,7 +8187,7 @@ const LeaderConsolePage = ({ profile }: { profile: Profile | null }) => {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700 block mb-1">Unspent Returned (SLE)</label>
+                  <label className="font-extrabold text-slate-700 block mb-1">Unspent Returned ({reconcileReq.currency || 'SLE'})</label>
                   <input
                     type="number"
                     readOnly
@@ -10761,7 +10863,7 @@ const GivingPage = ({ profile }: { profile: Profile | null }) => {
                   ) : mobileChannels.length === 0 ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1">
                       <p className="font-bold">No verified mobile-money channels are configured yet.</p>
-                      <p className="text-amber-900">Treasury can publish verified mobile-money merchant codes and USSD instructions under Finance Operations &rarr; Gateways &amp; Funds.</p>
+                      <p className="text-amber-900">Treasury can publish verified mobile-money merchant codes and USSD instructions under Finance Operations &rarr; Payment Channels.</p>
                     </div>
                   ) : (
                     <>

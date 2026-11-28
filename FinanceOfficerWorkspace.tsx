@@ -5,9 +5,9 @@ import { financeSupabase } from './financeSupabaseClient';
 import { getFinanceLedgerEntries, mapFinanceLedgerEntriesToWorkspaceRecords } from './financeLedgerService';
 import { hasEffectivePermission } from './permissionResolutionService';
 import { usePermissionResolution } from './usePermissionResolution';
-import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, RequisitionItem, EventBudgetApproval } from './types';
+import { Profile, FinancialRecord, GivingConfig, MobileMoneyGateway, GivingFund, DepartmentRequisition, EventBudgetApproval } from './types';
 import { getGivingConfig, saveGivingConfig } from './givingConfig';
-import { getRequisitions, saveRequisitions, getDepartmentFinancialStanding, getDatabaseRequisitions, decideDatabaseRequisitionApproval } from './requisitionService';
+import { getDatabaseRequisitions } from './requisitionService';
 import { getEventBudgets } from './eventBudgetFinanceService';
 import { getEventBudgetApprovals } from './eventBudgetService';
 import { getChurchProfile } from './churchProfileService';
@@ -15,11 +15,12 @@ import { FinanceConfigurationWorkspace } from './FinanceConfigurationWorkspace';
 import { getMyFinanceScopes, type FinanceOwnershipScope, type FinanceScopeOption } from './financeConfigurationService';
 import { EventBudgetFinanceWorkspace } from './EventBudgetFinanceWorkspace';
 import { FinanceDocumentWorkflowWorkspace } from './FinanceDocumentWorkflowWorkspace';
-import { getScopedFinanceWorkflowDocuments } from './financeDocumentWorkflowService';
+import { getScopedFinanceWorkflowDocuments, type FinanceWorkflowDocument } from './financeDocumentWorkflowService';
 import { FinanceJournalWorkspace } from './FinanceJournalWorkspace';
-import { FinanceTransactionEntryWorkspace } from './FinanceTransactionEntryWorkspace';
+import { FinanceTransactionEntryWorkspace, type RejectedTransactionPrefillDraft } from './FinanceTransactionEntryWorkspace';
 import { FinanceTransferWorkspace } from './FinanceTransferWorkspace';
-import { DepartmentRequisitionPaymentWorkspace } from './DepartmentRequisitionPaymentWorkspace';
+import { DepartmentRequisitionWorkspace } from './DepartmentRequisitionWorkspace';
+import { PaymentChannelsWorkspace } from './PaymentChannelsWorkspace';
 import { 
   DollarSign, Sliders, Clock, Check, X, Printer, Filter, 
   Search, Landmark, Smartphone, RefreshCw, Layers, ShieldCheck, 
@@ -45,6 +46,8 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [selectedFinanceScope, setSelectedFinanceScope] = useState<FinanceOwnershipScope | null>(null);
   const [financeScopeLoading, setFinanceScopeLoading] = useState(true);
   const [financeScopeError, setFinanceScopeError] = useState<string | null>(null);
+  const [setupHasUnsavedChanges, setSetupHasUnsavedChanges] = useState(false);
+  const [pendingScopeSwitch, setPendingScopeSwitch] = useState<FinanceOwnershipScope | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +91,8 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     || availableFinanceScopes.length > 0;
   const canCreateScopedTransactions = hasEffectivePermission(financePermissions, 'manage_finances')
     || (selectedFinanceScope?.type === 'district' && availableFinanceScopes.some(item => item.scope_type === 'district' && item.scope_id === selectedFinanceScope.id));
+  const canApproveFinances = hasEffectivePermission(financePermissions, 'approve_finances');
+  const canPostJournals = hasEffectivePermission(financePermissions, 'post_journals');
   const canApproveRequisitions = hasEffectivePermission(financePermissions, 'approve_requisitions');
   const canAccessFinance = canViewFinance || canApproveRequisitions;
   const location = useLocation();
@@ -112,8 +117,27 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const setWorkspaceTab = (tab: FinanceWorkspaceTab) => {
     if (!canViewFinance && tab !== 'requisitions') return;
     setShowMobileMoreMenu(false);
+    setPendingScopeSwitch(null);
     setWorkspaceTabState(tab);
     navigate(`/portal/finance?tab=${tab}`, { replace: true });
+  };
+
+  const requestFinanceScopeChange = (nextScope: FinanceOwnershipScope | null) => {
+    if (!nextScope) {
+      setPendingScopeSwitch(null);
+      setSelectedFinanceScope(null);
+      return;
+    }
+    const sameScope =
+      selectedFinanceScope?.type === nextScope.type &&
+      (selectedFinanceScope?.id ?? null) === (nextScope.id ?? null);
+    if (sameScope) return;
+    if (workspaceTab === 'setup' && setupHasUnsavedChanges) {
+      setPendingScopeSwitch(nextScope);
+      return;
+    }
+    setPendingScopeSwitch(null);
+    setSelectedFinanceScope(nextScope);
   };
   useEffect(() => {
     if (canApproveRequisitions && !canViewFinance) setWorkspaceTabState('requisitions');
@@ -199,9 +223,35 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
 
-  // Canonical Ledger Archive & Print State
+  // Canonical Ledger Archive, Print & Rejected Resubmission State
   const [showPrintModal, setShowPrintModal] = useState<FinancialRecord | null>(null);
   const [showLegacyArchive, setShowLegacyArchive] = useState(false);
+  const [prefillTransactionDraft, setPrefillTransactionDraft] = useState<RejectedTransactionPrefillDraft | null>(null);
+
+  const handleResubmitRejectedDocument = (document: FinanceWorkflowDocument) => {
+    const rejectedStep = document.approval_steps.find(step => step.decision === 'rejected' && step.comments);
+    const ref = `${document.document_type === 'receipt' ? 'REC' : 'PAY'}-${String(document.document_number).padStart(6, '0')}`;
+    const allowedMethods = ['cash', 'mobile_money', 'bank_transfer', 'cheque', 'card'] as const;
+    const normalizedMethod = allowedMethods.includes(document.payment_method as any)
+      ? (document.payment_method as (typeof allowedMethods)[number])
+      : 'cash';
+    setPrefillTransactionDraft({
+      nonce: Date.now(),
+      sourceReference: ref,
+      rejectionReason: rejectedStep?.comments || null,
+      documentType: document.document_type,
+      transactionDate: document.transaction_date,
+      partyName: document.payee_or_payer_name,
+      profileId: document.profile_id,
+      amount: Number(document.amount || 0),
+      currencyCode: document.currency_code,
+      paymentMethod: normalizedMethod,
+      fundId: document.fund_id,
+      externalReference: document.external_reference,
+      description: document.description
+    });
+    setWorkspaceTab('ledger');
+  };
 
   // Member Roster & Selection State for Contributor & Payee
   const [membersList, setMembersList] = useState<Profile[]>([]);
@@ -271,11 +321,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     }
   };
 
-  // Invoicing & Disbursement Modal State
-  const [disburseReq, setDisburseReq] = useState<DepartmentRequisition | null>(null);
-  const [disbursementTxnRef, setDisbursementTxnRef] = useState('');
-  const [vendorReceiptUrl, setVendorReceiptUrl] = useState('');
-  const [disbursementInvoiceNo, setDisbursementInvoiceNo] = useState('');
 
   // Event Budget Disbursement Modal State
   const [disburseEventBudget, setDisburseEventBudget] = useState<EventBudgetApproval | null>(null);
@@ -346,166 +391,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     setWorkspaceTab('setup');
   };
 
-  // Persist a disbursement ledger entry exactly once. Deterministic IDs make retries safe.
-  const persistDisbursementRecord = async (_record: FinancialRecord): Promise<FinancialRecord> => {
-    throw new Error('Disbursement posting is temporarily unavailable until the secure financial-document, approval and journal-posting workflow is integrated.');
-  };
-
-  const normalizeDisbursementPaymentMethod = (method?: string): FinancialRecord['payment_method'] => {
-    switch ((method || '').toLowerCase()) {
-      case 'cash':
-      case 'mobile_money':
-      case 'bank_transfer':
-      case 'card':
-      case 'check':
-        return method!.toLowerCase() as FinancialRecord['payment_method'];
-      case 'bank_wire':
-      case 'church_treasury':
-      default:
-        return 'bank_transfer';
-    }
-  };
-
-  // --- REQUISITION APPROVAL & INVOICING HANDLERS ---
-  const handleEscalateToBoard = (reqId: string) => {
-    const note = prompt("Enter triage notes for Senior Pastor & Executive Board review:", "Budget proposal reviewed by Treasury. Requires Pastoral & Board authorization.");
-    if (!note) return;
-    const updated = requisitions.map(r => r.id === reqId ? { 
-      ...r, 
-      status: 'submitted_to_board' as const,
-      finance_officer_review_notes: note,
-      reviewed_at: new Date().toISOString(),
-      reviewed_by: profile ? `${profile.first_name} ${profile.last_name} (Finance Officer)` : 'Finance Officer'
-    } : r);
-    setRequisitions(updated);
-    saveRequisitions(updated);
-    alert("Requisition escalated to Senior Pastor & Executive Board for authorization.");
-  };
-
-  const handleSettleRequisition = (reqId: string) => {
-    const note = prompt("Enter audit settlement notes (e.g. Verified 100% tax receipts):", "All vendor receipts verified. Closed in Good Standing.");
-    if (note === null) return;
-    const updated = requisitions.map(r => r.id === reqId ? {
-      ...r,
-      status: 'settled' as const,
-      audit_status: 'good_standing' as const,
-      audit_notes: note,
-      settled_at: new Date().toISOString(),
-      settled_by: profile ? `${profile.first_name} ${profile.last_name}` : 'Finance Officer'
-    } : r);
-    setRequisitions(updated);
-    saveRequisitions(updated);
-    alert("Requisition verified & settled in Good Standing!");
-  };
-
-  const handleApproveRequisition = async (reqId: string) => {
-    const requisition = requisitions.find(item => item.id === reqId);
-    const currentStep = requisition?.approval_steps?.find(step => step.actor_can_decide);
-    if (!currentStep) {
-      alert('There is no requisition approval step currently assigned to your permissions. Earlier steps may still be pending.');
-      return;
-    }
-    const result = await decideDatabaseRequisitionApproval(
-      currentStep.id, 'approved',
-      profile ? `Approved by ${profile.first_name} ${profile.last_name}` : undefined
-    );
-    if (result.error) {
-      alert(result.error.message);
-      return;
-    }
-    await reloadRequisitions();
-  };
-
-  const handleRejectRequisition = async (reqId: string) => {
-    if (!confirm('Are you sure you want to reject this funding proposal?')) return;
-    const requisition = requisitions.find(item => item.id === reqId);
-    const currentStep = requisition?.approval_steps?.find(step => step.actor_can_decide);
-    if (!currentStep) {
-      alert('There is no requisition approval step currently assigned to your permissions. Earlier steps may still be pending.');
-      return;
-    }
-    const result = await decideDatabaseRequisitionApproval(
-      currentStep.id, 'rejected',
-      profile ? `Rejected by ${profile.first_name} ${profile.last_name}` : undefined
-    );
-    if (result.error) {
-      alert(result.error.message);
-      return;
-    }
-    await reloadRequisitions();
-  };
-
-  const openDisbursementModal = (req: DepartmentRequisition) => {
-    if (req.approval_request_id) {
-      alert('The requisition is approved, but source-linked payment creation is not available yet. Create a payment through canonical Finance Transaction Entry; do not mark this requisition as disbursed.');
-      return;
-    }
-    setDisburseReq(req);
-    setDisbursementInvoiceNo(`INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-    setDisbursementTxnRef(`WIRE-SLCB-${Math.floor(100000 + Math.random() * 900000)}`);
-    setVendorReceiptUrl(req.vendor_quote_url || 'Vendor_Tax_Receipt_Signed.pdf');
-  };
-
-  const handleConfirmInvoiceAndDisbursement = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!disburseReq) return;
-    if (disburseReq.status !== 'approved') {
-      alert('Only fully approved requisitions can proceed to payment creation. Requisition approval does not itself record a payment.');
-      return;
-    }
-
-    const txnRef = disbursementTxnRef.trim() || ('DISB-SLCB-' + Math.floor(100000 + Math.random() * 900000));
-    const actor = profile ? profile.first_name + ' ' + profile.last_name : 'Finance Officer / Treasury';
-    const now = new Date().toISOString();
-
-    const autoExpenseRecord: FinancialRecord = {
-      id: 'rec-disb-' + disburseReq.id,
-      contributor_name: disburseReq.department_name + ' (' + disburseReq.applicant_name + ')',
-      type: 'expense',
-      category: disburseReq.department_name.includes('Media') ? 'Media & IT Equipment' : 'Ministry & Worship Budgets',
-      amount: disburseReq.requested_amount,
-      currency: disburseReq.currency || 'SLE',
-      date: now,
-      payment_method: normalizeDisbursementPaymentMethod(disburseReq.disbursement_method),
-      status: 'completed',
-      approved_by: actor,
-      transaction_id: txnRef,
-      payment_proof_ref: vendorReceiptUrl.trim() || undefined,
-      notes: 'Church Expense Invoice ' + disbursementInvoiceNo + ': ' + disburseReq.title
-    };
-
-    try {
-      // Save the ledger entry first. If the status update fails, a retry reuses this same ID.
-      const savedRecord = await persistDisbursementRecord(autoExpenseRecord);
-      // Reuse the ledger's original reference on retry so both records stay linked.
-      const confirmedTxnRef = savedRecord.transaction_id || txnRef;
-      const updatedReqs = getRequisitions().map(r => r.id === disburseReq.id ? {
-        ...r,
-        status: 'disbursed' as const,
-        transaction_ref: confirmedTxnRef,
-        vendor_quote_url: vendorReceiptUrl || r.vendor_quote_url,
-        disbursed_at: r.disbursed_at || now,
-        disbursed_by: r.disbursed_by || actor
-      } : r);
-
-      saveRequisitions(updatedReqs);
-      const confirmedReq = getRequisitions().find(r => r.id === disburseReq.id);
-      if (!confirmedReq || confirmedReq.status !== 'disbursed' || confirmedReq.transaction_ref !== confirmedTxnRef) {
-        throw new Error('The ledger entry was saved, but the requisition status could not be confirmed. Retry this disbursement to complete the status update without duplicating the ledger entry.');
-      }
-
-      setRequisitions(getRequisitions());
-      setRecords(prev => [savedRecord, ...prev.filter(record => record.id !== savedRecord.id)]);
-      setDisburseReq(null);
-      setDisbursementTxnRef('');
-      setVendorReceiptUrl('');
-      alert('Expense Invoice ' + disbursementInvoiceNo + ' processed! SLE ' + disburseReq.requested_amount.toLocaleString() + ' has been disbursed and linked to the Treasury Financial Ledger.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      alert('Disbursement was not fully completed: ' + message);
-    }
-  };
-
   const openEventBudgetDisbursementModal = (b: EventBudgetApproval) => {
     setDisburseEventBudget(b);
     setEvtDisburseTxnRef(`DISB-EVT-${Math.floor(100000 + Math.random() * 900000)}`);
@@ -518,119 +403,6 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
     if (!disburseEventBudget) return;
     setDisburseEventBudget(null);
     alert('Legacy event-budget disbursement is disabled. Use the canonical event budget workflow to create an approved payment and journal.');
-  };
-
-  // --- PRINT OFFICIAL REQUISITION VOUCHER & INVOICE ---
-  const handlePrintRequisitionVoucher = (req: DepartmentRequisition) => {
-    const printWin = window.open('', '_blank');
-    if (!printWin) return;
-    const cp = getChurchProfile();
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${cp.name} - Expense Invoice & Voucher - ${req.requisition_number}</title>
-          <style>
-            body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #0f172a; }
-            .header { border-bottom: 3px solid #1e1b4b; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; }
-            .logo { font-size: 24px; font-weight: 900; color: #1e1b4b; }
-            .sub { font-size: 12px; color: #64748b; font-weight: 600; }
-            .req-no { font-size: 18px; font-weight: 900; color: #4338ca; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; background: #f8fafc; padding: 15px; border-radius: 12px; font-size: 12px; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 12px; }
-            th { background: #f1f5f9; text-align: left; padding: 10px; font-size: 10px; uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; }
-            td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
-            .total-box { text-align: right; font-size: 18px; font-weight: 900; color: #059669; padding: 15px; background: #ecfdf5; border-radius: 12px; margin-bottom: 30px; }
-            .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 50px; border-top: 2px dashed #cbd5e1; padding-top: 20px; font-size: 11px; }
-            .sig-line { border-bottom: 1px solid #94a3b8; height: 35px; margin-bottom: 6px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <div class="logo">${cp.name.toUpperCase()}</div>
-              <div class="sub">Treasury Department & Financial Governance Board</div>
-            </div>
-            <div style="text-align: right;">
-              <div class="req-no">${req.requisition_number}</div>
-              <div class="sub">Date: ${new Date(req.created_at).toLocaleDateString()}</div>
-            </div>
-          </div>
-
-          <h2 style="font-size: 18px; margin-bottom: 5px;">DEPARTMENT FUNDING REQUISITION</h2>
-          <p style="font-size: 12px; color: #475569; margin-top: 0;">Request for ministry or department funding. This document is not a payment voucher.</p>
-
-          <div class="grid">
-            <div>
-              <strong>Department / Ministry:</strong> ${req.department_name}<br/>
-              <strong>Applicant Lead:</strong> ${req.applicant_name} (${req.applicant_role || 'Lead'})<br/>
-              <strong>Proposal Title:</strong> ${req.title}
-            </div>
-            <div>
-              <strong>Priority Level:</strong> ${req.priority.toUpperCase()}<br/>
-              <strong>Approval Status:</strong> ${req.status.replace(/_/g, ' ')}<br/>
-              <strong>Payment Status:</strong> Not created — Finance handles payment after approval
-            </div>
-          </div>
-
-          <h3 style="font-size: 14px; margin-bottom: 10px;">Requisition Item Breakdown</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Item Description</th>
-                <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Price (${req.currency || 'SLE'})</th>
-                <th style="text-align: right;">Line Total (${req.currency || 'SLE'})</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${req.items.map(i => `
-                <tr>
-                  <td><strong>${i.item_name}</strong></td>
-                  <td style="text-align: center;">${i.quantity}</td>
-                  <td style="text-align: right;">${i.unit_price.toLocaleString()}</td>
-                  <td style="text-align: right;"><strong>${i.total_price.toLocaleString()}</strong></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <div class="total-box">
-            Total Requested Amount: ${req.currency || 'SLE'} ${req.requested_amount.toLocaleString()}
-          </div>
-
-          ${req.vendor_quote_reference || req.vendor_quote_url ? `
-            <div style="background: #f1f5f9; padding: 12px; border-radius: 8px; font-size: 12px; margin-bottom: 30px;">
-              <strong>Vendor Quote Reference:</strong> ${req.vendor_quote_reference || req.vendor_quote_url}
-            </div>
-          ` : ''}
-
-          <div class="signatures">
-            <div>
-              <div class="sig-line"></div>
-              <strong>Department Head Signature</strong><br/>
-              ${req.applicant_name}
-            </div>
-            <div>
-              <div class="sig-line"></div>
-              <strong>Requisition Approval</strong><br/>
-              ${profile ? `${profile.first_name} ${profile.last_name}` : 'Treasury Controller'}
-            </div>
-            <div>
-              <div class="sig-line"></div>
-              <strong>Senior Pastor / Board Sign-off</strong><br/>
-              ${cp.senior_pastor || 'Senior Pastor & Board'}
-            </div>
-          </div>
-
-          <script>window.onload = function() { window.print(); }</script>
-        </body>
-      </html>
-    `;
-
-    printWin.document.write(html);
-    printWin.document.close();
   };
 
   const handlePrintEventBudgetInvoice = (b: EventBudgetApproval) => {
@@ -1046,19 +818,17 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               )}
             </button>
 
-            {selectedFinanceScope?.type === 'branch' && (
-              <button
-                onClick={() => setWorkspaceTab('transfers')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
-                  workspaceTab === 'transfers'
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <ArrowRightLeft size={15} />
-                <span>Internal Transfers</span>
-              </button>
-            )}
+            <button
+              onClick={() => setWorkspaceTab('transfers')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap min-h-[40px] ${
+                workspaceTab === 'transfers'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ArrowRightLeft size={15} />
+              <span>Internal Transfers</span>
+            </button>
 
             <button
               onClick={() => setWorkspaceTab('requisitions')}
@@ -1115,7 +885,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               }`}
             >
               <Sliders size={15} />
-              <span>Gateways &amp; Funds</span>
+              <span>Payment Channels</span>
             </button>
           </div>
         ) : (
@@ -1130,7 +900,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
         )}
       </div>
 
-      {(workspaceTab === 'ledger' || workspaceTab === 'documents' || workspaceTab === 'setup' || workspaceTab === 'transfers') && (
+      {(workspaceTab === 'ledger' || workspaceTab === 'documents' || workspaceTab === 'setup' || workspaceTab === 'transfers' || workspaceTab === 'gateways') && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -1148,7 +918,7 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               onChange={event => {
                 const selected = availableFinanceScopes.find(item =>
                   `${item.scope_type}:${item.scope_id ?? 'church'}` === event.target.value);
-                setSelectedFinanceScope(selected
+                requestFinanceScopeChange(selected
                   ? { type: selected.scope_type, id: selected.scope_id } as FinanceOwnershipScope
                   : null);
               }}
@@ -1162,6 +932,37 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               ))}
             </select>
           </div>
+          {pendingScopeSwitch && (
+            <div
+              role="alert"
+              className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <span className="font-semibold">
+                You have unsaved Accounting Setup changes in this scope. Discard them and switch scope?
+              </span>
+              <div className="flex flex-wrap gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPendingScopeSwitch(null)}
+                  className="inline-flex min-h-[36px] items-center justify-center rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:bg-slate-50 cursor-pointer"
+                >
+                  Stay &amp; save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = pendingScopeSwitch;
+                    setPendingScopeSwitch(null);
+                    setSetupHasUnsavedChanges(false);
+                    setSelectedFinanceScope(target);
+                  }}
+                  className="inline-flex min-h-[36px] items-center justify-center rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-950 cursor-pointer"
+                >
+                  Discard &amp; switch
+                </button>
+              </div>
+            </div>
+          )}
           {financeScopeLoading && <p className="mt-2 text-xs text-slate-500">Loading authorized finance scopes…</p>}
           {financeScopeError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{financeScopeError}</p>}
         </div>
@@ -1175,6 +976,19 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
               scope={selectedFinanceScope}
               scopeOptions={availableFinanceScopes}
+              canApproveFinances={canApproveFinances}
+              canCreateTransactions={canCreateScopedTransactions}
+              canPostJournals={canPostJournals}
+              memberProfiles={membersList}
+              crossModuleQueues={{
+                pendingRequisitions: requisitions.filter(r => r.status === 'pending_approval').length,
+                pendingEventBudgets: eventBudgets.filter(b => b.status === 'pending_approval').length,
+                onOpenRequisitions: () => setWorkspaceTab('requisitions'),
+                onOpenEventBudgets: () => setWorkspaceTab('event_budgets'),
+                onOpenTransfers: () => setWorkspaceTab('transfers'),
+                onOpenJournalRegister: () => setWorkspaceTab('ledger')
+              }}
+              onResubmitDocument={handleResubmitRejectedDocument}
               onPendingCountChange={setPendingDocsCount}
             />
           ) : !financeScopeLoading ? (
@@ -1194,6 +1008,8 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
                 <FinanceTransactionEntryWorkspace
                   branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
                   scope={selectedFinanceScope}
+                  prefillDraft={prefillTransactionDraft}
+                  onClearPrefill={() => setPrefillTransactionDraft(null)}
                   onOpenAccountingSetup={handleOpenAccountingSetup}
                   canOpenChurchScopeSetup={canOpenChurchScopeSetup}
                   onOpenDocumentsTab={() => setWorkspaceTab('documents')}
@@ -1503,8 +1319,24 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               canCreate={canCreateScopedTransactions}
             />
           ) : (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-              Internal transfers are managed from a branch finance scope. Select a branch scope to create, review or approve transfers.
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span>
+                Internal transfers are managed from a branch finance scope. Select a branch scope to create, review or approve transfers.
+              </span>
+              {availableFinanceScopes.find(item => item.scope_type === 'branch') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const branchScope = availableFinanceScopes.find(item => item.scope_type === 'branch');
+                    if (branchScope) {
+                      setSelectedFinanceScope({ type: 'branch', id: branchScope.scope_id } as FinanceOwnershipScope);
+                    }
+                  }}
+                  className="inline-flex min-h-[38px] items-center justify-center whitespace-nowrap rounded-lg bg-amber-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-amber-950 shrink-0 cursor-pointer"
+                >
+                  Switch to branch scope
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -1516,6 +1348,11 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
             <FinanceConfigurationWorkspace
               branchId={selectedFinanceScope.type === 'branch' ? selectedFinanceScope.id : null}
               scope={selectedFinanceScope}
+              hasChurchScope={availableFinanceScopes.some(item => item.scope_type === 'church')}
+              onSwitchToChurchScope={() =>
+                requestFinanceScopeChange({ type: 'church', id: null })
+              }
+              onUnsavedChangesChange={setSetupHasUnsavedChanges}
             />
           ) : (
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
@@ -1526,237 +1363,48 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
       )}
 
       {workspaceTab === 'requisitions' && (
-        <div className="space-y-6">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Requisition approval is not payment.</strong> Approved requisitions can now receive separately approved canonical payments. A requisition is shown as paid only from its linked posted journal; pending and approved-but-unposted payments remain reservations, not expenditure.
-          </div>
-          {hasEffectivePermission(financePermissions, 'manage_finances') && (
-            <DepartmentRequisitionPaymentWorkspace branchId={financeBranchId} requisitions={requisitions as any[]} />
-          )}
-
-          {/* Requisitions Overview Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-amber-700 tracking-wider block">Awaiting Approval</span>
-              <div className="text-2xl font-black text-amber-600">
-                {requisitions.filter(r => r.status === 'pending_approval').length} Proposals
-              </div>
-              <p className="text-[11px] text-slate-400">Waiting for configured approval steps</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-purple-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-purple-700 tracking-wider block">Approved — Payment Pending</span>
-              <div className="text-2xl font-black text-purple-700">
-                {requisitions.filter(r => r.status === 'approved').length} Approved
-              </div>
-              <p className="text-[11px] text-slate-400">No payment or journal is created yet</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-indigo-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-indigo-700 tracking-wider block">Rejected Requests</span>
-              <div className="text-2xl font-black text-indigo-600">
-                {requisitions.filter(r => r.status === 'rejected').length} Rejected
-              </div>
-              <p className="text-[11px] text-slate-400">Requires review before resubmission</p>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-emerald-200 shadow-xs space-y-1">
-              <span className="text-[10px] font-extrabold uppercase text-emerald-700 tracking-wider block">Total Requests</span>
-              <div className="text-2xl font-black text-emerald-600">
-                {requisitions.length} Requisitions
-              </div>
-              <p className="text-[11px] text-slate-400">Branch-visible requisitions</p>
-            </div>
-          </div>
-
-          {requisitionError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">Unable to load database requisitions: {requisitionError}</div>}
-          {/* Requisitions List */}
-          <div className="space-y-4">
-            {requisitions.map(req => {
-              const isUrgent = req.priority === 'urgent' || req.priority === 'high';
-              const currentApprovalStep = req.approval_steps?.find(step => step.actor_can_decide);
-
-              return (
-                <div key={req.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 hover:shadow-md transition-shadow">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
-                          {req.requisition_number}
-                        </span>
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-50 text-purple-700">
-                          {req.department_name}
-                        </span>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          isUrgent ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          Priority: {req.priority}
-                        </span>
-
-
-                      </div>
-
-                      <h3 className="text-xl font-black text-slate-900">{req.title}</h3>
-                      <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">{req.description}</p>
-                    </div>
-
-                    <div className="text-left md:text-right shrink-0">
-                      <div className="text-xs text-slate-400 font-bold uppercase">Requested Funding</div>
-                      <div className="text-2xl font-black text-indigo-700">
-                        {req.currency || 'SLE'} {req.requested_amount.toLocaleString()}
-                      </div>
-                      <span className={`inline-block mt-1 px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        req.status === 'pending_pastor_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                        req.status === 'pastor_approved' ? 'bg-purple-600 text-white font-black shadow-xs' :
-                        req.status === 'pending_approval' ? 'bg-amber-100 text-amber-800 animate-pulse' :
-                        req.status === 'rejected' ? 'bg-rose-100 text-rose-800 font-bold' :
-                        req.status === 'submitted_to_board' ? 'bg-purple-100 text-purple-800 animate-bounce' :
-                        req.status === 'approved' ? 'bg-indigo-100 text-indigo-800 font-bold' :
-                        req.status === 'disbursed' ? 'bg-emerald-100 text-emerald-800 font-bold' :
-                        req.status === 'reconciled' ? 'bg-teal-100 text-teal-800 font-bold' :
-                        req.status === 'settled' ? 'bg-emerald-800 text-white font-bold' :
-                        'bg-rose-100 text-rose-800'
-                      }`}>
-                        {req.status === 'pending_pastor_approval' ? 'Step 1: Awaiting Senior Pastor Approval' :
-                         req.status === 'pastor_approved' ? 'Step 2: Approved by Senior Pastor — Disburse Now' :
-                         req.status === 'pending_approval' ? 'Awaiting Configured Approval Steps' : 
-                         req.status === 'submitted_to_board' ? 'Escalated to Senior Pastor & Board' :
-                         req.status === 'approved' ? 'Approved — Payment Not Created' :
-                          req.status === 'rejected' ? 'Rejected' :
-                         req.status === 'disbursed' ? 'Disbursed (Awaiting Receipts)' :
-                         req.status === 'reconciled' ? 'Receipts Submitted (Awaiting Settlement)' :
-                         req.status === 'settled' ? 'Audited & Settled in Good Standing' :
-                         req.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Stage Notes & Pastor Approvals */}
-                  {req.pastor_approval_notes && (
-                    <div className="p-3.5 bg-purple-50 rounded-2xl border border-purple-200 text-xs text-purple-950 font-medium flex items-start gap-2">
-                      <CheckCircle2 size={16} className="text-purple-600 shrink-0 mt-0.5" />
-                      <div>
-                        <strong>Senior Pastor Approval Sign-off:</strong> {req.pastor_approval_notes}
-                        <span className="text-[10px] text-purple-700 font-semibold block mt-0.5">Approved By: {req.pastor_approved_by || 'Senior Pastor'} ({req.pastor_approved_at ? new Date(req.pastor_approved_at).toLocaleString() : 'Approved'})</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {req.finance_officer_review_notes && (
-                    <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200 text-xs text-amber-900">
-                      <strong>Finance Officer Triage Note:</strong> {req.finance_officer_review_notes}
-                    </div>
-                  )}
-
-                  {req.board_notes && !req.pastor_approval_notes && (
-                    <div className="p-3 bg-purple-50/80 rounded-2xl border border-purple-200 text-xs text-purple-900">
-                      <strong>Board & Senior Pastor Authorization:</strong> {req.board_notes} ({req.board_approved_by})
-                    </div>
-                  )}
-
-                  {/* Items Preview Table */}
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/60 text-xs">
-                    <div className="font-extrabold text-slate-700 mb-2 flex items-center justify-between">
-                      <span>Itemized Equipment & Budget Breakdown ({req.items.length} Items):</span>
-                      <span className="text-slate-400 text-[11px]">Submitted By: {req.applicant_name} ({req.applicant_role || 'Ministry Lead'})</span>
-                    </div>
-                    <div className="divide-y divide-slate-200">
-                      {req.items.map(item => (
-                        <div key={item.id} className="py-1.5 flex justify-between items-center text-slate-800">
-                          <span>{item.item_name} <strong className="text-slate-400 font-normal">x{item.quantity}</strong></span>
-                          <strong className="font-mono text-slate-900">{req.currency || 'SLE'} {item.total_price.toLocaleString()}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Receipt Upload & Post-Disbursement Spending Audit View (Stages 5 & 6) */}
-                  {(req.status === 'reconciled' || req.status === 'settled') && (
-                    <div className="p-4 bg-teal-50/80 border border-teal-200 rounded-2xl text-xs space-y-2">
-                      <div className="flex items-center justify-between text-teal-950 font-black">
-                        <span className="flex items-center gap-1.5">
-                          <CheckCircle2 size={16} className="text-teal-600" />
-                          Department Expenditure Report & Receipt Verification
-                        </span>
-                        <span className="font-mono text-[11px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-md">
-                          Spent: SLE {(req.actual_amount_spent || req.requested_amount).toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-700 pt-1">
-                        <div>
-                          <span className="text-slate-500 font-medium">Vendor Tax Receipt Proof:</span>
-                          <p className="font-bold text-indigo-700 font-mono text-[11px] truncate">
-                            {req.receipt_proof_url || 'Vendor_Tax_Receipt_Signed.pdf'}
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 font-medium">Unspent Balance Returned:</span>
-                          <p className="font-bold text-emerald-700 font-mono">
-                            SLE {(req.unspent_balance_returned || 0).toLocaleString()}
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 font-medium">Audit Compliance Rating:</span>
-                          <p className="font-bold text-emerald-800">
-                            100% On-Time Receipt Verification
-                          </p>
-                        </div>
-                      </div>
-
-                      {req.receipt_notes && (
-                        <p className="text-slate-600 italic bg-white p-2.5 rounded-xl border border-teal-100 mt-1">
-                          "{req.receipt_notes}"
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Approval and payment actions */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                    <div className="text-xs text-slate-500 font-medium">
-                      {req.status === 'approved' && <span className="text-emerald-700 font-semibold">Approved. Payment creation is a separate finance workflow.</span>}
-                      {req.status === 'pending_approval' && !currentApprovalStep && <span>Waiting for an earlier step or another authorized approver.</span>}
-                      {req.approval_request?.status && <span className="ml-2">Approval request: <strong>{req.approval_request.status}</strong></span>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {req.status === 'pending_approval' && currentApprovalStep && (
-                        <>
-                          <button
-                            onClick={() => void handleApproveRequisition(req.id)}
-                            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                          >
-                            Approve Step {currentApprovalStep.step_number}
-                          </button>
-                          <button
-                            onClick={() => void handleRejectRequisition(req.id)}
-                            className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                          >
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      <button
-                        onClick={() => handlePrintRequisitionVoucher(req)}
-                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Printer size={14} /> Print Requisition
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <DepartmentRequisitionWorkspace
+          branchId={financeBranchId}
+          actorProfileId={databaseProfileId}
+          canApproveRequisitions={canApproveRequisitions}
+          canManageFinances={hasEffectivePermission(financePermissions, 'manage_finances')}
+          memberProfiles={membersList}
+          requisitions={requisitions}
+          requisitionError={requisitionError}
+          onReloadRequisitions={reloadRequisitions}
+          onOpenApprovalsTab={canViewFinance ? () => setWorkspaceTab('documents') : undefined}
+          scopeName={
+            availableFinanceScopes.find(
+              item =>
+                item.scope_type === selectedFinanceScope?.type &&
+                item.scope_id === selectedFinanceScope?.id
+            )?.scope_name
+          }
+        />
       )}
 
-      {/* --- WORKSPACE TAB 3: MOBILE MONEY & PAYMENT SETUP --- */}
+      {/* --- WORKSPACE TAB: VERIFIED PAYMENT CHANNELS --- */}
       {workspaceTab === 'gateways' && (
-        <section className="mx-auto max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-950">
-          <h3 className="text-lg font-black">Payment-channel integration is not connected yet</h3>
-          <p className="mt-2 text-sm leading-6">External mobile-money providers and bank-transfer instructions are not yet backed by a verified provider integration and persisted settings API. Sample merchant codes, phone numbers and bank account details are intentionally not displayed or treated as real church payment destinations.</p>
-          <p className="mt-3 text-sm leading-6">Use Accounting Setup to manage the church's actual financial accounts, funds, currencies and approval policies. Provider configuration will be enabled after its secure database and provider integration is implemented.</p>
+        <section className="space-y-4">
+          {selectedFinanceScope ? (
+            <PaymentChannelsWorkspace
+              scope={selectedFinanceScope}
+              scopeLabel={
+                availableFinanceScopes.find(
+                  item =>
+                    item.scope_type === selectedFinanceScope.type &&
+                    item.scope_id === selectedFinanceScope.id
+                )?.scope_name ||
+                (selectedFinanceScope.type === 'church' ? 'Church-wide' : undefined)
+              }
+              canManageFinances={canCreateScopedTransactions}
+              onOpenAccountingSetup={() => setWorkspaceTab('setup')}
+            />
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Payment channel settings are unavailable until an authorized scope can be confirmed by Supabase.
+            </div>
+          )}
         </section>
       )}
 
@@ -1766,16 +1414,17 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
 
       {/* MOBILE & TABLET MORE DRAWER (Overflow tabs + quick actions) */}
       {showMobileMoreMenu && canViewFinance && (
-        <div
-          className="lg:hidden fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-[1px]"
-          onClick={() => setShowMobileMoreMenu(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="More finance console sections"
-        >
+        <>
           <div
-            className="fixed bottom-[72px] inset-x-3 mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl space-y-3"
-            onClick={event => event.stopPropagation()}
+            className="lg:hidden fixed inset-0 z-[45] bg-slate-950/50 backdrop-blur-[1px]"
+            onClick={() => setShowMobileMoreMenu(false)}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="More finance console sections"
+            className="lg:hidden fixed bottom-[76px] inset-x-3 z-[55] mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl space-y-3"
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div>
@@ -1793,27 +1442,30 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
             </div>
 
             <div className="space-y-1.5">
-              {selectedFinanceScope?.type === 'branch' && (
-                <button
-                  type="button"
-                  onClick={() => setWorkspaceTab('setup')}
-                  className={`w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left transition-colors cursor-pointer ${
-                    workspaceTab === 'setup'
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-50 text-slate-800 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Landmark size={18} />
-                    <div>
-                      <div className="text-xs font-bold">Accounting Setup</div>
-                      <div className={`text-[11px] ${workspaceTab === 'setup' ? 'text-slate-300' : 'text-slate-500'}`}>
-                        Accounts, currencies, periods &amp; approval policies
-                      </div>
+              <button
+                type="button"
+                onClick={() => setWorkspaceTab('event_budgets')}
+                className={`w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left transition-colors cursor-pointer ${
+                  workspaceTab === 'event_budgets'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-50 text-slate-800 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Calendar size={18} className="shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold">Event Budgets</div>
+                    <div className={`text-[11px] ${workspaceTab === 'event_budgets' ? 'text-slate-300' : 'text-slate-500'}`}>
+                      Event budget approvals &amp; disbursements
                     </div>
                   </div>
-                </button>
-              )}
+                </div>
+                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-400 text-slate-950 tabular-nums shrink-0">
+                    {eventBudgets.filter(b => b.status === 'pending_approval').length}
+                  </span>
+                )}
+              </button>
 
               <button
                 type="button"
@@ -1825,11 +1477,11 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Sliders size={18} />
+                  <Sliders size={18} className="shrink-0" />
                   <div>
-                    <div className="text-xs font-bold">Gateways &amp; Funds</div>
+                    <div className="text-xs font-bold">Payment Channels</div>
                     <div className={`text-[11px] ${workspaceTab === 'gateways' ? 'text-slate-300' : 'text-slate-500'}`}>
-                      External payment-channel integration status
+                      Verified mobile-money &amp; bank giving channels
                     </div>
                   </div>
                 </div>
@@ -1850,145 +1502,106 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               </button>
             </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* MOBILE & TABLET BOTTOM NAV BAR (5 Primary Tabs + Three-Dot More Button = 6 items on < lg screens) */}
+      {/* MOBILE & TABLET BOTTOM NAV BAR (5 Fixed Primary Tabs + Three-Dot More Button = 6 items on < lg screens) */}
       <nav
         aria-label="Mobile finance navigation"
-        className="block lg:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl p-1.5"
+        className="block lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]"
       >
         {canViewFinance ? (
-          <div className="grid grid-cols-6 gap-1 max-w-2xl mx-auto">
+          <div className="grid grid-cols-6 gap-0.5 sm:gap-1 max-w-2xl mx-auto">
             {/* Slot 1: Ledger */}
             <button
               type="button"
               onClick={() => setWorkspaceTab('ledger')}
-              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+              aria-current={workspaceTab === 'ledger' ? 'page' : undefined}
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
                 workspaceTab === 'ledger'
                   ? 'bg-indigo-600 text-white'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <PieChart size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Ledger</span>
+              <span className="relative inline-flex items-center justify-center shrink-0">
+                <PieChart size={18} />
+              </span>
+              <span className="mt-1 truncate w-full text-center">Ledger</span>
             </button>
 
             {/* Slot 2: Documents & Approvals */}
             <button
               type="button"
               onClick={() => setWorkspaceTab('documents')}
-              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+              aria-current={workspaceTab === 'documents' ? 'page' : undefined}
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
                 workspaceTab === 'documents'
                   ? 'bg-indigo-600 text-white'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <ShieldCheck size={18} />
-              <span className="mt-0.5 truncate w-full text-center">Approvals</span>
-              {pendingDocsCount > 0 && (
-                <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
-              )}
+              <span className="relative inline-flex items-center justify-center shrink-0">
+                <ShieldCheck size={18} />
+                {pendingDocsCount > 0 && (
+                  <span className="absolute -top-0.5 -right-1.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </span>
+              <span className="mt-1 truncate w-full text-center">Approvals</span>
             </button>
 
-            {/* Slot 3: Transfers (branch scope) or Proposals (church/district scope) */}
-            {selectedFinanceScope?.type === 'branch' ? (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('transfers')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'transfers'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
+            {/* Slot 3: Internal Transfers */}
+            <button
+              type="button"
+              onClick={() => setWorkspaceTab('transfers')}
+              aria-current={workspaceTab === 'transfers' ? 'page' : undefined}
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
+                workspaceTab === 'transfers'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <span className="relative inline-flex items-center justify-center shrink-0">
                 <ArrowRightLeft size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Transfers</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('requisitions')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'requisitions'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
-                <ShoppingCart size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Proposals</span>
-                {pendingReqsCount > 0 && (
-                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
-                )}
-              </button>
-            )}
+              </span>
+              <span className="mt-1 truncate w-full text-center">Transfers</span>
+            </button>
 
-            {/* Slot 4: Proposals (branch scope) or Budgets (church/district scope) */}
-            {selectedFinanceScope?.type === 'branch' ? (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('requisitions')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'requisitions'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
+            {/* Slot 4: Ministry Proposals */}
+            <button
+              type="button"
+              onClick={() => setWorkspaceTab('requisitions')}
+              aria-current={workspaceTab === 'requisitions' ? 'page' : undefined}
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
+                workspaceTab === 'requisitions'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <span className="relative inline-flex items-center justify-center shrink-0">
                 <ShoppingCart size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Proposals</span>
                 {pendingReqsCount > 0 && (
-                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="absolute -top-0.5 -right-1.5 w-2 h-2 rounded-full bg-amber-400" />
                 )}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('event_budgets')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'event_budgets'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
-                <Calendar size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Budgets</span>
-                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
-                )}
-              </button>
-            )}
+              </span>
+              <span className="mt-1 truncate w-full text-center">Proposals</span>
+            </button>
 
-            {/* Slot 5: Budgets (branch scope) or Setup (church/district scope) */}
-            {selectedFinanceScope?.type === 'branch' ? (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('event_budgets')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'event_budgets'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
-                <Calendar size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Budgets</span>
-                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
-                  <span className="absolute top-1.5 right-2.5 w-2 h-2 rounded-full bg-amber-400" />
-                )}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setWorkspaceTab('setup')}
-                className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
-                  workspaceTab === 'setup'
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                }`}
-              >
+            {/* Slot 5: Accounting Setup */}
+            <button
+              type="button"
+              onClick={() => setWorkspaceTab('setup')}
+              aria-current={workspaceTab === 'setup' ? 'page' : undefined}
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
+                workspaceTab === 'setup'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <span className="relative inline-flex items-center justify-center shrink-0">
                 <Landmark size={18} />
-                <span className="mt-0.5 truncate w-full text-center">Setup</span>
-              </button>
-            )}
+              </span>
+              <span className="mt-1 truncate w-full text-center">Setup</span>
+            </button>
 
             {/* Slot 6: Three-dot More Button */}
             <button
@@ -1996,16 +1609,21 @@ const FinanceOfficerWorkspaceContent: React.FC<FinanceOfficerWorkspaceProps> = (
               aria-label="More finance sections"
               aria-expanded={showMobileMoreMenu}
               onClick={() => setShowMobileMoreMenu(prev => !prev)}
-              className={`flex flex-col items-center justify-center min-h-[52px] py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors cursor-pointer relative ${
+              className={`min-w-0 flex flex-col items-center justify-center min-h-[54px] py-1.5 px-0.5 sm:px-1 rounded-xl text-[9px] sm:text-[10px] leading-tight font-bold transition-colors cursor-pointer ${
                 showMobileMoreMenu ||
-                workspaceTab === 'gateways' ||
-                (selectedFinanceScope?.type === 'branch' && workspaceTab === 'setup')
+                workspaceTab === 'event_budgets' ||
+                workspaceTab === 'gateways'
                   ? 'bg-indigo-600 text-white'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <MoreHorizontal size={18} />
-              <span className="mt-0.5 truncate w-full text-center">More</span>
+              <span className="relative inline-flex items-center justify-center shrink-0">
+                <MoreHorizontal size={18} />
+                {eventBudgets.filter(b => b.status === 'pending_approval').length > 0 && (
+                  <span className="absolute -top-0.5 -right-1.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </span>
+              <span className="mt-1 truncate w-full text-center">More</span>
             </button>
           </div>
         ) : (

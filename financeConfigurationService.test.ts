@@ -5,9 +5,11 @@ import {
   getFinanceScopeConfiguration,
   getFinanceScopeTransactionOptions,
   getMyFinanceScopes,
+  getRequisitionApprovalConfiguration,
   saveFinanceConfiguration,
   saveFinanceScopeApprovalPolicies,
   saveFinanceScopeResources,
+  saveRequisitionApprovalPolicy,
   type FinanceConfiguration
 } from './financeConfigurationService';
 import { createEmptyMockFinanceState, createMockFinanceRpc, type MockFinanceState } from './mockFinanceRpc';
@@ -355,5 +357,77 @@ describe('finance configuration service', () => {
     });
     expect(readiness.ready).toBe(true);
   });
+
+  test('saves and loads branch-scoped requisition approval policies and supports period closing', async () => {
+    const initial: MockFinanceState = {
+      ...createEmptyMockFinanceState(),
+      profiles: [{ id: 'admin', auth_user_id: 'auth-admin', branch_id: 'branch-1', status: 'active' }],
+      permissions: [
+        { profile_id: 'admin', permission: 'manage_finances', branch_id: null },
+        { profile_id: 'admin', permission: 'manage_finances', branch_id: 'branch-1' },
+        { profile_id: 'admin', permission: 'view_finances', branch_id: null }
+      ],
+      districts: [{ id: 'district-1', name: 'Western District', status: 'active' }],
+      branches: [{ id: 'branch-1', district_id: 'district-1', name: 'HQ Branch', status: 'active' }],
+      currencies: ['SLE'],
+      baseCurrencyCode: 'SLE',
+      chartAccounts: [
+        { id: 'asset-1010', code: '1010', name: 'Cash on Hand', account_type: 'asset', normal_balance: 'debit', is_active: true, is_control_account: false },
+        { id: 'inc-4000', code: '4000', name: 'Offering Income', account_type: 'income', normal_balance: 'credit', is_active: true, is_control_account: false },
+        { id: 'exp-5000', code: '5000', name: 'Expense', account_type: 'expense', normal_balance: 'debit', is_active: true, is_control_account: false }
+      ],
+      financialAccounts: [
+        { id: 'cash-hq', chart_account_id: 'asset-1010', branch_id: null, district_id: null, name: 'HQ Cash', account_type: 'cash', currency_code: 'SLE', is_active: true }
+      ],
+      financialYears: [
+        { id: 'fy-2026', year_number: 2026, start_date: '2026-01-01', end_date: '2026-12-31', status: 'open' }
+      ],
+      periods: [
+        { id: 'p-2026', financial_year_id: 'fy-2026', name: 'Annual', start_date: '2026-01-01', end_date: '2026-12-31', status: 'open', year_status: 'open' }
+      ]
+    };
+    let state = structuredClone(initial);
+    const rpc = createMockFinanceRpc(
+      { load: () => structuredClone(state), save: next => { state = structuredClone(next); } },
+      () => ({ userId: 'auth-admin' })
+    );
+
+    const savedPolicy = await saveRequisitionApprovalPolicy(
+      'branch-1',
+      'Branch Department Policy',
+      0,
+      null,
+      [{ step_number: 1, required_approvals: 1 }, { step_number: 2, required_approvals: 2 }],
+      rpc
+    );
+    expect(savedPolicy.error).toBeNull();
+    expect(savedPolicy.data?.step_count).toBe(2);
+
+    const loadedReqConfig = await getRequisitionApprovalConfiguration('branch-1', rpc);
+    expect(loadedReqConfig.error).toBeNull();
+    expect(loadedReqConfig.data?.policies).toHaveLength(1);
+    expect(loadedReqConfig.data?.policies[0]?.branch_id).toBe('branch-1');
+    expect(loadedReqConfig.data?.steps).toHaveLength(2);
+
+    const churchLoaded = await getFinanceScopeConfiguration({ type: 'church', id: null }, rpc);
+    expect(churchLoaded.error).toBeNull();
+    const closedDraft: FinanceConfiguration = {
+      ...churchLoaded.data!,
+      periods: churchLoaded.data!.periods.map(period => ({ ...period, status: 'closed' }))
+    };
+    const closedSave = await saveFinanceConfiguration(closedDraft, null, rpc);
+    expect(closedSave.error).toBeNull();
+
+    const readinessAfterClose = evaluateTransactionEntryReadiness(closedDraft, {
+      scope: { type: 'church', id: null },
+      effectiveBranchId: null,
+      transactionDate: '2026-11-27',
+      amount: '',
+      exchangeRate: '1',
+      today: '2026-11-27'
+    });
+    expect(readinessAfterClose.hasOpenPeriodForDate).toBe(false);
+  });
 });
+
 

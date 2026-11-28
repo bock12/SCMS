@@ -318,10 +318,13 @@ test.describe('SCMS finance browser smoke', () => {
     expect(approvedReceipt.journal_entry_id).toBeTruthy();
     expect(approvedReceiptJournal.source_type).toBe('financial_document');
 
-    // The second document follows the rejection branch. It must remain
-    // unlinked and its pending journal must never become postable.
+    // The second document follows the rejection branch. It requires a rejection
+    // reason, remains unlinked, and its pending journal never becomes postable.
     const paymentCard = page.locator('article').filter({ hasText: 'Browser Test Supplier' }).first();
     await expect(paymentCard.getByRole('button', { name: 'Reject', exact: true })).toBeVisible();
+    await paymentCard.getByRole('button', { name: 'Reject', exact: true }).click();
+    await expect(paymentCard.getByRole('alert')).toHaveText('Enter a rejection reason before rejecting this transaction.');
+    await paymentCard.getByPlaceholder('Enter your approval note or rejection reason…').fill('Missing signed vendor invoice');
     await paymentCard.getByRole('button', { name: 'Reject', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Document rejected' })).toBeVisible();
     const finalFinanceState = await page.evaluate(() => JSON.parse(localStorage.getItem('scms_mock_finance_v2') || '{}'));

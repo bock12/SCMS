@@ -273,3 +273,155 @@ export function hasAnyEffectivePermission(
 ): boolean {
   return permissionKeys.some(permissionKey => hasEffectivePermission(resolution, permissionKey));
 }
+
+export interface ScopedDirectoryProfile {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  status?: string | null;
+}
+
+export interface ApproverProfileSummary {
+  id: string;
+  name: string;
+}
+
+export interface ScopedApproverDirectory {
+  available: boolean;
+  approve_finances: ApproverProfileSummary[];
+  approve_requisitions: ApproverProfileSummary[];
+}
+
+export function resolveScopedApproverDirectory(input: {
+  scopeType: AuthorizationScopeType;
+  scopeId: string | null;
+  now?: Date;
+  profiles: ScopedDirectoryProfile[];
+  assignments: AuthorizationRoleAssignment[];
+  roles: AuthorizationRole[];
+  permissions: AuthorizationPermission[];
+  rolePermissions: AuthorizationRolePermission[];
+  branches: AuthorizationBranch[];
+}): ScopedApproverDirectory {
+  const now = input.now ?? new Date();
+  const activeProfiles = input.profiles.filter(
+    profile => profile.status !== 'suspended' && profile.status !== 'archived'
+  );
+  const approveFinances: ApproverProfileSummary[] = [];
+  const approveRequisitions: ApproverProfileSummary[] = [];
+
+  for (const profile of activeProfiles) {
+    let permissionKeys: string[] = [];
+    if (input.scopeType === 'branch') {
+      permissionKeys = resolveEffectivePermissions({
+        profileId: profile.id,
+        branchId: input.scopeId,
+        now,
+        assignments: input.assignments,
+        roles: input.roles,
+        permissions: input.permissions,
+        rolePermissions: input.rolePermissions,
+        branches: input.branches
+      }).permissions;
+    } else if (input.scopeType === 'church') {
+      permissionKeys = resolveEffectivePermissions({
+        profileId: profile.id,
+        branchId: null,
+        now,
+        assignments: input.assignments,
+        roles: input.roles,
+        permissions: input.permissions,
+        rolePermissions: input.rolePermissions,
+        branches: input.branches
+      }).permissions;
+    } else {
+      const nowMs = now.getTime();
+      const activeRoleIds = new Set(input.roles.filter(role => role.is_active).map(role => role.id));
+      const matchingAssignments = input.assignments.filter(assignment => {
+        if (!assignment.is_active || assignment.profile_id !== profile.id) return false;
+        if (!activeRoleIds.has(assignment.role_id)) return false;
+        const assignedAt = Date.parse(assignment.assigned_at);
+        if (!Number.isFinite(assignedAt) || assignedAt > nowMs) return false;
+        if (assignment.expires_at) {
+          const expiresAt = Date.parse(assignment.expires_at);
+          if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) return false;
+        }
+        if (assignment.scope_type === 'church') {
+          return assignment.branch_id === null && assignment.district_id === null;
+        }
+        return (
+          assignment.scope_type === 'district' &&
+          assignment.district_id === input.scopeId &&
+          assignment.branch_id === null
+        );
+      });
+      const permittedRoleIds = new Set(matchingAssignments.map(item => item.role_id));
+      const permittedPermissionIds = new Set(
+        input.rolePermissions
+          .filter(link => permittedRoleIds.has(link.role_id))
+          .map(link => link.permission_id)
+      );
+      permissionKeys = input.permissions
+        .filter(permission => permittedPermissionIds.has(permission.id))
+        .map(permission => permission.key);
+    }
+
+    const displayName =
+      `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || `Profile ${profile.id.slice(0, 6)}`;
+    if (permissionKeys.includes('approve_finances')) {
+      approveFinances.push({ id: profile.id, name: displayName });
+    }
+    if (permissionKeys.includes('approve_requisitions')) {
+      approveRequisitions.push({ id: profile.id, name: displayName });
+    }
+  }
+
+  return {
+    available: true,
+    approve_finances: approveFinances,
+    approve_requisitions: approveRequisitions
+  };
+}
+
+export async function loadScopedApproverDirectory(
+  scopeType: AuthorizationScopeType,
+  scopeId: string | null
+): Promise<ScopedApproverDirectory> {
+  try {
+    const client = resolveDataClient(supabase);
+    const [profilesRes, assignmentsRes, rolesRes, permissionsRes, linksRes, branchesRes] =
+      await Promise.all([
+        client.from('profiles').select('id,first_name,last_name,status'),
+        client.from('profile_role_assignments').select('*').eq('is_active', true),
+        client.from('roles').select('id,is_active').eq('is_active', true),
+        client.from('permissions').select('id,key'),
+        client.from('role_permissions').select('role_id,permission_id'),
+        client.from('church_branches').select('id,district_id')
+      ]);
+
+    if (
+      profilesRes.error ||
+      assignmentsRes.error ||
+      rolesRes.error ||
+      permissionsRes.error ||
+      linksRes.error ||
+      branchesRes.error
+    ) {
+      return { available: false, approve_finances: [], approve_requisitions: [] };
+    }
+
+    return resolveScopedApproverDirectory({
+      scopeType,
+      scopeId,
+      profiles: (profilesRes.data || []) as ScopedDirectoryProfile[],
+      assignments: (assignmentsRes.data || []) as AuthorizationRoleAssignment[],
+      roles: (rolesRes.data || []) as AuthorizationRole[],
+      permissions: (permissionsRes.data || []) as AuthorizationPermission[],
+      rolePermissions: (linksRes.data || []) as AuthorizationRolePermission[],
+      branches: (branchesRes.data || []) as AuthorizationBranch[]
+    });
+  } catch {
+    return { available: false, approve_finances: [], approve_requisitions: [] };
+  }
+}
+

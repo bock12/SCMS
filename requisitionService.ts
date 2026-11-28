@@ -476,3 +476,160 @@ export async function getDatabaseRequisitionPaymentSummary(
 ): Promise<RequisitionRpcResponse<DepartmentRequisitionPaymentSummary[]>> {
   return client.rpc('get_department_requisition_payment_summary', { p_branch_id: branchId });
 }
+
+export interface SubmitRequisitionDecisionInput {
+  requestStepId: string;
+  decision: 'approved' | 'rejected';
+  reason?: string;
+}
+
+/** Validates required rejection reasons before forwarding a requisition decision to the database RPC. */
+export async function submitDepartmentRequisitionDecision(
+  input: SubmitRequisitionDecisionInput,
+  client: RequisitionRpcClient = defaultRequisitionRpcClient
+): Promise<RequisitionRpcResponse<{
+  requisition_id: string; approval_request_id: string; approval_status: string; status: string;
+}>> {
+  const trimmedReason = (input.reason || '').trim();
+  if (input.decision === 'rejected' && !trimmedReason) {
+    return {
+      data: null,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Enter a rejection reason before rejecting this proposal.'
+      }
+    };
+  }
+  return decideDatabaseRequisitionApproval(
+    input.requestStepId,
+    input.decision,
+    trimmedReason || undefined,
+    client
+  );
+}
+
+export interface RequisitionCurrencySummary {
+  currencyCode: string;
+  totalAmount: number;
+  count: number;
+}
+
+export interface DepartmentRequisitionSummary {
+  total: number;
+  pendingApproval: number;
+  awaitingMyDecision: number;
+  approved: number;
+  rejected: number;
+  paidOrInPayment: number;
+  pendingTotalsByCurrency: RequisitionCurrencySummary[];
+  unpaidApprovedTotalsByCurrency: RequisitionCurrencySummary[];
+}
+
+export function summarizeDepartmentRequisitions(
+  requisitions: DepartmentRequisition[],
+  paymentSummaries: DepartmentRequisitionPaymentSummary[] = []
+): DepartmentRequisitionSummary {
+  const summaryMap = new Map(paymentSummaries.map(item => [item.requisition_id, item]));
+  const pendingByCurrency = new Map<string, RequisitionCurrencySummary>();
+  const unpaidByCurrency = new Map<string, RequisitionCurrencySummary>();
+
+  let pendingApproval = 0;
+  let awaitingMyDecision = 0;
+  let approved = 0;
+  let rejected = 0;
+  let paidOrInPayment = 0;
+
+  for (const req of requisitions) {
+    const currencyCode = (req as DepartmentRequisition & { currency_code?: string }).currency_code || req.currency || 'SLE';
+    const payment = summaryMap.get(req.id);
+
+    if (req.status === 'pending_approval') {
+      pendingApproval += 1;
+      if (req.approval_steps?.some(step => step.actor_can_decide)) {
+        awaitingMyDecision += 1;
+      }
+      const current = pendingByCurrency.get(currencyCode) || { currencyCode, totalAmount: 0, count: 0 };
+      current.totalAmount += Number(req.requested_amount || 0);
+      current.count += 1;
+      pendingByCurrency.set(currencyCode, current);
+    } else if (req.status === 'approved') {
+      approved += 1;
+      const remaining = payment ? Number(payment.remaining_amount || 0) : Number(req.requested_amount || 0);
+      if (remaining > 0) {
+        const current = unpaidByCurrency.get(currencyCode) || { currencyCode, totalAmount: 0, count: 0 };
+        current.totalAmount += remaining;
+        current.count += 1;
+        unpaidByCurrency.set(currencyCode, current);
+      }
+    } else if (req.status === 'rejected') {
+      rejected += 1;
+    }
+
+    if (payment && payment.payment_status !== 'unpaid') {
+      paidOrInPayment += 1;
+    }
+  }
+
+  return {
+    total: requisitions.length,
+    pendingApproval,
+    awaitingMyDecision,
+    approved,
+    rejected,
+    paidOrInPayment,
+    pendingTotalsByCurrency: Array.from(pendingByCurrency.values()).sort((a, b) =>
+      a.currencyCode.localeCompare(b.currencyCode)
+    ),
+    unpaidApprovedTotalsByCurrency: Array.from(unpaidByCurrency.values()).sort((a, b) =>
+      a.currencyCode.localeCompare(b.currencyCode)
+    )
+  };
+}
+
+export function getRequisitionBlockedReason(
+  requisition: DepartmentRequisition,
+  actorProfileId?: string | null,
+  canApproveRequisitions?: boolean
+): string {
+  const submittedBy =
+    (requisition.approval_request?.submitted_by_profile_id as string | undefined) ||
+    requisition.applicant_profile_id ||
+    null;
+
+  if (actorProfileId && submittedBy && submittedBy === actorProfileId) {
+    return 'Submitted by your profile. Separation of duties prevents approving or rejecting your own funding proposal.';
+  }
+
+  if (
+    actorProfileId &&
+    requisition.approval_steps?.some(step =>
+      (step.decisions || []).some(decision => decision.approver_profile_id === actorProfileId)
+    )
+  ) {
+    return 'You have already recorded a decision on an earlier approval level for this proposal.';
+  }
+
+  if (canApproveRequisitions === false) {
+    return 'Read-only view. Recording a proposal decision requires the approve_requisitions permission in this scope.';
+  }
+
+  if ((requisition.approval_steps?.length || 0) > 1) {
+    return 'Waiting for an earlier approval level or another eligible approver to act.';
+  }
+
+  return 'Requires a different eligible approver with approve_requisitions permission (submitters cannot self-approve).';
+}
+
+export function getRequisitionRejectionReason(requisition: DepartmentRequisition): string | null {
+  for (const step of requisition.approval_steps || []) {
+    const rejectedDecision = (step.decisions || []).find(
+      decision => decision.decision === 'rejected' && typeof decision.comments === 'string' && decision.comments.trim()
+    );
+    if (rejectedDecision?.comments) {
+      return String(rejectedDecision.comments).trim();
+    }
+  }
+  if (requisition.admin_notes?.trim()) return requisition.admin_notes.trim();
+  return null;
+}
+

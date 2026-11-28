@@ -3,6 +3,7 @@ import {
   hasEffectivePermission,
   hasAnyEffectivePermission,
   resolveEffectivePermissions,
+  resolveScopedApproverDirectory,
   type PermissionResolutionInput
 } from './permissionResolutionService';
 
@@ -187,4 +188,71 @@ describe('database-backed permission resolution', () => {
     expect(hasAnyEffectivePermission(resolution, ['manage_finances', 'approve_finances'])).toBe(false);
     expect(hasAnyEffectivePermission(null, ['view_leader_console'])).toBe(false);
   });
+
+  test('resolves active finance and requisition approvers by scope', () => {
+    const base = fixture();
+    const result = resolveScopedApproverDirectory({
+      scopeType: 'branch',
+      scopeId: 'branch-a',
+      now: NOW,
+      profiles: [
+        { id: 'profile-a', first_name: 'Sarah', last_name: 'Johnson', status: 'active' },
+        { id: 'profile-b', first_name: 'David', last_name: 'Cole', status: 'active' },
+        { id: 'profile-suspended', first_name: 'Old', last_name: 'User', status: 'suspended' }
+      ],
+      assignments: [
+        {
+          id: 'a-branch-fin',
+          profile_id: 'profile-a',
+          role_id: 'role-fin-approver',
+          scope_type: 'branch',
+          branch_id: 'branch-a',
+          district_id: null,
+          assigned_at: '2026-01-01T00:00:00.000Z',
+          expires_at: null,
+          is_active: true
+        },
+        {
+          id: 'b-church-req',
+          profile_id: 'profile-b',
+          role_id: 'role-req-approver',
+          scope_type: 'church',
+          branch_id: null,
+          district_id: null,
+          assigned_at: '2026-01-01T00:00:00.000Z',
+          expires_at: null,
+          is_active: true
+        },
+        {
+          id: 'suspended-fin',
+          profile_id: 'profile-suspended',
+          role_id: 'role-fin-approver',
+          scope_type: 'church',
+          branch_id: null,
+          district_id: null,
+          assigned_at: '2026-01-01T00:00:00.000Z',
+          expires_at: null,
+          is_active: true
+        }
+      ],
+      roles: [
+        { id: 'role-fin-approver', is_active: true },
+        { id: 'role-req-approver', is_active: true }
+      ],
+      permissions: [
+        { id: 'p-fin', key: 'approve_finances' },
+        { id: 'p-req', key: 'approve_requisitions' }
+      ],
+      rolePermissions: [
+        { role_id: 'role-fin-approver', permission_id: 'p-fin' },
+        { role_id: 'role-req-approver', permission_id: 'p-req' }
+      ],
+      branches: base.branches
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.approve_finances).toEqual([{ id: 'profile-a', name: 'Sarah Johnson' }]);
+    expect(result.approve_requisitions).toEqual([{ id: 'profile-b', name: 'David Cole' }]);
+  });
 });
+

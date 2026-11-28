@@ -2188,6 +2188,19 @@ export const supabase = {
         functionName === 'get_finance_scope_transaction_options' ||
         functionName === 'save_finance_scope_resources' ||
         functionName === 'save_finance_scope_approval_policies' ||
+        functionName === 'get_payment_channel_configuration' ||
+        functionName === 'save_payment_channel' ||
+        functionName === 'set_payment_channel_status' ||
+        functionName === 'delete_payment_channel' ||
+        functionName === 'get_member_giving_channels' ||
+        functionName === 'get_requisition_approval_configuration' ||
+        functionName === 'save_requisition_approval_policy' ||
+        functionName === 'get_department_requisitions' ||
+        functionName === 'get_department_requisition_submission_options' ||
+        functionName === 'submit_department_requisition' ||
+        functionName === 'decide_department_requisition_approval' ||
+        functionName === 'create_department_requisition_payment' ||
+        functionName === 'get_department_requisition_payment_summary' ||
         functionName === 'set_finance_branch_clearing_accounts' ||
         functionName === 'get_finance_branch_clearing_accounts' ||
         functionName === 'create_financial_transfer' ||
@@ -2207,6 +2220,8 @@ export const supabase = {
         functionName === 'post_finance_journal_entry' ||
         functionName === 'post_journal_entry' ||
         functionName === 'submit_event_budget_for_approval' ||
+        functionName === 'get_event_budget_submission_options' ||
+        functionName === 'get_my_event_budgets' ||
         functionName === 'decide_event_budget_approval' ||
         functionName === 'create_event_budget_payment' ||
         functionName === 'get_event_budgets') {

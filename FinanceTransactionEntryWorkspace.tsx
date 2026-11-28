@@ -16,10 +16,28 @@ import {
   type FinancialPaymentMethod
 } from './financeTransactionService';
 
+export interface RejectedTransactionPrefillDraft {
+  nonce: number;
+  sourceReference: string;
+  rejectionReason?: string | null;
+  documentType: 'receipt' | 'payment';
+  transactionDate: string;
+  partyName: string;
+  profileId?: string | null;
+  amount: number;
+  currencyCode: string;
+  paymentMethod: FinancialPaymentMethod;
+  fundId?: string | null;
+  externalReference?: string | null;
+  description?: string | null;
+}
+
 interface FinanceTransactionEntryWorkspaceProps {
   branchId: string | null;
   scope?: FinanceOwnershipScope;
   requestedEntryType?: { type: 'receipt' | 'payment'; nonce: number } | null;
+  prefillDraft?: RejectedTransactionPrefillDraft | null;
+  onClearPrefill?: () => void;
   onOpenAccountingSetup?: (target?: 'church' | 'current') => void;
   canOpenChurchScopeSetup?: boolean;
   onOpenDocumentsTab?: () => void;
@@ -53,6 +71,8 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
   branchId,
   scope,
   requestedEntryType,
+  prefillDraft,
+  onClearPrefill,
   onOpenAccountingSetup,
   canOpenChurchScopeSetup = false,
   onOpenDocumentsTab
@@ -151,6 +171,25 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
     setError(null);
     setIdempotencyKey(crypto.randomUUID());
   }, [requestedEntryType?.nonce, requestedEntryType?.type]);
+
+  useEffect(() => {
+    if (!prefillDraft) return;
+    setEntryType(prefillDraft.documentType);
+    setTransactionDate(prefillDraft.transactionDate || new Date().toISOString().slice(0, 10));
+    setPartyName(prefillDraft.partyName || '');
+    setProfileId(prefillDraft.profileId || '');
+    setAmount(prefillDraft.amount > 0 ? String(prefillDraft.amount) : '');
+    if (prefillDraft.currencyCode) {
+      setCurrencyCode(prefillDraft.currencyCode);
+    }
+    setPaymentMethod(prefillDraft.paymentMethod || 'cash');
+    setFundId(prefillDraft.fundId || '');
+    setExternalReference(prefillDraft.externalReference || '');
+    setDescription(prefillDraft.description || '');
+    setCreated(null);
+    setError(null);
+    setIdempotencyKey(crypto.randomUUID());
+  }, [prefillDraft?.nonce]);
 
   const accountsForCurrency = useMemo(
     () =>
@@ -297,6 +336,7 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
         setAmount('');
         setExternalReference('');
         setDescription('');
+        onClearPrefill?.();
         window.dispatchEvent(new Event('finance_documents_updated'));
       }
     } catch (cause) {
@@ -451,6 +491,30 @@ export const FinanceTransactionEntryWorkspace: React.FC<FinanceTransactionEntryW
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {prefillDraft && (
+        <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-0.5">
+            <p className="font-bold">
+              Resubmitting corrected details from rejected {prefillDraft.sourceReference}
+            </p>
+            {prefillDraft.rejectionReason && (
+              <p className="text-amber-900">
+                Rejection reason: <span className="font-semibold">{prefillDraft.rejectionReason}</span>
+              </p>
+            )}
+          </div>
+          {onClearPrefill && (
+            <button
+              type="button"
+              onClick={onClearPrefill}
+              className="inline-flex min-h-[32px] items-center justify-center rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 shrink-0 cursor-pointer"
+            >
+              Dismiss note
+            </button>
+          )}
         </div>
       )}
 
